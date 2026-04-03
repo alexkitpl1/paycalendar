@@ -92,8 +92,15 @@ _req.Session.request = _debug_request
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR    = Path(__file__).parent
 CONFIG_FILE = BASE_DIR / "config.ini"
-DATA_FILE   = Path(os.environ.get("DATA_DIR", str(BASE_DIR))) / "invoices.json"
-STATE_FILE  = Path(os.environ.get("DATA_DIR", str(BASE_DIR))) / "scan_state.json"
+# Railway: set DATA_DIR=/data after adding a Volume
+# Without Volume, data resets on each deploy
+_DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR)))
+try:
+    _DATA_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    _DATA_DIR = BASE_DIR
+DATA_FILE = _DATA_DIR / "invoices.json"
+STATE_FILE  = _DATA_DIR / "scan_state.json"
 TMPL_DIR    = BASE_DIR / "templates"
 
 # ── Config ────────────────────────────────────────────────────────────────────
@@ -454,7 +461,7 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         save_invoices(existing + new_invs)
         emit(f"Done! Added {len(new_invs)} new invoices", "ok")
     else:
-        emit("Scan complete — no new invoices", "warn")
+        emit("Новых счетов не найдено — состояние обновлено", "ok")
 
     update_scan_state(processed_uids, last_uid, last_date)
     total_time = time.time() - start_time
@@ -1157,7 +1164,7 @@ def fetch_messages(sess, user_id, mailbox_id, emit, from_date=None, to_date=None
         if to_date:
             date_param += f"&dateBefore={to_date}"
     elif last_date:
-        emit(f"Fetching emails since {last_date}...", "ok")
+        emit(f"Продолжаю с {last_date} — новые письма после прошлого скана", "ok")
         date_param = f"&dateAfter={last_date}"
 
     cands = []
@@ -1452,13 +1459,20 @@ def api_debug_clear():
 @app.route("/api/scan-state")
 def api_scan_state():
     """Return current scan state for UI."""
-    st = load_state()
+    st   = load_state()
+    invs = load_invoices()
+    ld   = st.get("last_date")
+    sc   = st.get("scan_count", 0)
     return jsonify({
-        "scan_count":  st.get("scan_count", 0),
-        "last_date":   st.get("last_date"),
-        "last_uid":    st.get("last_uid"),
+        "scan_count":         sc,
+        "last_date":          ld,
+        "last_uid":           st.get("last_uid"),
         "scanned_uids_count": len(st.get("scanned_uids", [])),
-        "next_limit":  get_scan_limit(),
+        "next_limit":         get_scan_limit(),
+        "total_invoices":     len(invs),
+        "next_scan_from":     ld if ld else ("начало (первый скан)" if sc == 0 else "все письма"),
+        "data_persistent":    str(_DATA_DIR) != str(BASE_DIR),
+        "data_dir":           str(_DATA_DIR),
     })
 
 @app.route("/api/stats")
