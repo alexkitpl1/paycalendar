@@ -289,15 +289,52 @@ const esc = s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(
 function mondayOf(d){const n=new Date(d);n.setHours(0,0,0,0);const day=n.getDay();n.setDate(n.getDate()-(day===0?6:day-1));return n}
 
 /* ─── API ───────────────────────────────────────────────────────────────── */
-async function apiGet(url){const r=await fetch(url);return r.json()}
-async function apiPost(url,data){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});return r.json()}
-async function apiDelete(url){await fetch(url,{method:"DELETE"})}
+async function apiGet(url){
+  try {
+    const r = await fetch(url, {credentials:'include'});
+    if(r.redirected && r.url.includes('login-page')){
+      window.location='/login-page'; return {};
+    }
+    if(r.status===401||r.status===403){window.location='/login-page';return {};}
+    if(!r.ok) return {};
+    return await r.json();
+  } catch(e){ console.error('apiGet',url,e); return {}; }
+}
+async function apiPost(url,data){
+  try {
+    const r = await fetch(url,{method:"POST",credentials:'include',
+      headers:{"Content-Type":"application/json"},body:JSON.stringify(data||{})});
+    if(r.redirected && r.url.includes('login-page')){
+      window.location='/login-page'; return {};
+    }
+    if(!r.ok) return {};
+    return await r.json();
+  } catch(e){ console.error('apiPost',url,e); return {}; }
+}
+async function apiDelete(url){
+  try { await fetch(url,{method:"DELETE",credentials:'include'}); }
+  catch(e){}
+}
 
 async function loadAll(){
-  S.invoices = await apiGet("/api/invoices");
-  const cfg   = await apiGet("/api/config");
-  S.company = cfg.company || "";
-  document.getElementById("company-name").textContent = S.company;
+  // Check auth first
+  const inv = await apiGet("/api/invoices");
+  if(!inv || (typeof inv === 'object' && Object.keys(inv).length === 0 && !Array.isArray(inv))) {
+    // Empty object means auth failed - redirect handled in apiGet
+    return;
+  }
+  S.invoices = Array.isArray(inv) ? inv : [];
+  const cfg = await apiGet("/api/config");
+  S.company = (cfg && cfg.company) || "";
+  const nameEl = document.getElementById("company-name");
+  if(nameEl) nameEl.textContent = S.company;
+  // Update overdue tab badge
+  var todayISO2 = toISO(new Date());
+  var ovCount = S.invoices.filter(function(i){
+    return i.status!=='paid' && i.due_date && i.due_date < todayISO2;
+  }).length;
+  var vtO = document.getElementById('vt-o');
+  if(vtO) vtO.textContent = '⚠ Долги' + (ovCount>0?' ('+ovCount+')':'');
   render();
 }
 async function saveInvoices(){await apiPost("/api/invoices",S.invoices)}
