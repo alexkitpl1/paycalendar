@@ -1430,7 +1430,7 @@ def api_config():
         "email":            EMAIL_ADDR,
         "password":         pw[:2]+"***" if pw else "",
         "warn_days":        WARN_DAYS,
-        "auto_scan_minutes":AUTO_SCAN_MIN if hasattr(sys.modules[__name__],"AUTO_SCAN_MIN") else AUTO_SCAN,
+        "auto_scan_minutes":AUTO_SCAN,
         "has_password":     bool(pw and pw not in ("your_password_here","")),
         "has_api_key":      bool(key and "INSERT" not in key and len(key)>20),
         "imap_host":        IMAP_HOST or "mail.zone.ee",
