@@ -256,13 +256,17 @@ input,select{font-family:'DM Sans',sans-serif}
 
 <script>
 /* ─── State ─────────────────────────────────────────────────────────────── */
+// These helpers must be defined before S
+function mondayOf(d){const n=new Date(d);const day=n.getDay();const diff=n.getDate()-(day===0?6:day-1);n.setDate(diff);n.setHours(0,0,0,0);return n;}
+function toISO(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+
 const S = {
   invoices: [],
   view: "month",
   month: new Date(),
   weekStart: mondayOf(new Date()),
   activeDay: null,
-  theme: localStorage.getItem("pcal_theme") || "dark",
+  theme: (function(){try{return localStorage.getItem("pcal_theme")||"dark";}catch(e){return "dark";}})(),
   company: "",
 };
 
@@ -287,20 +291,7 @@ const fmtAmt = (a,c="EUR")=>{const n=parseFloat(a);if(isNaN(n))return"—";retur
 const daysU = s=>{if(!s)return null;const d=new Date(s);d.setHours(0,0,0,0);const t=new Date();t.setHours(0,0,0,0);return Math.round((d-t)/86400000)};
 const stOf = i=>{if(i.status==="paid")return"paid";if(!i.due_date)return"pending";const d=daysU(i.due_date);if(d<0)return"overdue";if(d<=3)return"urgent";return"upcoming"};
 const esc = s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
-function mondayOf(d){const n=new Date(d);n.setHours(0,0,0,0);const day=n.getDay();n.setDate(n.getDate()-(day===0?6:day-1));return n}
 
-/* ─── API ───────────────────────────────────────────────────────────────── */
-async function apiGet(url){
-  try {
-    const r = await fetch(url, {credentials:'include'});
-    if(r.redirected && r.url.includes('login-page')){
-      window.location='/login-page'; return {};
-    }
-    if(r.status===401||r.status===403){window.location='/login-page';return {};}
-    if(!r.ok) return {};
-    return await r.json();
-  } catch(e){ console.error('apiGet',url,e); return {}; }
-}
 async function apiPost(url,data){
   try {
     const r = await fetch(url,{method:"POST",credentials:'include',
@@ -561,7 +552,20 @@ async function markPaidOv(id){
 }
 
 function render(){
-  renderTopbar();renderSumBar();renderCalendar();renderSP();renderLegend();
+  renderTopbar();
+  renderSumBar();
+  var bw = document.getElementById('body-wrap');
+  var ov = document.getElementById('overdue-area');
+  if(S.view === 'overdue'){
+    if(bw) bw.style.display = 'none';
+    if(ov) { ov.style.display = 'block'; renderOverdue(); }
+  } else {
+    if(bw) bw.style.display = '';
+    if(ov) ov.style.display = 'none';
+    renderCalendar();
+    renderSP();
+    renderLegend();
+  }
 }
 
 function renderTopbar(){
