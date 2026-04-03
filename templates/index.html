@@ -256,9 +256,8 @@ input,select{font-family:'DM Sans',sans-serif}
 
 <script>
 /* ─── State ─────────────────────────────────────────────────────────────── */
-// These helpers must be defined before S
+// mondayOf must be defined before S
 function mondayOf(d){const n=new Date(d);const day=n.getDay();const diff=n.getDate()-(day===0?6:day-1);n.setDate(diff);n.setHours(0,0,0,0);return n;}
-function toISO(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
 
 const S = {
   invoices: [],
@@ -458,92 +457,64 @@ function dayHTML(date){
 /* ─── Render ────────────────────────────────────────────────────────────── */
 
 function renderOverdue(){
-  var el = document.getElementById("overdue-area");
+  var el=document.getElementById("overdue-area");
   if(!el) return;
-  
-  var today = new Date();
-  today.setHours(0,0,0,0);
-  var todayISO = toISO(today);
-  
-  // Get all unpaid overdue invoices
-  var overdue = S.invoices.filter(function(i){
-    return i.status !== "paid" && i.due_date && i.due_date < todayISO;
+  var today=new Date(); today.setHours(0,0,0,0);
+  var todayISO=toISO(today);
+  var overdue=S.invoices.filter(function(i){
+    return i.status!=="paid" && i.due_date && i.due_date<todayISO;
   });
-  
-  if(overdue.length === 0){
-    el.innerHTML = '<div class="ov-empty"><div class="ov-empty-icon">✅</div><div>Нет неоплаченных счетов прошлых периодов</div></div>';
+  if(!overdue.length){
+    el.innerHTML='<div style="text-align:center;padding:48px 0;color:var(--text3)"><div style="font-size:40px;margin-bottom:12px">'+String.fromCodePoint(0x2705)+'</div>'+
+      'Нет неоплаченных счетов прошлых периодов</div>';
     return;
   }
-  
-  // Group by month
-  var groups = {};
+  var groups={};
   overdue.forEach(function(inv){
-    var d = new Date(inv.due_date + "T00:00:00");
-    var key = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0");
-    var label = ["Январь","Февраль","Март","Апрель","Май","Июнь",
-                 "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"][d.getMonth()]
-                + " " + d.getFullYear();
-    if(!groups[key]) groups[key] = {label:label, items:[], total:0};
-    groups[key].items.push(inv);
-    groups[key].total += parseFloat(inv.amount) || 0;
+    var d=new Date(inv.due_date+"T00:00:00");
+    var key=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
+    var MN=["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+    if(!groups[key]) groups[key]={label:MN[d.getMonth()]+" "+d.getFullYear(),items:[],total:0};
+    groups[key].items.push(inv); groups[key].total+=parseFloat(inv.amount)||0;
   });
-  
-  // Sort groups newest first
-  var sortedKeys = Object.keys(groups).sort().reverse();
-  
-  var totalAll = overdue.reduce(function(s,i){return s+(parseFloat(i.amount)||0);},0);
-  var PRI = {high:0,medium:1,low:2,none:3};
-  
-  var h = '<div class="ov-header">';
-  h += '<div class="ov-title">⚠ Неоплаченные счета прошлых периодов</div>';
-  h += '<div class="ov-total">' + overdue.length + ' счетов · ' + fmtAmt(totalAll) + '</div>';
-  h += '</div>';
-  
-  sortedKeys.forEach(function(key){
-    var g = groups[key];
-    var sorted = g.items.slice().sort(function(a,b){
-      return (PRI[a.priority||"none"]||3)-(PRI[b.priority||"none"]||3);
-    });
-    
-    h += '<div class="ov-group">';
-    h += '<div class="ov-group-title"><span>' + g.label + ' · ' + g.items.length + ' сч.</span>';
-    h += '<span class="ov-group-sum">' + fmtAmt(Math.round(g.total*100)/100) + '</span></div>';
-    
+  var keys=Object.keys(groups).sort().reverse();
+  var tot=overdue.reduce(function(s,i){return s+(parseFloat(i.amount)||0);},0);
+  var PRI={high:0,medium:1,low:2,none:3};
+  var h='<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 10px;border-bottom:1px solid var(--border2);margin-bottom:12px">';
+  h+='<div style="font-size:15px;font-weight:600">'+String.fromCodePoint(0x26A0)+' Неоплаченные счета прошлых периодов</div>';
+  h+='<div style="color:#f87171;font-weight:600">'+overdue.length+' сч. | '+fmtAmt(tot)+'</div></div>';
+  keys.forEach(function(key){
+    var g=groups[key];
+    var sorted=g.items.slice().sort(function(a,b){return(PRI[a.priority||"none"]||3)-(PRI[b.priority||"none"]||3);});
+    h+='<div style="margin-bottom:20px">';
+    h+='<div style="font-size:11px;color:var(--text3);text-transform:uppercase;padding:6px 0 6px;border-bottom:1px solid var(--border2);margin-bottom:8px;display:flex;justify-content:space-between">';
+    h+=g.label+' | <span style="color:#f87171">'+fmtAmt(Math.round(g.total*100)/100)+'</span></div>';
     sorted.forEach(function(inv){
-      var daysLate = Math.round((today - new Date(inv.due_date+"T00:00:00")) / 86400000);
-      var isUrgent = daysLate <= 7;
-      var priLabel = {high:"🔴",medium:"🟡",low:"🟢",none:""}[inv.priority||"none"];
-      
-      h += '<div class="ov-card' + (isUrgent?" urgent":"") + '">';
-      h += '<div>';
-      h += '<div class="ov-vendor">' + priLabel + (priLabel?" ":"") + esc(inv.vendor||"—") + '</div>';
-      if(inv.description) h += '<div class="ov-desc">' + esc(inv.description) + '</div>';
-      h += '<div class="ov-meta">';
-      h += '<span>№ ' + esc(inv.invoice_number||"—") + '</span>';
-      h += '<span>до ' + inv.due_date + '</span>';
-      h += '<span>' + esc(inv.email_from||"") + '</span>';
-      h += '</div>';
-      h += '<div class="ov-actions">';
-      h += '<button class="ic-btn ic-btn-pay" onclick="markPaidOv('' + inv.id + '')">✓ Оплачен</button>';
-      h += '<select onchange="setPriority('' + inv.id + '',this.value)" class="ic-btn" style="cursor:pointer;padding:2px 4px;font-size:10px">';
-      h += '<option value="none"   ' + ((inv.priority||"none")==="none"?"selected":"") + '>○ Приоритет</option>';
-      h += '<option value="high"   ' + ((inv.priority||"none")==="high"?"selected":"") + '>🔴 Срочно</option>';
-      h += '<option value="medium" ' + ((inv.priority||"none")==="medium"?"selected":"") + '>🟡 Важно</option>';
-      h += '<option value="low"    ' + ((inv.priority||"none")==="low"?"selected":"") + '>🟢 Обычный</option>';
-      h += '</select>';
-      h += '</div>';
-      h += '</div>';
-      h += '<div>';
-      h += '<div class="ov-amount' + (isUrgent?" urgent":"") + '">' + fmtAmt(inv.amount, inv.currency) + '</div>';
-      h += '<div class="ov-days' + (isUrgent?" urgent":"") + '">' + daysLate + ' дн.</div>';
-      if(inv.vat_amount) h += '<div style="font-size:10px;color:var(--text3);margin-top:4px">НДС: ' + fmtAmt(inv.vat_amount,inv.currency) + '</div>';
-      h += '</div>';
-      h += '</div>';
+      var dl=Math.round((today-new Date(inv.due_date+"T00:00:00"))/86400000);
+      var urg=dl<=7;
+      var PL={high:"[R]",medium:"[Y]",low:"[G]",none:""}[inv.priority||"none"];
+      h+='<div class="icard" style="border-left-color:'+(urg?"#fbbf24":"#f87171")+';display:grid;grid-template-columns:1fr auto;gap:6px;margin-bottom:8px">';
+      h+='<div>';
+      h+='<div style="font-size:13px;font-weight:600">'+PL+esc(inv.vendor||"—")+'</div>';
+      if(inv.description) h+='<div style="font-size:11px;color:var(--text3)">'+esc(inv.description)+'</div>';
+      h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">№ '+esc(inv.invoice_number||"—")+' | до '+inv.due_date+'</div>';
+      h+='<div style="display:flex;gap:5px;margin-top:8px" data-inv-id="'+esc(inv.id)+'">';
+      h+='<button class="ic-btn ic-btn-pay" data-inv="'+esc(inv.id)+'" onclick="markPaidOv(this.dataset.inv)">'+String.fromCodePoint(0x2713)+' Оплачен</button>';
+      h+='<select data-inv="'+esc(inv.id)+'" onchange="setPriority(this.dataset.inv,this.value)" class="ic-btn" style="cursor:pointer;font-size:10px">';
+      h+='<option value="none"'+(!inv.priority||inv.priority==="none"?" selected":"")+'> Приоритет</option>';
+      h+='<option value="high"'+(inv.priority==="high"?" selected":"")+'>Срочно</option>';
+      h+='<option value="medium"'+(inv.priority==="medium"?" selected":"")+'>Важно</option>';
+      h+='<option value="low"'+(inv.priority==="low"?" selected":"")+'>Обычный</option>';
+      h+='</select></div></div>';
+      h+='<div style="text-align:right">';
+      h+='<div style="font-size:16px;font-weight:700;color:'+(urg?"#fbbf24":"#f87171")+'">'+fmtAmt(inv.amount,inv.currency)+'</div>';
+      h+='<div style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;margin-top:4px;background:'+(urg?"rgba(251,191,36,.15)":"rgba(248,113,113,.15)")+';color:'+(urg?"#fbbf24":"#f87171")+'">'+dl+' дн.</div>';
+      if(inv.vat_amount) h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">НДС: '+fmtAmt(inv.vat_amount,inv.currency)+'</div>';
+      h+='</div></div>';
     });
-    h += '</div>';
+    h+='</div>';
   });
-  
-  el.innerHTML = h;
+  el.innerHTML=h;
 }
 
 async function markPaidOv(id){
@@ -1017,7 +988,7 @@ function _runScanUrl(url, onDone){
       var msg = newCount>0 ? '✅ Добавлено '+newCount+' новых счетов!' : '✅ Готово — новых счетов не найдено';
       setPanel('<div style="display:flex;align-items:center;justify-content:space-between">'
         +'<span style="color:'+(newCount>0?'#34d399':'#9ca3af')+'">'+msg+'</span>'
-        +'<button onclick="document.getElementById('scan-status-panel').style.display='none'" '
+        +'<button onclick="document.getElementById(\"scan-status-panel\").style.display=\"none\"" '
         +'style="background:transparent;border:1px solid #374151;color:#9ca3af;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:12px">✕ Закрыть</button>'
         +'</div>');
       setTimeout(closePanel, newCount>0 ? 8000 : 4000);
