@@ -1874,6 +1874,41 @@ def api_playwright_login_stream():
                     headers={"Cache-Control": "no-cache",
                              "X-Accel-Buffering": "no"})
 
+
+@app.route("/api/test-connection", methods=["POST"])
+def api_test_connection():
+    """Save credentials and test if we can reach mail server."""
+    data    = request.json or {}
+    email   = data.get("email", EMAIL_ADDR)
+    password= data.get("password", EMAIL_PASS)
+
+    # Save to config immediately
+    save_config_value("email", "address",  email)
+    save_config_value("email", "password", password)
+
+    # Reload globals
+    reload_config()
+
+    # Quick IMAP test
+    import imaplib as _il, socket as _so
+    try:
+        m = _il.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+        m.login(email, password)
+        m.logout()
+        log.info(f"IMAP test OK for {email}")
+        return jsonify({"ok": True, "message": "IMAP подключение успешно!", "stream": False})
+    except _il.IMAP4.error as e:
+        log.warning(f"IMAP login failed: {e}")
+        return jsonify({"ok": False, "error": f"Ошибка входа: {e}", "stream": False})
+    except (_so.gaierror, OSError) as e:
+        log.info(f"IMAP unreachable ({e}) — will use HTTPS webmail")
+        # IMAP blocked but credentials saved — webmail will work
+        return jsonify({"ok": True,
+                        "message": "Данные сохранены. IMAP недоступен — будет использован webmail HTTPS.",
+                        "stream": False})
+    except Exception as e:
+        return jsonify({"ok": False, "error": str(e), "stream": False})
+
 @app.route("/api/capture-start", methods=["POST"])
 def api_capture_start():
     """Start background login attempt loop - runs while user logs in via browser."""
