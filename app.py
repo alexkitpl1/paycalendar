@@ -1137,6 +1137,30 @@ def make_session():
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120",
         "Origin": BASE, "Referer": BASE+"/", "Accept": "application/json, */*",
     })
+    # Load cookies - sanitize to prevent latin-1 encoding errors
+    if WEBMAIL_COOKIE:
+        # Detect bad cookie (JS code saved instead of real cookies)
+        if "fetch(" in WEBMAIL_COOKIE or "document.cookie" in WEBMAIL_COOKIE:
+            log.error("BAD COOKIE DETECTED: contains JS code - clearing automatically")
+            try:
+                save_config_value("email", "webmail_cookie", "")
+                reload_config()
+            except Exception:
+                pass
+        else:
+            # Strip ALL non-ASCII chars to avoid latin-1 HTTP header errors
+            safe_ck = ''.join(c for c in WEBMAIL_COOKIE if ord(c) < 128)
+            for part in safe_ck.split(";"):
+                part = part.strip()
+                if "=" in part:
+                    k, _, v = part.partition("=")
+                    k = k.strip(); v = v.strip()
+                    if k and len(k) < 100 and len(v) < 2000:
+                        try:
+                            sess.cookies.set(k, v, domain="webmail.ee")
+                            sess.cookies.set(k, v, domain="api-mail-v1.webmail.ee")
+                        except Exception:
+                            pass
     if WEBMAIL_COOKIE:
         for part in WEBMAIL_COOKIE.split(";"):
             part = part.strip()
@@ -2281,11 +2305,30 @@ def api_save_config():
     except Exception as ex:
         return jsonify({"ok": False, "error": str(ex)})
 
+
+@app.route("/api/clear-cookies", methods=["POST"])
+def api_clear_cookies():
+    """Clear saved webmail cookies."""
+    save_config_value("email", "webmail_cookie", "")
+    save_config_value("email", "webmail_xsrf_token", "")
+    reload_config()
+    log.info("Webmail cookies cleared")
+    return jsonify({"ok": True, "message": "Куки очищены"})
+
 @app.route("/api/save-cookies", methods=["POST"])
 def api_save_cookies():
     cookie = (request.json or {}).get("cookie","").strip()
     if not cookie:
         return jsonify({"ok":False,"error":"No cookie"})
+    # Reject if it looks like JS code instead of real cookies
+    if "fetch(" in cookie or "function(" in cookie or "document.cookie" in cookie:
+        return jsonify({"ok":False,"error":"Ошибка: в поле куки попал JS код. Нужно сначала открыть webmail.ee, потом выполнить команду в консоли WEBMAIL (F12), не в PayCalendar."})
+    # Strip non-latin-1 chars (emojis etc) that break HTTP headers
+    safe = cookie.encode("latin-1", errors="ignore").decode("latin-1")
+    save_config_value("email", "webmail_cookie", safe)
+    _capture_state.update({"status":"done","message":f"Cookies saved: {len(safe)} bytes","success":True})
+    log.info(f"Cookies saved: {len(safe)} chars")
+    return jsonify({"ok":True,"length":len(safe)})
     try:
         save_config_value("email","webmail_cookie",cookie)
         _capture_state.update({"status":"done","message":f"{len(cookie)} bytes captured","success":True})
@@ -2363,6 +2406,12 @@ def _start_background():
 
 # Auto-start when imported (gunicorn)
 if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RENDER"):
+    # Auto-clear bad cookies on startup
+    _ck = c("email", "webmail_cookie", "")
+    if _ck and ("fetch(" in _ck or "document.cookie" in _ck or '✅' in _ck):
+        log.error("STARTUP: bad cookie detected, clearing automatically")
+        save_config_value("email", "webmail_cookie", "")
+        reload_config()
     _start_background()
 
 if __name__ == "__main__":

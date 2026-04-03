@@ -58,7 +58,13 @@ h1{font-size:20px;color:#f7fafc;margin-bottom:6px}
 <div class="card">
   <a href="/" class="back">← Назад</a>
   <h1>📧 Подключение почты</h1>
+  <div id="statusBanner" style="display:none;margin-bottom:12px;padding:10px 12px;border-radius:8px;font-size:12px"></div>
   <p class="sub">webmail.ee требует входа через браузер. Выбери любой из способов:</p>
+
+  <div id="warnBadCookie" style="display:none;background:#450a0a;color:#fca5a5;border:1px solid #dc2626;border-radius:8px;padding:10px 12px;font-size:12px;margin-bottom:12px">
+    ⚠️ В памяти сохранён неверный cookie (JS код вместо настоящих куков).
+    <button onclick="clearCookies()" style="margin-left:8px;background:#dc2626;color:#fff;border:none;border-radius:4px;padding:3px 8px;cursor:pointer;font-size:11px">🗑 Очистить</button>
+  </div>
 
   <!-- METHOD 1: Console command (recommended) -->
   <div class="method rec">
@@ -192,7 +198,20 @@ fetch('/api/config').then(function(r){return r.json();}).then(function(d){
   if(d.email) document.getElementById('emailInp').value=d.email;
 }).catch(function(){});
 
+async function clearCookies(){
+  var r = await fetch('/api/clear-cookies',{method:'POST',credentials:'include'});
+  var d = await r.json();
+  if(d.ok){ document.getElementById('warnBadCookie').style.display='none'; alert('✅ Куки очищены — теперь войди через webmail.ee и выполни команду в консоли'); }
+}
+
 // Check if already connected
+fetch('/api/auth-status').then(function(r){return r.json();}).then(function(d){
+  // Check if stored cookie looks like JS code (common mistake)
+  if(d.cookie_value && (d.cookie_value.indexOf('fetch(')>=0 || d.cookie_value.indexOf('document.cookie')>=0)){
+    document.getElementById('warnBadCookie').style.display='block';
+  }
+}).catch(function(){});
+
 fetch('/api/auth-status').then(function(r){return r.json();}).then(function(d){
   if(d.cookie_set){
     document.getElementById('res1').textContent='✅ Куки уже сохранены — можно сканировать';
