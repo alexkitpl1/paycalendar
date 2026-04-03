@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>PayCalendar — Вход</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f1117; color: #e2e8f0;
+  min-height: 100vh; display: flex; align-items: center;
+  justify-content: center; padding: 20px;
+}
+.card {
+  background: #1a1f2e; border: 1px solid #2d3748;
+  border-radius: 18px; padding: 40px;
+  max-width: 520px; width: 100%;
+}
+.back { display:inline-flex; align-items:center; gap:5px; color:#4b5563;
+  font-size:12px; text-decoration:none; margin-bottom:20px; }
+.back:hover { color:#818cf8; }
+h1 { font-size:22px; color:#f7fafc; margin-bottom:6px; }
+.sub { color:#718096; font-size:13px; margin-bottom:28px; line-height:1.6; }
+
+/* Method cards */
+.method {
+  background: #111827; border: 1px solid #2d3748;
+  border-radius: 12px; padding: 20px; margin-bottom: 12px;
+}
+.method.recommended { border-color: #059669; }
+.method-header {
+  display: flex; align-items: center; gap: 10px; margin-bottom: 12px;
+}
+.method-badge {
+  font-size: 10px; font-weight: 700; padding: 3px 8px;
+  border-radius: 10px; text-transform: uppercase; letter-spacing: .5px;
+}
+.badge-green { background:#064e3b; color:#6ee7b7; }
+.badge-gray  { background:#374151; color:#9ca3af; }
+.method-title { font-size:14px; font-weight:700; color:#f7fafc; }
+.method-desc { font-size:12px; color:#9ca3af; line-height:1.5; margin-bottom:12px; }
+
+.btn {
+  width: 100%; padding: 12px; border-radius: 9px; border: none;
+  font-size: 14px; font-weight: 700; cursor: pointer;
+  transition: all .2s; display: flex; align-items: center;
+  justify-content: center; gap: 8px;
+}
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn-green { background: linear-gradient(135deg,#059669,#047857); color:white; }
+.btn-green:hover:not(:disabled) { filter:brightness(1.1); transform:translateY(-1px); }
+.btn-blue  { background: linear-gradient(135deg,#2563eb,#7c3aed); color:white; }
+.btn-blue:hover:not(:disabled)  { filter:brightness(1.1); transform:translateY(-1px); }
+.btn-gray  { background: #374151; color: #d1d5db; }
+.btn-gray:hover:not(:disabled)  { background: #4b5563; }
+
+/* Chrome status */
+.chrome-status {
+  display: flex; align-items: center; gap: 8px;
+  font-size: 12px; color: #9ca3af; margin-bottom: 10px;
+}
+.cdot { width:8px; height:8px; border-radius:50%; background:#374151; }
+.cdot.ok { background:#059669; box-shadow:0 0 6px #059669; }
+.cdot.pulse { background:#2563eb; animation:blink 1s ease infinite; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* Code box */
+.code-box {
+  background: #0a0e1a; border: 1px solid #374151;
+  border-radius: 8px; padding: 10px 12px; margin: 10px 0;
+  font-family: monospace; font-size: 11px; color: #34d399;
+  word-break: break-all; line-height: 1.6; cursor: pointer;
+  transition: border-color .2s;
+}
+.code-box:hover { border-color: #2563eb; }
+
+/* Result */
+.result {
+  padding: 12px; border-radius: 8px; font-size: 13px;
+  font-weight: 600; text-align: center; margin-top: 10px; display: none;
+}
+.result.ok  { background:#064e3b; color:#6ee7b7; border:1px solid #059669; }
+.result.err { background:#450a0a; color:#fca5a5; border:1px solid #dc2626; }
+
+/* Success */
+.success { display:none; text-align:center; padding:10px 0; }
+.success.show { display:block; }
+.s-icon { font-size:48px; margin-bottom:12px; }
+.s-title { font-size:20px; font-weight:800; color:#f7fafc; margin-bottom:6px; }
+.s-sub { color:#6ee7b7; font-size:13px; margin-bottom:20px; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display:inline-block; animation:spin .8s linear infinite; }
+</style>
+</head>
+<body>
+<div class="card">
+  <a href="/" class="back">← Назад</a>
+  <h1>🔐 Подключение почты</h1>
+  <p class="sub">Войди в webmail.ee — PayCalendar получит куки автоматически.</p>
+
+  <div id="mainContent">
+
+    <!-- METHOD 1: Chrome CDP (auto) -->
+    <div class="method recommended">
+      <div class="method-header">
+        <span class="method-badge badge-green">✨ Авто</span>
+        <span class="method-title">Этот браузер (рекомендуется)</span>
+      </div>
+      <p class="method-desc">
+        Если ты запустил PayCalendar через <strong>run_chrome.bat</strong> —
+        войди в webmail.ee в соседней вкладке, затем нажми кнопку:
+      </p>
+      <div class="chrome-status" id="chromeStatus">
+        <div class="cdot pulse" id="chromeDot"></div>
+        <span id="chromeMsg">Проверяю подключение...</span>
+      </div>
+      <button class="btn btn-green" id="grabBtn" onclick="grabFromChrome()">
+        🍪 Захватить куки из браузера
+      </button>
+      <div class="result" id="grabResult"></div>
+    </div>
+
+    <!-- METHOD 2: Open webmail + console command -->
+    <div class="method">
+      <div class="method-header">
+        <span class="method-badge badge-gray">Вручную</span>
+        <span class="method-title">Открыть webmail.ee и выполнить команду</span>
+      </div>
+      <p class="method-desc">
+        Нажми кнопку, войди в почту, затем в консоли браузера (F12 → Console)
+        выполни команду:
+      </p>
+      <button class="btn btn-blue" id="openBtn" onclick="openWebmail()" style="margin-bottom:8px">
+        🌐 Открыть webmail.ee
+      </button>
+      <div class="code-box" id="codeBox" onclick="copyCode()">
+        Нажми "Открыть webmail.ee" чтобы увидеть команду
+      </div>
+      <button class="btn btn-gray" id="copyBtn" onclick="copyCode()" style="margin-top:0">
+        📋 Скопировать команду
+      </button>
+      <div class="result" id="manualResult"></div>
+    </div>
+
+  </div>
+
+  <!-- Success -->
+  <div class="success" id="successBlock">
+    <div class="s-icon">✅</div>
+    <div class="s-title">Подключено!</div>
+    <div class="s-sub" id="successMsg">Куки сохранены</div>
+    <button class="btn btn-green" onclick="window.location='/'" style="margin-top:4px">
+      📅 Открыть платёжный календарь →
+    </button>
+  </div>
+</div>
+
+<script>
+const GRAB_CMD = `fetch('http://localhost:5050/api/save-cookies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookie:document.cookie})}).then(r=>r.json()).then(d=>alert(d.ok?'✅ Готово! Вернись в PayCalendar.':'❌ Ошибка: '+d.error))`;
+
+// ── Check Chrome CDP status ───────────────────────────────────────────────────
+async function checkChrome() {
+  try {
+    const r = await fetch('/api/chrome-status');
+    const d = await r.json();
+    const dot = document.getElementById('chromeDot');
+    const msg = document.getElementById('chromeMsg');
+    if (d.running && d.webmail_open) {
+      dot.className = 'cdot ok';
+      msg.textContent = `✅ webmail.ee открыт (${d.tabs} вкладок) — нажми "Захватить куки"`;
+      document.getElementById('grabBtn').style.background = 'linear-gradient(135deg,#059669,#047857)';
+    } else if (d.running) {
+      dot.className = 'cdot pulse';
+      msg.textContent = `Chrome подключён (${d.tabs} вкладок) — открой вкладку webmail.ee и войди`;
+    } else {
+      dot.className = 'cdot';
+      msg.textContent = 'Chrome не подключён — открыт через run_chrome.bat?';
+    }
+  } catch(e) {
+    document.getElementById('chromeMsg').textContent = 'Ошибка проверки';
+  }
+}
+checkChrome();
+setInterval(checkChrome, 3000);
+
+// ── CDP grab ──────────────────────────────────────────────────────────────────
+async function grabFromChrome() {
+  const btn = document.getElementById('grabBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">⏳</span> Захватываю...';
+  try {
+    const r = await fetch('/api/chrome-grab');
+    const d = await r.json();
+    showResult('grabResult', d.ok, d.ok
+      ? `Захвачено ${d.length} байт куков`
+      : d.error);
+    if (d.ok) setTimeout(() => showSuccess(d.length + ' байт куков'), 800);
+  } catch(e) {
+    showResult('grabResult', false, e.message);
+  }
+  btn.disabled = false;
+  btn.innerHTML = '🍪 Захватить куки из браузера';
+}
+
+// ── Manual method ─────────────────────────────────────────────────────────────
+function openWebmail() {
+  const w=1100,h=720,l=Math.round((screen.width-w)/2),t=Math.round((screen.height-h)/2);
+  window.open('https://webmail.ee','webmail',`width=${w},height=${h},left=${l},top=${t}`);
+  // Show command
+  document.getElementById('codeBox').textContent = GRAB_CMD;
+  document.getElementById('codeBox').style.borderColor = '#2563eb';
+  startPoll();
+}
+
+function copyCode() {
+  const code = GRAB_CMD;
+  navigator.clipboard.writeText(code).then(() => {
+    const btn = document.getElementById('copyBtn');
+    btn.textContent = '✅ Скопировано! Вставь в Console → Enter';
+    btn.style.background = '#059669';
+    btn.style.color = 'white';
+    setTimeout(() => {
+      btn.textContent = '📋 Скопировать команду';
+      btn.style.background = '';
+      btn.style.color = '';
+    }, 4000);
+  });
+}
+
+function startPoll() {
+  fetch('/api/capture-stop',{method:'POST'}).catch(()=>{});
+  const p = setInterval(async () => {
+    const r = await fetch('/api/capture-status').catch(()=>null);
+    if (!r) return;
+    const d = await r.json().catch(()=>{});
+    if (d && d.status==='done' && d.success) {
+      clearInterval(p);
+      showSuccess(d.message);
+    }
+  }, 1000);
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+function showResult(id, ok, msg) {
+  const el = document.getElementById(id);
+  el.className = 'result ' + (ok?'ok':'err');
+  el.textContent = (ok?'✅ ':'❌ ') + msg;
+  el.style.display = 'block';
+}
+
+function showSuccess(msg) {
+  document.getElementById('mainContent').style.display = 'none';
+  const s = document.getElementById('successBlock');
+  s.classList.add('show');
+  document.getElementById('successMsg').textContent = msg || 'Готово';
+}
+
+// Auto-detect already captured
+fetch('/api/capture-status').then(r=>r.json()).then(d=>{
+  if(d.status==='done' && d.success) showSuccess(d.message);
+});
+
+// Poll while page is open
+setInterval(async()=>{
+  const r = await fetch('/api/capture-status').catch(()=>null);
+  if(!r) return;
+  const d = await r.json().catch(()=>{});
+  if(d && d.status==='done' && d.success) showSuccess(d.message);
+}, 2000);
+</script>
+</body>
+</html>

@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>PayCalendar — Настройка</title>
+<style>
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background: #0f1117; color: #e2e8f0;
+  min-height: 100vh; display: flex; align-items: center;
+  justify-content: center; padding: 20px;
+}
+.card {
+  background: #1a1f2e; border: 1px solid #2d3748;
+  border-radius: 18px; padding: 40px;
+  max-width: 500px; width: 100%;
+}
+
+/* Header */
+.logo { font-size: 40px; margin-bottom: 12px; }
+h1 { font-size: 22px; color: #f7fafc; margin-bottom: 6px; }
+.sub { color: #718096; font-size: 13px; margin-bottom: 32px; line-height: 1.6; }
+
+/* Status pill */
+.pill {
+  display: inline-flex; align-items: center; gap: 8px;
+  padding: 6px 14px; border-radius: 20px; font-size: 12px;
+  font-weight: 600; margin-bottom: 28px;
+}
+.pill.ok   { background: #064e3b; color: #6ee7b7; border: 1px solid #059669; }
+.pill.warn { background: #451a03; color: #fbbf24; border: 1px solid #d97706; }
+.pill.err  { background: #450a0a; color: #f87171; border: 1px solid #dc2626; }
+.pill-dot { width: 8px; height: 8px; border-radius: 50%; }
+.pill.ok .pill-dot   { background: #059669; box-shadow: 0 0 6px #059669; }
+.pill.warn .pill-dot { background: #d97706; animation: blink 2s ease infinite; }
+.pill.err .pill-dot  { background: #dc2626; }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.3} }
+
+/* Fields */
+.field { margin-bottom: 14px; }
+.field label {
+  display: block; font-size: 11px; color: #6b7280;
+  margin-bottom: 5px; text-transform: uppercase; letter-spacing: .5px;
+}
+.field input {
+  width: 100%; background: #111827; border: 1px solid #374151;
+  border-radius: 9px; padding: 12px 16px; color: #e2e8f0;
+  font-size: 14px; outline: none; transition: border .2s;
+}
+.field input:focus { border-color: #2563eb; }
+
+/* Password row */
+.pwd-row { display: flex; gap: 8px; }
+.pwd-row input { flex: 1; }
+.eye {
+  background: #1f2937; border: 1px solid #374151; border-radius: 9px;
+  color: #9ca3af; cursor: pointer; padding: 0 14px;
+  font-size: 16px; transition: all .15s; flex-shrink: 0;
+}
+.eye:hover { background: #374151; color: #e2e8f0; }
+
+/* Main button */
+.btn-main {
+  width: 100%; padding: 14px; border-radius: 10px; border: none;
+  background: linear-gradient(135deg, #2563eb 0%, #7c3aed 100%);
+  color: white; font-size: 15px; font-weight: 700;
+  cursor: pointer; transition: all .2s; margin-top: 8px;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+}
+.btn-main:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.1); }
+.btn-main:disabled { opacity: .5; cursor: not-allowed; }
+
+.btn-sec {
+  width: 100%; padding: 11px; border-radius: 10px; border: 1px solid #374151;
+  background: transparent; color: #9ca3af; font-size: 13px;
+  cursor: pointer; transition: all .2s; margin-top: 8px;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+}
+.btn-sec:hover { background: #1f2937; color: #e2e8f0; }
+
+/* Log */
+.logwrap { margin-top: 16px; display: none; }
+.logbox {
+  background: #0d1117; border: 1px solid #1f2937;
+  border-radius: 8px; padding: 10px 12px;
+  font-family: monospace; font-size: 11px;
+  max-height: 150px; overflow-y: auto;
+}
+.ll { padding: 1px 0; line-height: 1.6; }
+.ll.ok   { color: #34d399; } .ll.err  { color: #f87171; }
+.ll.warn { color: #fbbf24; } .ll.info { color: #6b8cba; }
+
+/* Divider */
+.or { display: flex; align-items: center; gap: 10px; margin: 16px 0;
+  font-size: 12px; color: #4b5563; }
+.or::before, .or::after { content:''; flex:1; height:1px; background:#2d3748; }
+
+/* Bookmarklet zone */
+.bm-zone {
+  background: #111827; border: 1px dashed #374151;
+  border-radius: 12px; padding: 18px 16px; text-align: center;
+}
+.bm-title { font-size: 13px; color: #9ca3af; margin-bottom: 12px; }
+.bm-title strong { color: #e2e8f0; }
+.bm-btn {
+  display: inline-flex; align-items: center; gap: 8px;
+  background: #1e3a5f; border: 1px solid #2563eb;
+  color: #60a5fa; border-radius: 8px; padding: 10px 20px;
+  font-size: 13px; font-weight: 700; text-decoration: none;
+  cursor: grab; user-select: none; transition: all .2s;
+}
+.bm-btn:hover { background: #1d4ed8; color: white; transform: translateY(-1px); }
+.bm-hint { font-size: 11px; color: #4b5563; margin-top: 10px; line-height: 1.6; }
+
+/* Cookie Editor */
+.ce-block { margin-top: 16px; }
+.ce-block textarea {
+  width: 100%; background: #0d1117; border: 1px solid #1f2937;
+  border-radius: 8px; padding: 10px; color: #e2e8f0;
+  font-family: monospace; font-size: 11px; resize: vertical;
+  min-height: 70px; outline: none; margin-top: 8px;
+}
+.ce-block textarea:focus { border-color: #2563eb; }
+.ce-label { font-size: 12px; color: #6b7280; }
+.ce-label a { color: #4b6bff; }
+
+/* Result */
+.result-ok  { display:none; background:#064e3b; color:#6ee7b7; border:1px solid #059669; border-radius:8px; padding:12px 16px; text-align:center; font-weight:600; font-size:14px; margin-top:12px; }
+.result-err { display:none; background:#450a0a; color:#f87171; border:1px solid #dc2626; border-radius:8px; padding:12px 16px; text-align:center; font-weight:600; font-size:14px; margin-top:12px; }
+
+/* Go button */
+.btn-go {
+  display: none; width: 100%; padding: 14px; border-radius: 10px; border: none;
+  background: linear-gradient(135deg, #059669 0%, #047857 100%);
+  color: white; font-size: 15px; font-weight: 700;
+  cursor: pointer; margin-top: 14px; transition: all .2s;
+  align-items: center; justify-content: center; gap: 10px;
+}
+.btn-go:hover { filter: brightness(1.1); }
+
+.back { display:inline-flex; align-items:center; gap:5px; color:#4b5563; font-size:12px; text-decoration:none; margin-bottom:20px; }
+.back:hover { color:#818cf8; }
+
+@keyframes spin { to { transform: rotate(360deg); } }
+.spin { display: inline-block; animation: spin .8s linear infinite; }
+</style>
+</head>
+<body>
+<div class="card">
+  <a href="/" class="back">← Назад</a>
+  <div class="logo">📧</div>
+  <h1>Подключение почты</h1>
+  <p class="sub">Введи данные один раз — PayCalendar будет автоматически обновлять сессию и сканировать почту.</p>
+
+  <!-- Status -->
+  <div class="pill warn" id="statusPill">
+    <div class="pill-dot"></div>
+    <span id="statusText">Проверяю подключение...</span>
+  </div>
+
+  <!-- Form -->
+  <div class="field">
+    <label>Email</label>
+    <input type="email" id="email" placeholder="vadim@welltechnology.eu" autocomplete="email">
+  </div>
+  <div class="field">
+    <label>Пароль от почты</label>
+    <div class="pwd-row">
+      <input type="password" id="pwd" placeholder="••••••••"
+             autocomplete="current-password"
+             onkeydown="if(event.key==='Enter') connect()">
+      <button class="eye" onclick="toggleEye()" id="eyeBtn" type="button">👁</button>
+    </div>
+  </div>
+
+  <!-- PRIMARY: Open browser login page -->
+  <a href="/login-helper" class="btn-main" style="text-decoration:none;margin-bottom:4px">
+    🌐 Войти через браузер (рекомендуется)
+  </a>
+
+  <!-- SECONDARY: Direct password attempt -->
+  <button class="btn-sec" id="connectBtn" onclick="connect()" style="margin-top:0">
+    🔑 Попробовать войти напрямую (логин/пароль)
+  </button>
+
+  <!-- Logs -->
+  <div class="logwrap" id="logWrap">
+    <div class="logbox" id="logBox"></div>
+  </div>
+
+  <div class="result-ok"  id="resOk"></div>
+  <div class="result-err" id="resErr"></div>
+
+  <button class="btn-go" id="goBtn" onclick="window.location='/'">
+    📅 Открыть платёжный календарь →
+  </button>
+
+  <div class="or">или захвати куки из браузера</div>
+
+  <!-- Bookmarklet -->
+  <div class="bm-zone">
+    <div class="bm-title">
+      <strong>🔖 Закладка</strong> — если webmail.ee уже открыт
+    </div>
+    <a class="bm-btn" id="bmLink" href="#" draggable="true">🍪 PayCalendar — захватить</a>
+    <p class="bm-hint">
+      Перетащи кнопку в панель закладок → войди в webmail.ee → кликни закладку.<br>
+      PayCalendar автоматически получит куки и обновится.
+    </p>
+  </div>
+
+  <!-- Cookie Editor -->
+  <div class="ce-block">
+    <div class="ce-label">
+      Или импорт из <a href="https://www.hotcleaner.com/cookie-editor/" target="_blank">Cookie Editor</a>:
+      <br>открой webmail.ee → кликни расширение → Export → вставь JSON:
+    </div>
+    <textarea id="ceJson" placeholder='[{"name":"uuid","value":"...","domain":"webmail.ee"},...]'></textarea>
+    <button class="btn-sec" onclick="importCE()" type="button">📥 Импортировать из Cookie Editor</button>
+  </div>
+
+</div>
+
+<script>
+// ── Bookmarklet ───────────────────────────────────────────────────────────────
+document.getElementById('bmLink').href = `javascript:(function(){
+  var c=document.cookie;
+  if(!c||c.length<20){alert('Нет куков. Открой webmail.ee и войди.');return;}
+  fetch('http://localhost:5050/api/save-cookies',{
+    method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cookie:c})
+  }).then(r=>r.json()).then(d=>{
+    alert(d.ok?'✅ PayCalendar: куки получены!':'❌ '+d.error);
+    if(d.ok) window.open('http://localhost:5050','_blank');
+  }).catch(e=>alert('❌ PayCalendar не запущен: '+e));
+})();`;
+
+// ── Load config ───────────────────────────────────────────────────────────────
+async function doPlaywright() {
+  const email = document.getElementById('email').value.trim();
+  const pwd   = document.getElementById('pwd').value.trim();
+  if (!email || !pwd) { showResult(false, 'Введи email и пароль'); return; }
+
+  // Save credentials first
+  await fetch('/api/save-config', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({section:'email', key:'address', value: email})});
+  await fetch('/api/save-config', {method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({section:'email', key:'password', value: pwd})});
+
+  const btn = document.getElementById('pwBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">🤖</span> Открываю браузер...';
+  document.getElementById('logBox').innerHTML = '';
+  document.getElementById('logWrap').style.display = 'block';
+  document.getElementById('resOk').style.display = 'none';
+  document.getElementById('resErr').style.display = 'none';
+  document.getElementById('goBtn').style.display = 'none';
+
+  addLog('Запускаю Playwright...');
+  try {
+    const es = new EventSource('/api/playwright-login/stream');
+    es.onmessage = e => {
+      const d = JSON.parse(e.data);
+      if (d.done) {
+        es.close();
+        btn.disabled = false;
+        btn.innerHTML = d.ok ? '✅ Подключено' : '🤖 Войти автоматически (Playwright)';
+        if (d.ok) {
+          showResult(true, 'Подключено! Куки сохранены автоматически.');
+          document.getElementById('goBtn').style.display = 'flex';
+        } else {
+          showResult(false, 'Не удалось. Попробуй вручную ↓');
+        }
+        return;
+      }
+      addLog(d.msg, d.type || 'info');
+    };
+    es.onerror = () => {
+      es.close();
+      btn.disabled = false;
+      btn.innerHTML = '🤖 Войти автоматически (Playwright)';
+      showResult(false, 'Ошибка соединения с сервером');
+    };
+  } catch(e) {
+    btn.disabled = false;
+    btn.innerHTML = '🤖 Войти автоматически (Playwright)';
+    showResult(false, e.message);
+  }
+}
+
+fetch('/api/config').then(r=>r.json()).then(d=>{
+  if(d.email)    document.getElementById('email').value = d.email;
+  if(d.password) document.getElementById('pwd').value   = d.password;
+  checkStatus();
+});
+
+// ── Check current auth status ────────────────────────────────────────────────
+async function checkStatus() {
+  try {
+    const r = await fetch('/api/auth-status');
+    const d = await r.json();
+    setPill(d.status, d.message);
+    if(d.status === 'ok') showGo();
+  } catch(e) {
+    setPill('warn', 'Сервер запускается...');
+  }
+}
+
+function setPill(st, msg) {
+  const p = document.getElementById('statusPill');
+  p.className = 'pill ' + (st==='ok'?'ok': st==='err'?'err':'warn');
+  document.getElementById('statusText').textContent = msg;
+}
+
+// Poll for auth status updates (bookmarklet etc)
+let pollTimer = setInterval(async()=>{
+  const r = await fetch('/api/capture-status').catch(()=>null);
+  if(!r) return;
+  const d = await r.json().catch(()=>{});
+  if(d && d.status==='done' && d.success){
+    clearInterval(pollTimer);
+    setPill('ok','✅ Подключено!');
+    showResult(true, 'Куки получены автоматически!');
+    showGo();
+  }
+}, 2000);
+
+// ── UI helpers ────────────────────────────────────────────────────────────────
+function toggleEye() {
+  const inp = document.getElementById('pwd');
+  const btn = document.getElementById('eyeBtn');
+  inp.type = inp.type==='password' ? 'text' : 'password';
+  btn.textContent = inp.type==='password' ? '👁' : '🙈';
+}
+
+function log(msg, t='info') {
+  document.getElementById('logWrap').style.display = 'block';
+  const el = document.createElement('div');
+  el.className = 'll ' + t;
+  el.textContent = ({ok:'✓',err:'✗',warn:'⚠',info:'·'}[t]||'·') + ' ' + msg;
+  const box = document.getElementById('logBox');
+  box.appendChild(el);
+  box.scrollTop = box.scrollHeight;
+}
+
+function showResult(ok, msg) {
+  if(ok) {
+    const el = document.getElementById('resOk');
+    el.textContent = '✅ ' + msg;
+    el.style.display = 'block';
+    document.getElementById('resErr').style.display = 'none';
+  } else {
+    const el = document.getElementById('resErr');
+    el.textContent = '❌ ' + msg;
+    el.style.display = 'block';
+  }
+}
+
+function showGo() {
+  const b = document.getElementById('goBtn');
+  b.style.display = 'flex';
+}
+
+// ── Connect (auto-login) ──────────────────────────────────────────────────────
+async function connect() {
+  const email = document.getElementById('email').value.trim();
+  const pwd   = document.getElementById('pwd').value.trim();
+  if(!email || !pwd) { showResult(false,'Введи email и пароль'); return; }
+
+  const btn = document.getElementById('connectBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spin">⏳</span> Подключаюсь...';
+  document.getElementById('logBox').innerHTML = '';
+  document.getElementById('resOk').style.display = 'none';
+  document.getElementById('resErr').style.display = 'none';
+  setPill('warn', `Подключаюсь как ${email}...`);
+
+  try {
+    // Save credentials first
+    await fetch('/api/save-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section:'email',key:'address',value:email})});
+    await fetch('/api/save-config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({section:'email',key:'password',value:pwd})});
+
+    const r = await fetch('/api/webmail-login',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({email, password: pwd})
+    });
+    const d = await r.json();
+    (d.logs||[]).forEach(l => log(l.msg, l.type||'info'));
+
+    if(d.ok) {
+      setPill('ok', `✅ Подключено: ${email}`);
+      showResult(true, 'Подключено! Сессия обновляется автоматически.');
+      btn.innerHTML = '✅ Подключено';
+      showGo();
+    } else {
+      setPill('err', 'Автовход не удался');
+      showResult(false, (d.error||'Ошибка') + ' — используй закладку или Cookie Editor ниже');
+      btn.disabled = false;
+      btn.innerHTML = '🔑 Подключить почту';
+    }
+  } catch(e) {
+    setPill('err', 'Ошибка соединения');
+    showResult(false, e.message);
+    btn.disabled = false;
+    btn.innerHTML = '🔑 Подключить почту';
+  }
+}
+
+// ── Cookie Editor import ──────────────────────────────────────────────────────
+async function importCE() {
+  const raw = document.getElementById('ceJson').value.trim();
+  if(!raw) { showResult(false,'Вставь JSON из Cookie Editor'); return; }
+  try {
+    const r = await fetch('/api/import-cookies',{
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({cookies: JSON.parse(raw)})
+    });
+    const d = await r.json();
+    if(d.ok) {
+      setPill('ok',`✅ Импортировано ${d.count} куков`);
+      showResult(true, `Импортировано ${d.count} куков (${d.length} байт)`);
+      showGo();
+    } else {
+      showResult(false, d.error);
+    }
+  } catch(e) {
+    showResult(false, 'Ошибка JSON: ' + e.message);
+  }
+}
+</script>
+</body>
+</html>

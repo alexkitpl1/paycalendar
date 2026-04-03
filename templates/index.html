@@ -1,0 +1,1060 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PayCalendar</title>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root,[data-theme="dark"]{
+  --bg:#0c0f14;--bg2:#0f1520;--bg3:#111820;
+  --border:#131e2d;--border2:#1e2d45;--border3:#2a3a50;
+  --text:#c8d8ec;--text2:#8aa8c8;--text3:#5a7a9a;--text4:#2a3a4a;
+  --white:#f0f6ff;--topbar:rgba(12,15,20,.97);--sum-bg:#0a0d12;--sp-head:#0e1420;
+  --inv-bg:#0f1520;--modal-bg:#0f1720;--log-bg:#080c12;--dow-bg:#0c0f14;--form-bg:#0c1420;
+  --gold:#f59e0b;--gold2:#d97706;--red:#f87171;--green:#4ade80;--amber:#fbbf24;
+  --blue:#38bdf8;--purple:#c084fc;--teal:#2dd4bf;--orange:#fb923c;
+}
+[data-theme="grey"]{
+  --bg:#1e2128;--bg2:#252930;--bg3:#2a2e37;
+  --border:#30343e;--border2:#3a404c;--border3:#464e5c;
+  --text:#d4dce8;--text2:#9aa8be;--text3:#6a7a96;--text4:#3a4560;
+  --white:#eef2f8;--topbar:rgba(28,31,38,.97);--sum-bg:#191c22;--sp-head:#1e222c;
+  --inv-bg:#252930;--modal-bg:#1e2230;--log-bg:#141720;--dow-bg:#1e2128;--form-bg:#181c24;
+  --gold:#f59e0b;--gold2:#d97706;--red:#f87171;--green:#4ade80;--amber:#fbbf24;
+  --blue:#38bdf8;--purple:#c084fc;--teal:#2dd4bf;--orange:#fb923c;
+}
+[data-theme="white"]{
+  --bg:#f5f7fa;--bg2:#fff;--bg3:#eef1f6;
+  --border:#dde2ea;--border2:#c8d0dc;--border3:#b0bccb;
+  --text:#1a2540;--text2:#3a5070;--text3:#6a85a0;--text4:#a0b4c8;
+  --white:#0a1828;--topbar:rgba(245,247,250,.97);--sum-bg:#eef1f6;--sp-head:#f8f9fc;
+  --inv-bg:#fff;--modal-bg:#fff;--log-bg:#f0f3f8;--dow-bg:#f5f7fa;--form-bg:#f0f4f9;
+  --gold:#d97706;--gold2:#b45309;--red:#dc2626;--green:#16a34a;--amber:#d97706;
+  --blue:#0284c7;--purple:#7c3aed;--teal:#0d9488;--orange:#ea580c;
+}
+html,body{height:100%;overflow:hidden;background:var(--bg)}
+body{font-family:'DM Sans',sans-serif;color:var(--text);display:flex;flex-direction:column}
+::-webkit-scrollbar{width:5px;height:5px}
+::-webkit-scrollbar-thumb{background:var(--border2);border-radius:3px}
+button{cursor:pointer;font-family:'DM Sans',sans-serif}
+input,select{font-family:'DM Sans',sans-serif}
+
+/* TOPBAR */
+#topbar{display:flex;align-items:center;justify-content:space-between;padding:11px 18px;border-bottom:1px solid var(--border);background:var(--topbar);backdrop-filter:blur(20px);flex-shrink:0;gap:10px;flex-wrap:wrap;z-index:50}
+.brand{display:flex;align-items:center;gap:10px;flex-shrink:0}
+.brand-icon{width:32px;height:32px;border-radius:7px;background:linear-gradient(135deg,var(--gold),var(--gold2));display:flex;align-items:center;justify-content:center;font-family:'Playfair Display',serif;font-size:14px;font-weight:700;color:#000}
+.brand-name{font-family:'Playfair Display',serif;font-size:16px;font-weight:600;color:var(--white);letter-spacing:-.3px}
+.brand-sub{font-family:'DM Mono',monospace;font-size:8px;color:var(--text4);letter-spacing:1.5px;margin-top:1px}
+#company-name{font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);padding:4px 10px;border:1px solid var(--border2);border-radius:5px}
+.topbar-center{display:flex;align-items:center;gap:8px;flex:1;justify-content:center;flex-wrap:wrap}
+.topbar-right{display:flex;align-items:center;gap:7px;flex-wrap:wrap;flex-shrink:0}
+.month-nav{display:flex;align-items:center;gap:8px}
+#month-label{font-family:'Playfair Display',serif;font-size:17px;font-weight:600;color:var(--white);min-width:180px;text-align:center;letter-spacing:-.3px}
+.nav-btn{width:27px;height:27px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--text3);font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .15s}
+.nav-btn:hover{border-color:var(--border3);color:var(--text);background:var(--bg2)}
+.stat-pill{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:16px;border:1px solid var(--border2);background:var(--bg3);font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);white-space:nowrap}
+.stat-pill .pv{font-weight:500}
+.pill-red{border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.06)}.pill-red .pv{color:var(--red)}
+.pill-amber{border-color:rgba(251,191,36,.3);background:rgba(251,191,36,.06)}.pill-amber .pv{color:var(--amber)}
+.pill-blue{border-color:rgba(56,189,248,.2);background:rgba(56,189,248,.05)}.pill-blue .pv{color:var(--blue)}
+
+/* BUTTONS */
+.btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:7px;border:none;font-size:12px;font-weight:600;transition:all .18s;white-space:nowrap}
+.btn-gold{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#000}
+.btn-gold:hover{filter:brightness(1.1);transform:translateY(-1px)}
+.btn-gold:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.btn-glass{background:rgba(255,255,255,.04);color:var(--text2);border:1px solid var(--border2)}
+.btn-glass:hover{border-color:var(--border3);color:var(--text)}
+.btn-sm{padding:3px 9px;font-size:11px;border-radius:5px}
+.btn-paid{background:rgba(74,222,128,.1);color:var(--green);border:1px solid rgba(74,222,128,.2)}
+.btn-paid:hover{background:rgba(74,222,128,.2)}
+.btn-edit{background:rgba(56,189,248,.1);color:var(--blue);border:1px solid rgba(56,189,248,.2)}
+.btn-edit:hover{background:rgba(56,189,248,.2)}
+.btn-del{background:rgba(248,113,113,.1);color:var(--red);border:1px solid rgba(248,113,113,.2)}
+.btn-del:hover{background:rgba(248,113,113,.2)}
+.view-toggle{display:flex;border:1px solid var(--border2);border-radius:7px;overflow:hidden}
+.vtab{padding:5px 12px;font-size:12px;font-weight:600;background:transparent;border:none;color:var(--text3);transition:all .15s}
+.vtab.active{background:var(--bg2);color:var(--text)}
+.vtab:hover:not(.active){color:var(--text2)}
+
+/* THEME */
+.theme-sw{display:flex;border:1px solid var(--border2);border-radius:7px;overflow:hidden;gap:1px;background:var(--border)}
+.th-btn{width:26px;height:26px;border:none;cursor:pointer;position:relative;transition:transform .15s;display:flex;align-items:center;justify-content:center;font-size:12px}
+.th-btn:hover{transform:scale(1.1)}
+.th-btn.active::after{content:'';position:absolute;bottom:2px;left:50%;transform:translateX(-50%);width:12px;height:2px;border-radius:2px;background:var(--gold)}
+.th-dark{background:#0c0f14}.th-grey{background:#2a2e37}.th-white{background:#f5f7fa}
+
+/* SUMMARY BAR */
+#sum-bar{display:flex;align-items:stretch;border-bottom:1px solid var(--border);background:var(--sum-bg);flex-shrink:0;overflow-x:auto}
+.sep-lbl{padding:0 12px;display:flex;align-items:center;font-family:'DM Mono',monospace;font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--text4);white-space:nowrap;flex-shrink:0}
+.sb{flex:1;min-width:130px;padding:10px 14px;border-right:1px solid var(--border);display:flex;flex-direction:column;gap:2px;position:relative;overflow:hidden}
+.sb::after{content:'';position:absolute;bottom:0;left:0;width:100%;height:2px}
+.sb-m1::after{background:linear-gradient(90deg,var(--blue),transparent)}
+.sb-m2::after{background:linear-gradient(90deg,var(--red),transparent)}
+.sb-m3::after{background:linear-gradient(90deg,var(--green),transparent)}
+.sb-m4::after{display:none}
+.sb-w1::after{background:linear-gradient(90deg,var(--purple),transparent)}
+.sb-w2::after{background:linear-gradient(90deg,var(--orange),transparent)}
+.sb-w3::after{background:linear-gradient(90deg,var(--teal),transparent)}
+.sb:last-child{border-right:none}
+.sb-lbl{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text4);margin-bottom:1px}
+.sb-val{font-family:'DM Mono',monospace;font-size:16px;font-weight:500;letter-spacing:-.5px;line-height:1.1}
+.sb-sub{font-size:10px;color:var(--text4);margin-top:1px}
+.sb-prog{height:3px;background:var(--bg3);border-radius:3px;overflow:hidden;margin-top:4px}
+.sb-prog-fill{height:100%;border-radius:3px;transition:width .5s}
+.sb-div{width:1px;background:linear-gradient(180deg,transparent,var(--border2),transparent);margin:6px 0;flex-shrink:0}
+
+/* MAIN */
+#body-wrap{flex:1;display:flex;overflow:hidden}
+#cal-main{flex:1;overflow:auto}
+
+/* CALENDAR */
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);border-left:1px solid var(--border);border-top:1px solid var(--border)}
+.dow-h{padding:9px 0;text-align:center;font-family:'DM Mono',monospace;font-size:9px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text4);border-right:1px solid var(--border);border-bottom:1px solid var(--border);background:var(--dow-bg);position:sticky;top:0;z-index:10}
+.day{border-right:1px solid var(--border);border-bottom:1px solid var(--border);min-height:110px;padding:7px;cursor:pointer;transition:background .1s;position:relative}
+.day:hover{background:rgba(255,255,255,.015)}
+.day.today{background:rgba(245,158,11,.03)}.day.today::before{content:'';position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,var(--gold),var(--gold2))}
+.day.dim{opacity:.28}.day.act{background:rgba(56,189,248,.05)}
+.day.has-ov{border-top:2px solid rgba(248,113,113,.5)}.day.has-ug{border-top:2px solid rgba(251,191,36,.45)}
+.day-n{display:flex;align-items:center;justify-content:space-between;font-family:'DM Mono',monospace;font-size:11px;color:var(--text3);margin-bottom:5px}
+.dn{display:inline-flex;align-items:center;justify-content:center;width:21px;height:21px;border-radius:50%;font-size:11px}
+.today .dn{background:linear-gradient(135deg,var(--gold),var(--gold2));color:#000;font-weight:700}
+.d-sum{font-family:'DM Mono',monospace;font-size:9px;color:var(--text4)}.d-sum.has{color:#4a8a5a}
+.chip{display:flex;align-items:center;gap:4px;padding:2px 5px;border-radius:4px;margin-bottom:2px;font-size:10px;overflow:hidden;border-left:2px solid;transition:filter .1s}
+.chip:hover{filter:brightness(1.2)}
+.chip-n{flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.chip-a{font-family:'DM Mono',monospace;font-size:9px;white-space:nowrap;opacity:.8}
+.chip-d{width:4px;height:4px;border-radius:50%;flex-shrink:0;background:currentColor}
+.more{font-family:'DM Mono',monospace;font-size:9px;color:var(--text4)}
+
+/* SIDE PANEL */
+#sp{width:285px;min-width:285px;border-left:1px solid var(--border);display:flex;flex-direction:column;overflow:hidden;animation:slideIn .18s ease}
+@keyframes slideIn{from{transform:translateX(14px);opacity:0}to{transform:none;opacity:1}}
+.sp-h{padding:16px 14px 12px;border-bottom:1px solid var(--border);background:var(--sp-head);flex-shrink:0}
+.sp-date{font-family:'Playfair Display',serif;font-size:20px;font-weight:600;color:var(--white);letter-spacing:-.4px}
+.sp-dow{font-family:'DM Mono',monospace;font-size:8px;color:var(--text4);letter-spacing:1.5px;text-transform:uppercase;margin-top:2px}
+.sp-tot{margin-top:10px;padding:9px 11px;border-radius:7px;background:rgba(245,158,11,.07);border:1px solid rgba(245,158,11,.15)}
+.sp-tot-l{font-family:'DM Mono',monospace;font-size:8px;color:#a07020;letter-spacing:1px;text-transform:uppercase}
+.sp-tot-v{font-family:'DM Mono',monospace;font-size:18px;font-weight:500;color:var(--gold);margin-top:1px}
+.sp-b{flex:1;overflow-y:auto;padding:12px}
+.sp-sec{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:1.5px;text-transform:uppercase;color:var(--text4);margin-bottom:7px}
+.icard{background:var(--inv-bg);border:1px solid var(--border2);border-radius:8px;padding:10px;margin-bottom:7px;border-left:3px solid;transition:border-color .12s}
+.icard:hover{border-color:var(--border3)}
+.ic-vat{display:flex;gap:8px;flex-wrap:wrap;margin:4px 0 2px}
+.vat-net{font-size:11px;color:var(--text3);background:var(--bg2);padding:2px 7px;border-radius:4px}
+.vat-tax{font-size:11px;color:#f59e0b;background:#451a0322;padding:2px 7px;border-radius:4px;border:1px solid #d9770622}
+.btn-pri{font-size:11px;padding:3px 8px;border-radius:5px;white-space:nowrap}
+.btn-pri-high  {background:#450a0a22;color:#f87171;border:1px solid #dc262644}
+.btn-pri-medium{background:#451a0322;color:#fbbf24;border:1px solid #d9770644}
+.btn-pri-low   {background:#064e3b22;color:#6ee7b7;border:1px solid #05966944}
+.btn-pri-none  {background:transparent;color:var(--text3);border:1px solid var(--border2)}
+.chip-pri{font-size:9px;margin-left:1px;vertical-align:middle}
+.ic-overdue{
+  font-size:11px;font-weight:700;color:#fff;
+  background:#dc2626;border-radius:5px;
+  padding:2px 8px;margin-left:4px;white-space:nowrap;
+  animation:pulse-red 2s ease infinite;
+}
+@keyframes pulse-red{0%,100%{opacity:1}50%{opacity:.7}}
+.ic-v{font-size:13px;font-weight:600;color:var(--white)}.ic-d{font-size:10px;color:var(--text4);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ic-m{display:flex;align-items:center;justify-content:space-between;margin-top:6px}
+.ic-a{font-family:'DM Mono',monospace;font-size:13px;font-weight:500}
+.ic-b{font-family:'DM Mono',monospace;font-size:9px;font-weight:600;padding:2px 7px;border-radius:10px}
+.ic-n{font-family:'DM Mono',monospace;font-size:9px;color:var(--text4);margin-top:3px}
+.ic-act{display:flex;gap:5px;margin-top:7px}
+.sp-empty{text-align:center;padding:36px 0;color:var(--text4)}
+
+/* LEGEND */
+#legend{padding:9px 14px;border-top:1px solid var(--border);display:flex;gap:12px;align-items:center;flex-wrap:wrap;background:var(--sum-bg);flex-shrink:0}
+.leg-l{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:2px;text-transform:uppercase;color:var(--text4)}
+.leg-i{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--text3)}
+.leg-d{width:7px;height:7px;border-radius:2px;flex-shrink:0}
+.leg-sep{width:1px;height:11px;background:var(--border)}
+
+/* MODAL */
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.78);z-index:200;display:flex;align-items:center;justify-content:center;backdrop-filter:blur(6px);animation:fadeIn .18s}
+@keyframes fadeIn{from{opacity:0}to{opacity:1}}
+.modal{background:var(--modal-bg);border:1px solid var(--border2);border-radius:13px;width:450px;max-width:95vw;max-height:88vh;overflow-y:auto;padding:22px;animation:popIn .22s cubic-bezier(.34,1.56,.64,1)}
+@keyframes popIn{from{transform:scale(.94);opacity:0}to{transform:scale(1);opacity:1}}
+.modal-title{font-family:'Playfair Display',serif;font-size:18px;font-weight:600;color:var(--white);margin-bottom:16px}
+.modal-close{float:right;background:none;border:none;color:var(--text3);font-size:20px;cursor:pointer;margin-top:-4px}
+.modal-close:hover{color:var(--text)}
+.fr{margin-bottom:11px}
+.fr label{display:block;font-family:'DM Mono',monospace;font-size:8px;letter-spacing:1px;text-transform:uppercase;color:var(--text4);margin-bottom:4px}
+.fi{width:100%;background:var(--form-bg);border:1px solid var(--border2);border-radius:6px;padding:7px 10px;color:var(--text);font-family:'DM Mono',monospace;font-size:11px;outline:none;transition:border-color .15s}
+.fi:focus{border-color:var(--gold)}
+.fg2{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.f-act{display:flex;gap:7px;margin-top:16px}
+.log-box{background:var(--log-bg);border:1px solid var(--border);border-radius:7px;padding:9px 11px;font-family:'DM Mono',monospace;font-size:10px;color:var(--text4);line-height:1.8;max-height:170px;overflow-y:auto;margin-top:9px}
+.log-ok{color:var(--green)}.log-warn{color:var(--amber)}.log-err{color:var(--red)}.log-info{color:var(--blue)}
+.load-track{height:2px;background:var(--bg3);border-radius:2px;overflow:hidden;margin-top:7px}
+.load-bar{height:100%;background:linear-gradient(90deg,var(--gold),var(--gold2));animation:ld 1.3s ease-in-out infinite}
+@keyframes ld{0%{width:0%;margin-left:0%}50%{width:55%;margin-left:22%}100%{width:0%;margin-left:100%}}
+.pulse{animation:pulse 1.4s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div class="brand">
+    <div class="brand-icon">₽</div>
+    <div>
+      <div class="brand-name">PayCalendar</div>
+      <div class="brand-sub">PAYMENT INTELLIGENCE</div>
+    </div>
+  </div>
+  <span id="company-name">—</span>
+
+  <div class="topbar-center">
+    <div class="month-nav">
+      <button class="nav-btn" onclick="prevP()">‹</button>
+      <div id="month-label">—</div>
+      <button class="nav-btn" onclick="nextP()">›</button>
+    </div>
+    <div id="stat-pills"></div>
+  </div>
+
+  <div class="topbar-right">
+    <div class="theme-sw">
+      <button class="th-btn th-dark active" id="th-dark" onclick="setTheme('dark')" title="Тёмная">🌑</button>
+      <button class="th-btn th-grey" id="th-grey" onclick="setTheme('grey')" title="Серая">🌫</button>
+      <button class="th-btn th-white" id="th-white" onclick="setTheme('white')" title="Светлая">☀</button>
+    </div>
+    <div class="view-toggle">
+      <button class="vtab active" id="vt-m" onclick="setView('month')">Месяц</button>
+      <button class="vtab" id="vt-w" onclick="setView('week')">Неделя</button>
+      <button class="vtab" id="vt-o" onclick="setView('overdue')">⚠ Долги</button>
+    </div>
+    <button class="btn btn-gold" id="scanThisBtn" onclick="scanSequential(1)" title="Сканировать текущий месяц">📥 Этот месяц</button>
+    <button class="btn btn-glass" id="scan2Btn"   onclick="scanSequential(2)" title="Текущий, затем предыдущий">📥 + Предыдущий</button>
+    <button class="btn btn-glass" id="scan3Btn"   onclick="scanSequential(4)" title="Текущий + 3 предыдущих месяца">📥 + 3 месяца</button>
+    <span id="autoScanTimer" style="font-size:11px;color:var(--text3);opacity:.7;align-self:center" title="Следующее автосканирование"></span>
+    <button class="btn btn-glass" id="refreshBtn" onclick="doRefresh()" title="Проверить последние 30 писем">🔄 Обновить</button>
+    <a href="/login-helper" class="btn btn-glass" title="Войти в почту">🌐 Войти в почту</a>
+    <button class="btn btn-glass" id="pubBtn" onclick="showPublicUrl()" title="Доступ с телефона/Android">📱 На телефон</button>
+    <button class="btn btn-glass" onclick="openAdd()">+ Счёт</button>
+  </div>
+</div>
+
+<div id="sum-bar"></div>
+
+<div id="overdue-area" style="display:none;padding:8px 12px 12px"></div>
+<div id="body-wrap">
+  <div id="cal-main">
+    <div id="m-grid" class="cal-grid"></div>
+    <div id="w-grid" class="cal-grid" style="display:none"></div>
+  </div>
+  <div id="sp" style="display:none"></div>
+</div>
+
+<div id="legend"></div>
+<div id="modals"></div>
+
+<script>
+/* ─── State ─────────────────────────────────────────────────────────────── */
+const S = {
+  invoices: [],
+  view: "month",
+  month: new Date(),
+  weekStart: mondayOf(new Date()),
+  activeDay: null,
+  theme: localStorage.getItem("pcal_theme") || "dark",
+  company: "",
+};
+
+const MONTHS = ["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
+const MONTHS_G = ["января","февраля","марта","апреля","мая","июня","июля","августа","сентября","октября","ноября","декабря"];
+const DOW = ["Пн","Вт","Ср","Чт","Пт","Сб","Вс"];
+const DOW_G = ["пн","вт","ср","чт","пт","сб","вс"];
+const CAT = {
+  utilities:{c:"#4ade80",b:"rgba(74,222,128,.12)"},software:{c:"#38bdf8",b:"rgba(56,189,248,.12)"},
+  services:{c:"#fb923c",b:"rgba(251,146,60,.12)"},rent:{c:"#f472b6",b:"rgba(244,114,182,.12)"},
+  taxes:{c:"#c084fc",b:"rgba(192,132,252,.12)"},supplies:{c:"#facc15",b:"rgba(250,204,21,.12)"},
+  logistics:{c:"#2dd4bf",b:"rgba(45,212,191,.12)"},marketing:{c:"#f87171",b:"rgba(248,113,113,.12)"},
+  other:{c:"#94a3b8",b:"rgba(148,163,184,.12)"},
+};
+const SC={paid:"#4ade80",overdue:"#f87171",urgent:"#fbbf24",upcoming:"#38bdf8",pending:"#64748b"};
+const SL={paid:"Оплачен",overdue:"Просрочен",urgent:"Срочно",upcoming:"Ожидает",pending:"Нет даты"};
+
+/* ─── Helpers ───────────────────────────────────────────────────────────── */
+const pad = n=>String(n).padStart(2,"0");
+const toISO = d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`;
+const fmtAmt = (a,c="EUR")=>{const n=parseFloat(a);if(isNaN(n))return"—";return new Intl.NumberFormat("ru-RU",{style:"currency",currency:c,minimumFractionDigits:0}).format(n)};
+const daysU = s=>{if(!s)return null;const d=new Date(s);d.setHours(0,0,0,0);const t=new Date();t.setHours(0,0,0,0);return Math.round((d-t)/86400000)};
+const stOf = i=>{if(i.status==="paid")return"paid";if(!i.due_date)return"pending";const d=daysU(i.due_date);if(d<0)return"overdue";if(d<=3)return"urgent";return"upcoming"};
+const esc = s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
+function mondayOf(d){const n=new Date(d);n.setHours(0,0,0,0);const day=n.getDay();n.setDate(n.getDate()-(day===0?6:day-1));return n}
+
+/* ─── API ───────────────────────────────────────────────────────────────── */
+async function apiGet(url){const r=await fetch(url);return r.json()}
+async function apiPost(url,data){const r=await fetch(url,{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(data)});return r.json()}
+async function apiDelete(url){await fetch(url,{method:"DELETE"})}
+
+async function loadAll(){
+  S.invoices = await apiGet("/api/invoices");
+  const cfg   = await apiGet("/api/config");
+  S.company = cfg.company || "";
+  document.getElementById("company-name").textContent = S.company;
+  render();
+}
+async function saveInvoices(){await apiPost("/api/invoices",S.invoices)}
+async function setPriority(id, val){
+  S.invoices = S.invoices.map(i=>i.id===id?{...i,priority:val}:i);
+  await apiPost('/api/invoices', S.invoices);
+  render();
+}
+async function cyclePriority(id){
+  const CYCLE = {none:'high', high:'medium', medium:'low', low:'none'};
+  const inv = S.invoices.find(i=>i.id===id);
+  if(!inv) return;
+  const next = CYCLE[inv.priority||'none'];
+  S.invoices = S.invoices.map(i=>i.id===id?{...i,priority:next}:i);
+  await apiPost('/api/invoices', S.invoices);
+  render();
+}
+
+async function showPublicUrl(){
+  var r = await fetch('/api/public-url');
+  var d = await r.json();
+  if(d.active && d.url){
+    window.open('/public-info?url='+encodeURIComponent(d.url), '_blank');
+  } else {
+    if(confirm('Публичный доступ не запущен.\nЗапустить run_public.bat для доступа с телефона?\n\nСейчас открыть инструкцию?')){
+      window.open('/public-info', '_blank');
+    }
+  }
+}
+
+async function markUnpaid(id){
+  S.invoices=S.invoices.map(i=>i.id===id?{...i,status:"pending",paid_at:null}:i);
+  await apiPost("/api/invoices",S.invoices);
+  render();
+}
+async function markPaid(id){
+  await apiPost(`/api/invoices/${id}/paid`,{});
+  await loadAll();
+}
+async function deleteInv(id){
+  if(!confirm("Удалить счёт?"))return;
+  await apiDelete(`/api/invoices/${id}`);
+  await loadAll();
+}
+
+/* ─── Theme ─────────────────────────────────────────────────────────────── */
+function setTheme(t){
+  S.theme=t;
+  document.documentElement.setAttribute("data-theme",t);
+  localStorage.setItem("pcal_theme",t);
+  ["dark","grey","white"].forEach(x=>{
+    document.getElementById("th-"+x).classList.toggle("active",x===t);
+  });
+}
+setTheme(S.theme);
+
+/* ─── Computed ──────────────────────────────────────────────────────────── */
+function monthStats(){
+  const y=S.month.getFullYear(),m=S.month.getMonth();
+  const inv=S.invoices.filter(i=>{if(!i.due_date)return false;const d=new Date(i.due_date);return d.getFullYear()===y&&d.getMonth()===m});
+  const pend=inv.filter(i=>i.status!=="paid"),paid=inv.filter(i=>i.status==="paid");
+  const over=inv.filter(i=>stOf(i)==="overdue");
+  const sp=pend.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const sd=paid.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const st=inv.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  // Estonian invoices = vat_rate 24%
+  const ee=inv.filter(i=>i.vat_rate==24||i.vat_rate==="24");
+  const eeTotal=ee.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const eeVat  =ee.reduce((s,i)=>s+(parseFloat(i.vat_amount)||0),0);
+  const eeNet  =ee.reduce((s,i)=>s+(parseFloat(i.amount_ex_vat)||(parseFloat(i.amount)||0)/1.24),0);
+  const sOver=over.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  return{total:inv.length,pending:pend.length,paid:paid.length,overdue:over.length,
+         sp,sd,st,pct:st>0?Math.round(sd/st*100):0,sOver,
+         eeTotal,eeVat:Math.round(eeVat*100)/100,eeNet:Math.round(eeNet*100)/100,eeCnt:ee.length};
+}
+function weekStats(){
+  const wd=weekDays();
+  const ws=toISO(wd[0]),we=toISO(wd[6]);
+  const inv=S.invoices.filter(i=>i.due_date&&i.due_date>=ws&&i.due_date<=we);
+  const pend=inv.filter(i=>i.status!=="paid"),paid=inv.filter(i=>i.status==="paid");
+  const sp=pend.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const sd=paid.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const st=inv.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const rng=`${wd[0].getDate()}.${pad(wd[0].getMonth()+1)} – ${wd[6].getDate()}.${pad(wd[6].getMonth()+1)}`;
+  return{total:inv.length,pending:pend.length,paid:paid.length,sp,sd,st,pct:st>0?Math.round(sd/st*100):0,rng};
+}
+
+/* ─── Grid builders ─────────────────────────────────────────────────────── */
+function monthCells(){
+  const y=S.month.getFullYear(),m=S.month.getMonth();
+  const fd=new Date(y,m,1).getDay(),off=fd===0?6:fd-1,dim=new Date(y,m+1,0).getDate();
+  const c=[];
+  for(let i=0;i<off;i++)c.push({date:new Date(y,m,-off+i+1),cur:false});
+  for(let d=1;d<=dim;d++)c.push({date:new Date(y,m,d),cur:true});
+  while(c.length%7)c.push({date:new Date(y,m+1,c.length-dim-off+1),cur:false});
+  return c;
+}
+function weekDays(){
+  const d=[];for(let i=0;i<7;i++){const x=new Date(S.weekStart);x.setDate(x.getDate()+i);d.push(x);}return d;
+}
+function evOnDay(date){
+  const ds=toISO(date);
+  const today=toISO(new Date());
+  // On today: also show all overdue unpaid invoices
+  if(ds===today){
+    return S.invoices.filter(i=>{
+      if(i.due_date===ds) return true;
+      if(i.status!=="paid" && i.due_date && i.due_date<ds) return true;
+      return false;
+    });
+  }
+  return S.invoices.filter(i=>i.due_date===ds);
+}
+function dayHTML(date){
+  const invs=evOnDay(date);
+  const total=invs.filter(i=>i.status!=="paid").reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const vis=invs.slice(0,3),extra=invs.length-vis.length;
+  let h="";
+  for(const inv of vis){
+    const st=stOf(inv),cat=CAT[inv.category]||CAT.other;
+    h+=`<div class="chip" style="background:${cat.b};border-left-color:${SC[st]};color:${cat.c}">
+      <span class="chip-d"></span><span class="chip-n">${esc(inv.vendor||"Счёт")}</span>
+      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
+  }
+  if(extra>0)h+=`<div class="more">+${extra}</div>`;
+  return{h,total};
+}
+
+/* ─── Render ────────────────────────────────────────────────────────────── */
+
+function renderOverdue(){
+  var el = document.getElementById("overdue-area");
+  if(!el) return;
+  
+  var today = new Date();
+  today.setHours(0,0,0,0);
+  var todayISO = toISO(today);
+  
+  // Get all unpaid overdue invoices
+  var overdue = S.invoices.filter(function(i){
+    return i.status !== "paid" && i.due_date && i.due_date < todayISO;
+  });
+  
+  if(overdue.length === 0){
+    el.innerHTML = '<div class="ov-empty"><div class="ov-empty-icon">✅</div><div>Нет неоплаченных счетов прошлых периодов</div></div>';
+    return;
+  }
+  
+  // Group by month
+  var groups = {};
+  overdue.forEach(function(inv){
+    var d = new Date(inv.due_date + "T00:00:00");
+    var key = d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0");
+    var label = ["Январь","Февраль","Март","Апрель","Май","Июнь",
+                 "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"][d.getMonth()]
+                + " " + d.getFullYear();
+    if(!groups[key]) groups[key] = {label:label, items:[], total:0};
+    groups[key].items.push(inv);
+    groups[key].total += parseFloat(inv.amount) || 0;
+  });
+  
+  // Sort groups newest first
+  var sortedKeys = Object.keys(groups).sort().reverse();
+  
+  var totalAll = overdue.reduce(function(s,i){return s+(parseFloat(i.amount)||0);},0);
+  var PRI = {high:0,medium:1,low:2,none:3};
+  
+  var h = '<div class="ov-header">';
+  h += '<div class="ov-title">⚠ Неоплаченные счета прошлых периодов</div>';
+  h += '<div class="ov-total">' + overdue.length + ' счетов · ' + fmtAmt(totalAll) + '</div>';
+  h += '</div>';
+  
+  sortedKeys.forEach(function(key){
+    var g = groups[key];
+    var sorted = g.items.slice().sort(function(a,b){
+      return (PRI[a.priority||"none"]||3)-(PRI[b.priority||"none"]||3);
+    });
+    
+    h += '<div class="ov-group">';
+    h += '<div class="ov-group-title"><span>' + g.label + ' · ' + g.items.length + ' сч.</span>';
+    h += '<span class="ov-group-sum">' + fmtAmt(Math.round(g.total*100)/100) + '</span></div>';
+    
+    sorted.forEach(function(inv){
+      var daysLate = Math.round((today - new Date(inv.due_date+"T00:00:00")) / 86400000);
+      var isUrgent = daysLate <= 7;
+      var priLabel = {high:"🔴",medium:"🟡",low:"🟢",none:""}[inv.priority||"none"];
+      
+      h += '<div class="ov-card' + (isUrgent?" urgent":"") + '">';
+      h += '<div>';
+      h += '<div class="ov-vendor">' + priLabel + (priLabel?" ":"") + esc(inv.vendor||"—") + '</div>';
+      if(inv.description) h += '<div class="ov-desc">' + esc(inv.description) + '</div>';
+      h += '<div class="ov-meta">';
+      h += '<span>№ ' + esc(inv.invoice_number||"—") + '</span>';
+      h += '<span>до ' + inv.due_date + '</span>';
+      h += '<span>' + esc(inv.email_from||"") + '</span>';
+      h += '</div>';
+      h += '<div class="ov-actions">';
+      h += '<button class="ic-btn ic-btn-pay" onclick="markPaidOv('' + inv.id + '')">✓ Оплачен</button>';
+      h += '<select onchange="setPriority('' + inv.id + '',this.value)" class="ic-btn" style="cursor:pointer;padding:2px 4px;font-size:10px">';
+      h += '<option value="none"   ' + ((inv.priority||"none")==="none"?"selected":"") + '>○ Приоритет</option>';
+      h += '<option value="high"   ' + ((inv.priority||"none")==="high"?"selected":"") + '>🔴 Срочно</option>';
+      h += '<option value="medium" ' + ((inv.priority||"none")==="medium"?"selected":"") + '>🟡 Важно</option>';
+      h += '<option value="low"    ' + ((inv.priority||"none")==="low"?"selected":"") + '>🟢 Обычный</option>';
+      h += '</select>';
+      h += '</div>';
+      h += '</div>';
+      h += '<div>';
+      h += '<div class="ov-amount' + (isUrgent?" urgent":"") + '">' + fmtAmt(inv.amount, inv.currency) + '</div>';
+      h += '<div class="ov-days' + (isUrgent?" urgent":"") + '">' + daysLate + ' дн.</div>';
+      if(inv.vat_amount) h += '<div style="font-size:10px;color:var(--text3);margin-top:4px">НДС: ' + fmtAmt(inv.vat_amount,inv.currency) + '</div>';
+      h += '</div>';
+      h += '</div>';
+    });
+    h += '</div>';
+  });
+  
+  el.innerHTML = h;
+}
+
+async function markPaidOv(id){
+  await markPaid(id);
+  renderOverdue();
+}
+
+function render(){
+  renderTopbar();renderSumBar();renderCalendar();renderSP();renderLegend();
+}
+
+function renderTopbar(){
+  if(S.view==="month"){
+    document.getElementById("month-label").textContent=`${MONTHS[S.month.getMonth()]} ${S.month.getFullYear()}`;
+  }else{
+    const wd=weekDays();
+    document.getElementById("month-label").textContent=`${wd[0].getDate()} – ${wd[6].getDate()} ${MONTHS_G[wd[6].getMonth()]}`;
+  }
+  document.getElementById("vt-m").className="vtab"+(S.view==="month"?" active":"");
+  document.getElementById("vt-w").className="vtab"+(S.view==="week"?" active":"");
+  document.getElementById("vt-o").className="vtab"+(S.view==="overdue"?" active":"");
+  const ov=S.invoices.filter(i=>stOf(i)==="overdue");
+  const ug=S.invoices.filter(i=>stOf(i)==="urgent");
+  const sp=S.invoices.filter(i=>i.status!=="paid").reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  let h="";
+  if(ov.length)h+=`<div class="stat-pill pill-red">Просрочено <span class="pv">${ov.length}</span></div>`;
+  if(ug.length)h+=`<div class="stat-pill pill-amber">Срочно <span class="pv">${ug.length}</span></div>`;
+  h+=`<div class="stat-pill pill-blue">К оплате <span class="pv">${fmtAmt(sp)}</span></div>`;
+  document.getElementById("stat-pills").innerHTML=h;
+}
+
+function renderSumBar(){
+  const ms=monthStats(),ws=weekStats();
+  const mon=MONTHS[S.month.getMonth()];
+  const yr=S.month.getFullYear();
+  document.getElementById("sum-bar").innerHTML=`
+    <div class="sep-lbl">${mon.slice(0,3).toUpperCase()} ${yr}</div>
+
+    <div class="sb sb-total">
+      <div class="sb-lbl">ИТОГО МЕСЯЦ</div>
+      <div class="sb-val" style="color:var(--blue)">${fmtAmt(ms.st)}</div>
+      <div class="sb-sub">${ms.total} счетов</div>
+    </div>
+
+    <div class="sb sb-m2">
+      <div class="sb-lbl">К оплате</div>
+      <div class="sb-val" style="color:${ms.sp>0?"var(--red)":"var(--green)"}">${fmtAmt(ms.sp)}</div>
+      <div class="sb-sub">${ms.pending} не опл.${ms.overdue?` · <b style="color:#f87171">${ms.overdue} просроч.</b>`:""}</div>
+    </div>
+
+    ${ms.overdue>0?`<div class="sb sb-overdue">
+      <div class="sb-lbl">⚠ Просрочено</div>
+      <div class="sb-val" style="color:#f87171">${fmtAmt(ms.sOver)}</div>
+      <div class="sb-sub">${ms.overdue} счетов · не оплачено</div>
+    </div>`:""}
+    <div class="sb sb-m3">
+      <div class="sb-lbl">Оплачено</div>
+      <div class="sb-val" style="color:var(--green)">${fmtAmt(ms.sd)}</div>
+      <div class="sb-sub">${ms.paid} платежей · ${ms.pct}%</div>
+    </div>
+
+    ${ms.eeCnt>0?`
+    <div class="sb-div"></div>
+    <div class="sb sb-ee">
+      <div class="sb-lbl">🇪🇪 Эстония · ${ms.eeCnt} сч.</div>
+      <div class="sb-val" style="color:var(--blue)">${fmtAmt(ms.eeTotal)}</div>
+      <div class="sb-sub">Без НДС: ${fmtAmt(Math.round(ms.eeNet*100)/100)}</div>
+    </div>
+    <div class="sb sb-vat24">
+      <div class="sb-lbl">НДС 24% (KM)</div>
+      <div class="sb-val" style="color:#f59e0b">${fmtAmt(ms.eeVat)}</div>
+      <div class="sb-sub">Käibemaks</div>
+    </div>`:""}
+
+    <div class="sb-div"></div>
+    <div class="sep-lbl">НЕДЕЛЯ</div>
+    <div class="sb sb-w1">
+      <div class="sb-lbl">Неделя · всего</div>
+      <div class="sb-val" style="color:var(--purple)">${fmtAmt(ws.st)}</div>
+      <div class="sb-sub">${ws.rng} · ${ws.total} сч.</div>
+    </div>
+    <div class="sb sb-w2">
+      <div class="sb-lbl">К оплате</div>
+      <div class="sb-val" style="color:${ws.sp>0?"var(--orange)":"var(--green)"}">${fmtAmt(ws.sp)}</div>
+      <div class="sb-sub">${ws.pending} счетов</div>
+    </div>
+    <div class="sb sb-w3">
+      <div class="sb-lbl">Оплачено</div>
+      <div class="sb-val" style="color:var(--teal)">${fmtAmt(ws.sd)}</div>
+      <div class="sb-prog"><div class="sb-prog-fill" style="width:${ws.pct}%;background:linear-gradient(90deg,var(--teal),var(--blue))"></div></div>
+    </div>
+  `;
+}
+
+
+function renderCalendar(){
+  const mg=document.getElementById("m-grid"),wg=document.getElementById("w-grid");
+  const todayISO=toISO(new Date()),actISO=S.activeDay?toISO(S.activeDay):"";
+  if(S.view==="month"){
+    wg.style.display="none";mg.style.display="grid";
+    let h=DOW.map(d=>`<div class="dow-h">${d}</div>`).join("");
+    for(const dc of monthCells()){
+      const ds=toISO(dc.date),{h:dh,total}=dayHTML(dc.date);
+      const invs=evOnDay(dc.date);
+      const hasOv=invs.some(i=>stOf(i)==="overdue"),hasUg=invs.some(i=>stOf(i)==="urgent");
+      const cls=["day",!dc.cur?"dim":"",ds===todayISO?"today":"",ds===actISO?"act":"",hasOv?"has-ov":hasUg?"has-ug":""].filter(Boolean).join(" ");
+      h+=`<div class="${cls}" onclick="selDay('${ds}')">
+        <div class="day-n"><span class="dn">${dc.date.getDate()}</span>${total>0?`<span class="d-sum has">${fmtAmt(total)}</span>`:""}</div>
+        ${dh}</div>`;
+    }
+    mg.innerHTML=h;
+  }else{
+    mg.style.display="none";wg.style.display="grid";
+    const wd=weekDays();
+    let h=wd.map((d,i)=>{
+      const isT=toISO(d)===todayISO;
+      return`<div class="dow-h">${DOW[i]}<br><span style="font-family:'Playfair Display',serif;font-size:18px;${isT?"color:var(--gold);font-weight:700":""}">${d.getDate()}</span></div>`;
+    }).join("");
+    for(const d of wd){
+      const ds=toISO(d),{h:dh}=dayHTML(d);
+      const cls=["day",ds===todayISO?"today":"",ds===actISO?"act":""].filter(Boolean).join(" ");
+      h+=`<div class="${cls}" style="min-height:280px" onclick="selDay('${ds}')">${dh}</div>`;
+    }
+    wg.innerHTML=h;
+  }
+}
+
+function renderSP(){
+  const sp=document.getElementById("sp");
+  if(!S.activeDay){sp.style.display="none";return}
+  sp.style.display="flex";
+  const invs=evOnDay(S.activeDay);
+  const total=invs.filter(i=>i.status!=="paid").reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
+  const dn=S.activeDay.getDate(),mon=MONTHS_G[S.activeDay.getMonth()];
+  const dow=DOW_G[S.activeDay.getDay()===0?6:S.activeDay.getDay()-1];
+  let h=`<div class="sp-h"><div class="sp-date">${dn} ${mon}</div><div class="sp-dow">${dow} · ${S.activeDay.getFullYear()}</div>
+    ${total>0?`<div class="sp-tot">
+      <div class="sp-tot-l">К ОПЛАТЕ</div>
+      <div class="sp-tot-v">${fmtAmt(total)}</div>
+      ${invs.some(i=>stOf(i)==="overdue")?`<div style="font-size:10px;color:#f87171;margin-top:2px">⚠ есть просроченные</div>`:""}
+    </div>`:""}</div>
+    <div class="sp-b">`;
+  if(invs.length){
+    const PRI_ORDER={high:0,medium:1,low:2,none:3,undefined:3};
+    const sorted=[...invs].sort((a,b)=>(PRI_ORDER[a.priority||"none"]||3)-(PRI_ORDER[b.priority||"none"]||3));
+    const hasHigh=sorted.some(i=>i.priority==="high"&&stOf(i)!=="paid");
+    h+=`<div class="sp-sec">Счета · ${invs.length}${hasHigh?" · <span style=\'color:#f87171\'>🔴 есть срочные</span>":""}</div>`;
+    for(const inv of sorted){
+      const st=stOf(inv);
+      h+=`<div class="icard" style="border-left-color:${SC[st]}">
+        <div class="ic-v">${esc(inv.vendor||"—")}</div>
+        ${inv.description?`<div class="ic-d">${esc(inv.description)}</div>`:""}
+        <div class="ic-m">
+          <span class="ic-a" style="color:${st==="paid"?"var(--green)":"var(--red)"}">${fmtAmt(inv.amount,inv.currency)}</span>
+          <span class="ic-b" style="background:${SC[st]}22;color:${SC[st]}">${SL[st]}</span>
+          ${st==="overdue"?`<span class="ic-overdue">⚠ просрочено ${Math.abs(daysU(inv.due_date))} дн.</span>`:""}
+        </div>
+        ${(inv.vat_amount||inv.vat_rate)?`<div class="ic-vat">
+          ${inv.amount_ex_vat?`<span class="vat-net">Без НДС: ${fmtAmt(inv.amount_ex_vat,inv.currency)}</span>`:""}
+          ${inv.vat_amount?`<span class="vat-tax">НДС${inv.vat_rate?" "+inv.vat_rate+"%":""}: ${fmtAmt(inv.vat_amount,inv.currency)}</span>`:""}
+        </div>`:""}
+        ${inv.invoice_number?`<div class="ic-n">№ ${esc(inv.invoice_number)}</div>`:""}
+        <div class="ic-act">
+          ${st!=="paid"?`<button class="btn btn-sm btn-paid" onclick="markPaid('${inv.id}')">✓ Оплачен</button>`:`<button class="btn btn-sm" style="font-size:10px;opacity:.7" onclick="markUnpaid('${inv.id}')">↩ Отменить</button>`}
+          <select onchange="setPriority('${inv.id}',this.value)" class="btn btn-sm" style="cursor:pointer;padding:2px 4px">
+            <option value="none"   ${(inv.priority||"none")==="none"?"selected":""}>○ Приоритет</option>
+            <option value="high"   ${(inv.priority||"none")==="high"?"selected":""}>🔴 Срочно</option>
+            <option value="medium" ${(inv.priority||"none")==="medium"?"selected":""}>🟡 Важно</option>
+            <option value="low"    ${(inv.priority||"none")==="low"?"selected":""}>🟢 Обычный</option>
+          </select>
+          <button class="btn btn-sm btn-edit" onclick="openEdit('${inv.id}')">✎</button>
+          <button class="btn btn-sm btn-del" onclick="deleteInv('${inv.id}')">✕</button>
+        </div>
+      </div>`;
+    }
+  }else{
+    h+=`<div class="sp-empty"><div style="font-size:26px;margin-bottom:6px">◎</div><div style="font-family:'DM Mono',monospace;font-size:10px">Нет счетов</div></div>`;
+  }
+  const ds=toISO(S.activeDay);
+  h+=`<button class="btn btn-glass" style="width:100%;justify-content:center;margin-top:8px" onclick="openAdd('${ds}')">+ Добавить счёт</button>`;
+  h+=`<button class="btn btn-glass" style="width:100%;justify-content:center;margin-top:5px" onclick="closeDay()">× Закрыть</button>`;
+  h+="</div>";
+  sp.innerHTML=h;
+}
+
+function renderLegend(){
+  const stats=[["var(--red)","Просрочен"],["var(--amber)","Срочно"],["var(--blue)","Ожидает"],["var(--green)","Оплачен"]];
+  let h=`<span class="leg-l">ЛЕГЕНДА</span>`;
+  for(const[c,l]of stats)h+=`<div class="leg-i"><div class="leg-d" style="background:${c}"></div>${l}</div>`;
+  h+=`<div class="leg-sep"></div>`;
+  for(const[k,v]of Object.entries(CAT))h+=`<div class="leg-i"><div class="leg-d" style="background:${v.c};border-radius:50%"></div>${k}</div>`;
+  document.getElementById("legend").innerHTML=h;
+}
+
+/* ─── Actions ───────────────────────────────────────────────────────────── */
+function selDay(iso){S.activeDay=new Date(iso+"T00:00:00");render()}
+function closeDay(){S.activeDay=null;render()}
+function setView(v){
+  S.view=v;
+  ["vt-m","vt-w","vt-o"].forEach(function(id){
+    var el=document.getElementById(id);
+    if(el) el.classList.remove("active");
+  });
+  var tab=document.getElementById(v==="month"?"vt-m":v==="week"?"vt-w":"vt-o");
+  if(tab) tab.classList.add("active");
+  render();
+}
+function prevP(){
+  if(S.view==="month")S.month=new Date(S.month.getFullYear(),S.month.getMonth()-1,1);
+  else S.weekStart.setDate(S.weekStart.getDate()-7);
+  render();
+}
+function nextP(){
+  if(S.view==="month")S.month=new Date(S.month.getFullYear(),S.month.getMonth()+1,1);
+  else S.weekStart.setDate(S.weekStart.getDate()+7);
+  render();
+}
+
+/* ─── Modals ────────────────────────────────────────────────────────────── */
+function closeModal(){document.getElementById("modals").innerHTML=""}
+
+
+function scanSequential(totalMonths) {
+  var btnIds = {1:"scanThisBtn",2:"scan2Btn",4:"scan3Btn"};
+  var btnLabels = {1:"📥 Этот месяц",2:"📥 + Предыдущий",4:"📥 + 3 месяца"};
+  var btn = document.getElementById(btnIds[totalMonths]);
+  if(btn && btn.disabled) return;
+  // Build list of months to scan: current first, then going back
+  var months = [];
+  var now = new Date();
+  for(var i = 0; i < totalMonths; i++) {
+    var d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    var last = new Date(d.getFullYear(), d.getMonth()+1, 0);
+    function fmt(dt){return dt.getFullYear()+"-"+String(dt.getMonth()+1).padStart(2,"0")+"-"+String(dt.getDate()).padStart(2,"0");}
+    var mname = ["янв","фев","мар","апр","май","июн","июл","авг","сен","окт","ноя","дек"][d.getMonth()]+" "+d.getFullYear();
+    months.push({from:fmt(d), to:fmt(last), label:mname});
+  }
+  if(btn){btn.disabled=true;}
+  // Scan each month sequentially
+  var idx = 0;
+  function scanNext() {
+    if(idx >= months.length) {
+      if(btn){btn.disabled=false;btn.innerHTML=btnLabels[totalMonths];}
+      resetAutoTimer();
+      return;
+    }
+    var mo = months[idx];
+    idx++;
+    if(btn) btn.innerHTML = '<span class="pulse">⏳</span> ' + mo.label + ' (' + idx + '/' + totalMonths + ')';
+    _runScanUrl("/api/scan-month/stream?from="+mo.from+"&to="+mo.to, scanNext);
+  }
+  scanNext();
+}
+function scanMonth(months){ scanSequential(months); }
+
+function doRefresh() {
+  const btn = document.getElementById('refreshBtn');
+  if (!btn || btn.disabled) return;
+  btn.disabled = true;
+  btn.innerHTML = '<span class="pulse">🔄</span> Проверяю...';
+  const es = new EventSource('/api/refresh/stream');
+  es.onmessage = e => {
+    const d = JSON.parse(e.data);
+    if (d.done) {
+      es.close();
+      loadAll();
+      btn.disabled = false;
+      btn.textContent = '🔄 Обновить';
+      if(d.count > 0) showNotif(`📬 +${d.count} новых счетов`, 'ok');
+      resetAutoTimer();
+    }
+  };
+  es.onerror = () => { es.close(); btn.disabled=false; btn.textContent='🔄 Обновить'; };
+}
+
+// ── Auto-scan timer display ───────────────────────────────────────────────────
+let autoScanInterval = null;
+let nextScanAt = null;
+
+function startAutoTimer(minutesFromNow) {
+  nextScanAt = Date.now() + minutesFromNow * 60000;
+  if (autoScanInterval) clearInterval(autoScanInterval);
+  autoScanInterval = setInterval(() => {
+    const left = nextScanAt - Date.now();
+    if (left <= 0) {
+      document.getElementById('autoScanTimer').textContent = '🔄 сканирую...';
+      clearInterval(autoScanInterval);
+      // Trigger quick scan
+      fetch('/api/refresh/stream').then(r => {
+        const reader = r.body.getReader();
+        const read = () => reader.read().then(({done, value}) => {
+          if (done) { loadInvoices(); startAutoTimer(60); return; }
+          try {
+            const text = new TextDecoder().decode(value);
+            text.split('\n').forEach(line => {
+              if (line.startsWith('data:')) {
+                const d = JSON.parse(line.slice(5));
+                if (d.done && d.count > 0) {
+                  showNotif(`📬 +${d.count} новых счетов`, 'ok');
+                }
+              }
+            });
+          } catch(e) {}
+          read();
+        }).catch(()=>{startAutoTimer(60);});
+        read();
+      }).catch(()=>{ startAutoTimer(60); });
+    } else {
+      const m = Math.floor(left / 60000);
+      const s = Math.floor((left % 60000) / 1000);
+      document.getElementById('autoScanTimer').textContent =
+        `следующий скан через ${m}:${String(s).padStart(2,'0')}`;
+    }
+  }, 1000);
+}
+
+
+function scanAllHistory() {
+  if (!confirm('Сканировать ВСЕ доступные письма (может занять несколько минут)? Используй только при первом запуске.')) return;
+  // Use full scan without limits - same as regular scan but with no month filter
+  _runScanUrl('/api/scan/stream', () => {
+    resetAutoTimer();
+  });
+}
+
+function resetAutoTimer() {
+  startAutoTimer(60);
+}
+
+function openScan(){
+  // Load scan state info
+  fetch("/api/scan-state").then(r=>r.json()).then(d=>{
+    const el=document.getElementById("sc-state-info");
+    if(el){
+      el.style.display="block";
+      const btn = document.getElementById("sc-btn");
+      document.getElementById("sc-state-date").textContent=d.last_date||"никогда";
+      document.getElementById("sc-state-count").textContent=d.scanned_uids_count;
+      document.getElementById("sc-state-limit").textContent=d.next_limit;
+      if(btn) btn.textContent=`📥 Сканировать (${d.next_limit} писем)`;
+    }
+    // Reset progress bar color
+    const bar=document.getElementById("sc-prog-bar");
+    if(bar) bar.style.background="linear-gradient(90deg,#2563eb,#7c3aed)";
+    const lbl=document.getElementById("sc-prog-label");
+    if(lbl) lbl.textContent="Подготовка...";
+  }).catch(()=>{});
+  document.getElementById("modals").innerHTML=`
+    <div class="overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <button class="modal-close" onclick="closeModal()">×</button>
+        <div class="modal-title">Сканирование почты</div>
+        <p style="font-size:13px;color:var(--text3);line-height:1.7;margin-bottom:14px">
+          Агент подключится к <strong style="color:var(--text)">${S.company||"почтовому ящику"}</strong>,
+          найдёт счета и добавит их в календарь автоматически.
+        </p>
+        <div id="sc-state-info" style="font-size:11px;color:var(--text3);margin-top:6px;display:none">
+          📊 Предыдущий скан: <span id="sc-state-date">—</span> |
+          Просмотрено писем: <span id="sc-state-count">0</span> |
+          Следующий лимит: <span id="sc-state-limit">500</span>
+        </div>
+        <p style="visibility:hidden"><!--placeholder
+        </p>
+        <div id="sc-load" style="display:none;margin:12px 0">
+          <!-- Progress bar -->
+          <div style="background:#1a1f2e;border:1px solid #2d3748;border-radius:10px;padding:12px 14px">
+            <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
+              <span id="sc-prog-label" style="font-size:12px;color:var(--text2)">Подготовка...</span>
+              <span id="sc-prog-pct" style="font-size:13px;font-weight:700;color:var(--gold)">0%</span>
+            </div>
+            <div style="background:#111827;border-radius:6px;height:8px;overflow:hidden">
+              <div id="sc-prog-bar" style="height:100%;width:0%;background:linear-gradient(90deg,#2563eb,#7c3aed);border-radius:6px;transition:width .4s ease"></div>
+            </div>
+            <div style="display:flex;justify-content:space-between;margin-top:6px">
+              <span id="sc-prog-count" style="font-size:11px;color:var(--text3)">0 / 0</span>
+              <span id="sc-prog-speed" style="font-size:11px;color:var(--text3)"></span>
+              <span id="sc-prog-eta"   style="font-size:11px;color:var(--text3)"></span>
+            </div>
+          </div>
+        </div>
+        <div style="display:flex;gap:8px;margin-bottom:4px">
+          <button class="btn btn-gold" id="sc-btn" onclick="runScan()">📥 Запустить (все)</button>
+          <button class="btn btn-glass" onclick="closeModal()">Закрыть</button>
+        </div>
+        <div id="sc-logs" class="log-box" style="display:none"></div>
+      </div>
+    </div>`;
+}
+
+function runScan(){
+  _runScanUrl("/api/scan/stream", ()=>{
+    document.getElementById("sc-btn").textContent="✓ Готово";
+    document.getElementById("sc-load").style.display="none";
+    resetAutoTimer();
+  });
+}
+
+function _runScanUrl(url, onDone){
+  document.getElementById("sc-btn").innerHTML=`<span class="pulse">⏳ Сканирование…</span>`;
+  document.getElementById("sc-btn").disabled=true;
+  document.getElementById("sc-load").style.display="block";
+  const lb=document.getElementById("sc-logs");lb.style.display="block";
+
+  // Reset progress bar
+  _setProgress(0, 0, 0, 0);
+
+  const es=new EventSource(url);
+  es.onmessage=e=>{
+    const d=JSON.parse(e.data);
+
+    // Progress event
+    if(d.type==='progress'){
+      _setProgress(d.current, d.total, d.speed, d.eta);
+      return;
+    }
+
+    if(d.done){
+      es.close();
+      _setProgress(d.total||100, d.total||100, 0, 0);
+      loadAll();
+      if(d.count>0) showNotif(`📬 +${d.count} новых счетов`,'ok');
+      if(onDone) onDone();
+      document.getElementById("sc-btn").disabled=false;
+      return;
+    }
+    lb.innerHTML+=`<div class="log-${d.type||"info"}">[${d.ts||""}] ${esc(d.msg||"")}</div>`;
+    lb.scrollTop=lb.scrollHeight;
+  };
+  es.onerror=()=>{
+    es.close();
+    document.getElementById("sc-btn").textContent="Повторить";
+    document.getElementById("sc-btn").disabled=false;
+  };
+}
+
+function _setProgress(cur, tot, speed, eta){
+  const pct = tot>0 ? Math.round(cur/tot*100) : 0;
+  const bar  = document.getElementById("sc-prog-bar");
+  const lbl  = document.getElementById("sc-prog-label");
+  const pctEl= document.getElementById("sc-prog-pct");
+  const cnt  = document.getElementById("sc-prog-count");
+  const spd  = document.getElementById("sc-prog-speed");
+  const etaEl= document.getElementById("sc-prog-eta");
+  if(!bar) return;
+  bar.style.width = pct + "%";
+  pctEl.textContent = pct + "%";
+  cnt.textContent   = `${cur} / ${tot}`;
+  spd.textContent   = speed>0 ? `${speed.toFixed(1)} письм/с` : "";
+  if(eta>0){
+    const m=Math.floor(eta/60), s=eta%60;
+    etaEl.textContent = m>0 ? `осталось ~${m}м ${s}с` : `осталось ~${s}с`;
+  } else {
+    etaEl.textContent = cur>=tot && tot>0 ? "✓ Готово" : "";
+  }
+  if(cur===0 && tot===0){
+    lbl.textContent="Подключение...";
+  } else if(cur>=tot && tot>0){
+    lbl.textContent="✅ Сканирование завершено";
+    bar.style.background="linear-gradient(90deg,#059669,#047857)";
+  } else {
+    lbl.textContent=`Анализирую письмо ${cur} из ${tot}`;
+  }
+}
+
+function openScanPanel(url, title, onDone){
+  // Open scan modal with custom URL
+  const m = document.getElementById("scanModal");
+  if(!m){ _runScanUrl(url, onDone); return; }
+  m.style.display="flex";
+  const titleEl = document.getElementById("sc-title");
+  if(titleEl) titleEl.textContent = title || "Сканирование";
+  _runScanUrl(url, onDone);
+}
+
+function openAdd(dateStr=""){
+  const inv={id:"",vendor:"",invoice_number:"",amount:"",currency:"EUR",due_date:dateStr,issue_date:"",description:"",category:"services",status:"pending",notes:""};
+  showEditModal(inv);
+}
+function openEdit(id){
+  const inv=S.invoices.find(i=>i.id===id);
+  if(inv)showEditModal({...inv});
+}
+function showEditModal(inv){
+  const cats=Object.keys(CAT).map(c=>`<option value="${c}"${inv.category===c?" selected":""}>${c}</option>`).join("");
+  document.getElementById("modals").innerHTML=`
+    <div class="overlay" onclick="if(event.target===this)closeModal()">
+      <div class="modal">
+        <button class="modal-close" onclick="closeModal()">×</button>
+        <div class="modal-title">${inv.id&&S.invoices.find(i=>i.id===inv.id)?"Редактировать":"Новый счёт"}</div>
+        <div class="fg2">
+          <div class="fr"><label>Поставщик</label><input class="fi" id="f-v" value="${esc(inv.vendor)}"></div>
+          <div class="fr"><label>Номер счёта</label><input class="fi" id="f-n" value="${esc(inv.invoice_number)}"></div>
+        </div>
+        <div class="fg2">
+          <div class="fr"><label>Сумма</label><input class="fi" id="f-a" type="number" value="${esc(inv.amount)}"></div>
+          <div class="fr"><label>Валюта</label><select class="fi" id="f-c">${["EUR","USD","RUB","GBP","CHF"].map(c=>`<option${inv.currency===c?" selected":""}>${c}</option>`).join("")}</select></div>
+        </div>
+        <div class="fg2">
+          <div class="fr"><label>Срок оплаты</label><input class="fi" id="f-d" type="date" value="${esc(inv.due_date)}"></div>
+          <div class="fr"><label>Выставлен</label><input class="fi" id="f-i" type="date" value="${esc(inv.issue_date)}"></div>
+        </div>
+        <div class="fr"><label>Описание</label><input class="fi" id="f-ds" value="${esc(inv.description)}"></div>
+        <div class="fg2">
+          <div class="fr"><label>Категория</label><select class="fi" id="f-cat">${cats}</select></div>
+          <div class="fr"><label>Статус</label><select class="fi" id="f-st"><option value="pending"${inv.status==="pending"?" selected":""}>Ожидает</option><option value="paid"${inv.status==="paid"?" selected":""}>Оплачен</option></select></div>
+        </div>
+        <div class="f-act">
+          <button class="btn btn-gold" onclick="saveForm('${esc(inv.id)}')">💾 Сохранить</button>
+          <button class="btn btn-glass" onclick="closeModal()">Отмена</button>
+        </div>
+      </div>
+    </div>`;
+}
+async function saveForm(existId){
+  const inv={
+    id:existId||Date.now().toString(),
+    vendor:document.getElementById("f-v").value,
+    invoice_number:document.getElementById("f-n").value,
+    amount:document.getElementById("f-a").value,
+    currency:document.getElementById("f-c").value,
+    due_date:document.getElementById("f-d").value,
+    issue_date:document.getElementById("f-i").value,
+    description:document.getElementById("f-ds").value,
+    category:document.getElementById("f-cat").value,
+    status:document.getElementById("f-st").value,
+    added_at:new Date().toISOString(),
+  };
+  if(existId&&S.invoices.find(i=>i.id===existId)){
+    S.invoices=S.invoices.map(i=>i.id===existId?inv:i);
+  }else{
+    S.invoices.push(inv);
+  }
+  await saveInvoices();
+  closeModal();render();
+}
+
+/* ─── Init ──────────────────────────────────────────────────────────────── */
+loadAll();
+setInterval(()=>loadAll(),5*60*1000); // refresh every 5 min
+startAutoTimer(60); // auto-scan countdown
+</script>
+</body>
+</html>
