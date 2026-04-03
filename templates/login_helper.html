@@ -8,215 +8,198 @@
 *{box-sizing:border-box;margin:0;padding:0}
 body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
      background:#0f1117;color:#e2e8f0;min-height:100vh;
-     display:flex;align-items:center;justify-content:center;padding:20px}
+     display:flex;align-items:center;justify-content:center;padding:16px}
 .card{background:#1a1f2e;border:1px solid #2d3748;border-radius:18px;
-      padding:36px;max-width:460px;width:100%}
+      padding:28px;max-width:500px;width:100%}
 a.back{display:inline-flex;align-items:center;gap:5px;color:#4b5563;
-       font-size:12px;text-decoration:none;margin-bottom:20px}
+       font-size:12px;text-decoration:none;margin-bottom:18px}
 a.back:hover{color:#818cf8}
-h1{font-size:22px;color:#f7fafc;margin-bottom:6px}
-.sub{color:#718096;font-size:13px;margin-bottom:28px;line-height:1.6}
-.field{margin-bottom:16px}
-.field label{display:block;font-size:12px;color:#9ca3af;margin-bottom:6px;font-weight:500;text-transform:uppercase;letter-spacing:.4px}
-.field input{width:100%;padding:11px 14px;border-radius:9px;
-             border:1px solid #374151;background:#111827;color:#e2e8f0;
-             font-size:14px;outline:none;transition:border-color .2s}
-.field input:focus{border-color:#2563eb}
-.pwd-wrap{position:relative}
-.pwd-wrap input{padding-right:44px}
-.pwd-eye{position:absolute;right:12px;top:50%;transform:translateY(-50%);
-         background:none;border:none;color:#6b7280;cursor:pointer;font-size:18px;padding:4px}
-.btn-main{width:100%;padding:13px;border-radius:10px;border:none;
-          background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;
-          font-size:15px;font-weight:700;cursor:pointer;margin-top:4px;
-          transition:filter .2s,transform .1s}
-.btn-main:hover{filter:brightness(1.1)}
-.btn-main:active{transform:scale(.98)}
-.btn-main:disabled{opacity:.5;cursor:not-allowed}
-.progress{margin-top:14px;display:none}
-.prog-bar{height:4px;background:#1e293b;border-radius:2px;overflow:hidden;margin-bottom:8px}
-.prog-fill{height:100%;background:linear-gradient(90deg,#2563eb,#7c3aed);
-           border-radius:2px;width:0%;transition:width .3s}
-.logs{font-family:'Courier New',monospace;font-size:11px;
-      background:#0a0e1a;border-radius:8px;padding:10px 12px;
-      max-height:150px;overflow-y:auto;line-height:1.7}
-.log-ok{color:#34d399}
-.log-err{color:#f87171}
-.log-info{color:#6b7280}
-.log-warn{color:#fbbf24}
+h1{font-size:20px;color:#f7fafc;margin-bottom:6px}
+.sub{color:#718096;font-size:13px;margin-bottom:20px;line-height:1.6}
+.method{background:#111827;border:1px solid #2d3748;border-radius:12px;
+        padding:16px;margin-bottom:12px}
+.method.rec{border-color:#059669}
+.m-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.badge{font-size:10px;font-weight:700;padding:2px 8px;border-radius:8px;text-transform:uppercase}
+.b-green{background:#064e3b;color:#6ee7b7}
+.b-gray{background:#374151;color:#9ca3af}
+.m-title{font-size:13px;font-weight:700;color:#f7fafc}
+.m-desc{font-size:12px;color:#9ca3af;line-height:1.5;margin-bottom:10px}
+.code{background:#0a0e1a;border:1px solid #374151;border-radius:7px;
+      padding:8px 12px;font-family:monospace;font-size:11px;color:#34d399;
+      word-break:break-all;cursor:pointer;margin:8px 0;line-height:1.6}
+.code:hover{border-color:#2563eb}
+.btn{width:100%;padding:11px;border-radius:9px;border:none;
+     font-size:13px;font-weight:700;cursor:pointer;
+     display:flex;align-items:center;justify-content:center;gap:7px;
+     transition:filter .15s}
+.btn:hover{filter:brightness(1.1)}
+.btn-green{background:linear-gradient(135deg,#059669,#047857);color:#fff}
+.btn-blue{background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff}
+.btn-gray{background:#374151;color:#d1d5db}
 .result-ok{background:#064e3b;color:#6ee7b7;border:1px solid #059669;
-           border-radius:8px;padding:12px;text-align:center;
-           font-size:13px;font-weight:600;margin-top:12px;display:none}
+           border-radius:8px;padding:10px;font-size:13px;font-weight:600;
+           text-align:center;margin-top:10px;display:none}
 .result-err{background:#450a0a;color:#fca5a5;border:1px solid #dc2626;
-            border-radius:8px;padding:12px;font-size:13px;
-            margin-top:12px;display:none}
-.go-btn{display:flex;align-items:center;justify-content:center;gap:8px;
-        width:100%;padding:13px;border-radius:10px;border:none;
+            border-radius:8px;padding:10px;font-size:12px;
+            margin-top:10px;display:none}
+.go-btn{display:none;width:100%;padding:12px;border-radius:10px;border:none;
         background:linear-gradient(135deg,#059669,#047857);color:#fff;
-        font-size:14px;font-weight:700;cursor:pointer;margin-top:12px;
-        text-decoration:none;display:none}
-.divider{border:none;border-top:1px solid #1e293b;margin:20px 0}
-.hint{font-size:11px;color:#4b5563;text-align:center;line-height:1.6}
+        font-size:14px;font-weight:700;cursor:pointer;margin-top:10px}
+.field{margin-bottom:12px}
+.field label{display:block;font-size:11px;color:#9ca3af;margin-bottom:5px;text-transform:uppercase}
+.field input{width:100%;padding:10px 12px;border-radius:8px;
+             border:1px solid #374151;background:#111827;
+             color:#e2e8f0;font-size:13px;outline:none}
+.field input:focus{border-color:#2563eb}
 </style>
 </head>
 <body>
 <div class="card">
   <a href="/" class="back">← Назад</a>
   <h1>📧 Подключение почты</h1>
-  <p class="sub">Введи данные — PayCalendar запомнит пароль и будет входить автоматически.</p>
+  <p class="sub">webmail.ee требует входа через браузер. Выбери любой из способов:</p>
 
-  <div class="field">
-    <label>Email</label>
-    <input type="email" id="email" placeholder="login@domain.ee" autocomplete="email">
-  </div>
-  <div class="field">
-    <label>Пароль от почты</label>
-    <div class="pwd-wrap">
-      <input type="password" id="pwd" placeholder="••••••••"
-             autocomplete="current-password"
-             onkeydown="if(event.key==='Enter')connect()">
-      <button class="pwd-eye" type="button" onclick="togglePwd()">👁</button>
+  <!-- METHOD 1: Console command (recommended) -->
+  <div class="method rec">
+    <div class="m-head">
+      <span class="badge b-green">✨ Лучший способ</span>
+      <span class="m-title">Команда в консоли браузера</span>
     </div>
+    <div class="m-desc">
+      1. Открой <strong>webmail.ee</strong> и войди в почту<br>
+      2. Нажми <strong>F12</strong> → вкладка <strong>Console</strong><br>
+      3. Вставь команду ниже и нажми Enter:
+    </div>
+    <div class="code" id="codeBox" onclick="copyCode()">Нажми "Открыть webmail.ee" чтобы увидеть команду</div>
+    <div style="display:flex;gap:8px;margin-top:8px">
+      <button class="btn btn-blue" style="flex:1" onclick="openWebmail()">🌐 Открыть webmail.ee</button>
+      <button class="btn btn-gray" style="flex:1" onclick="copyCode()" id="copyBtn">📋 Скопировать</button>
+    </div>
+    <div class="result-ok" id="res1"></div>
+    <div class="result-err" id="err1"></div>
+    <button class="go-btn" id="go1" onclick="window.location='/'">📅 Открыть календарь →</button>
   </div>
 
-  <button class="btn-main" id="connectBtn" onclick="connect()">
-    🔐 Сохранить и подключить
-  </button>
-
-  <div class="progress" id="progressWrap">
-    <div class="prog-bar"><div class="prog-fill" id="progFill"></div></div>
-    <div class="logs" id="logs"></div>
+  <!-- METHOD 2: Paste cookies manually -->
+  <div class="method">
+    <div class="m-head">
+      <span class="badge b-gray">Вручную</span>
+      <span class="m-title">Вставить куки напрямую</span>
+    </div>
+    <div class="m-desc">
+      В webmail.ee: F12 → Application → Cookies → выбери webmail.ee → скопируй все значения
+    </div>
+    <div class="field">
+      <label>Cookie строка (всё содержимое поля Cookie из заголовков)</label>
+      <input type="text" id="cookiePaste" placeholder="session=abc123; token=xyz...">
+    </div>
+    <button class="btn btn-green" onclick="saveCookies()">💾 Сохранить куки</button>
+    <div class="result-ok" id="res2"></div>
+    <div class="result-err" id="err2"></div>
+    <button class="go-btn" id="go2" onclick="window.location='/'">📅 Открыть календарь →</button>
   </div>
 
-  <div class="result-ok" id="resOk"></div>
-  <div class="result-err" id="resErr"></div>
-  <a href="/" class="go-btn" id="goBtn">📅 Открыть платёжный календарь →</a>
-
-  <hr class="divider">
-  <div class="hint">Пароль шифруется и хранится только на сервере.<br>Ни куки, ни токены не нужны — только email и пароль.</div>
+  <!-- METHOD 3: Save email/password (for IMAP if available) -->
+  <div class="method">
+    <div class="m-head">
+      <span class="badge b-gray">Настройки</span>
+      <span class="m-title">Сохранить email и пароль</span>
+    </div>
+    <div class="m-desc">Нужно для записи настроек. Вход через IMAP если доступен.</div>
+    <div class="field">
+      <label>Email</label>
+      <input type="email" id="emailInp" placeholder="login@domain.ee">
+    </div>
+    <div class="field">
+      <label>Пароль</label>
+      <input type="password" id="pwdInp" placeholder="••••••••">
+    </div>
+    <button class="btn btn-gray" onclick="saveCreds()">💾 Сохранить</button>
+    <div class="result-ok" id="res3"></div>
+  </div>
 </div>
 
 <script>
-function togglePwd(){
-  var i=document.getElementById('pwd');
-  i.type = i.type==='password' ? 'text' : 'password';
+// Build the console command with current Railway URL
+var SELF = window.location.origin;
+var CMD = "fetch('" + SELF + "/api/save-cookies',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({cookie:document.cookie})}).then(r=>r.json()).then(d=>alert(d.ok?'✅ Готово! Вернись в PayCalendar.':'❌ Ошибка: '+d.error))";
+
+function openWebmail(){
+  window.open('https://webmail.ee','_blank');
+  document.getElementById('codeBox').textContent = CMD;
+  document.getElementById('codeBox').style.borderColor = '#2563eb';
+  startPoll();
 }
 
-function addLog(msg, type){
-  var el=document.getElementById('logs');
-  var d=document.createElement('div');
-  d.className='log-'+(type||'info');
-  d.textContent=({'ok':'✓ ','err':'✗ ','warn':'⚠ ','info':'· '}[type]||'· ')+msg;
-  el.appendChild(d);
-  el.scrollTop=el.scrollHeight;
+function copyCode(){
+  navigator.clipboard.writeText(CMD).then(function(){
+    var b = document.getElementById('copyBtn');
+    b.textContent = '✅ Скопировано!';
+    b.style.background = '#059669';
+    b.style.color = '#fff';
+    setTimeout(function(){
+      b.textContent = '📋 Скопировать';
+      b.style.background = '';
+      b.style.color = '';
+    }, 3000);
+  });
 }
 
-function setProgress(pct){
-  document.getElementById('progFill').style.width=pct+'%';
+async function saveCookies(){
+  var v = document.getElementById('cookiePaste').value.trim();
+  if(!v){alert('Вставь куки');return;}
+  var r = await fetch('/api/save-cookies',{method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({cookie:v})});
+  var d = await r.json();
+  showResult('res2','err2','go2',d.ok,'Куки сохранены!',d.error);
 }
 
-async function connect(){
-  var email=document.getElementById('email').value.trim();
-  var pwd=document.getElementById('pwd').value;
-  // Allow empty password if already saved on server
-  if(!email){alert('Введи email');return;}
+async function saveCreds(){
+  var e = document.getElementById('emailInp').value.trim();
+  var p = document.getElementById('pwdInp').value;
+  if(e) await fetch('/api/save-config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({section:'email',key:'address',value:e})});
+  if(p) await fetch('/api/save-config',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({section:'email',key:'password',value:p})});
+  var r3 = document.getElementById('res3');
+  r3.textContent = '✅ Сохранено!'; r3.style.display = 'block';
+  setTimeout(function(){r3.style.display='none';},3000);
+}
 
-  var btn=document.getElementById('connectBtn');
-  btn.disabled=true;
-  btn.textContent='Подключаю...';
-  document.getElementById('progressWrap').style.display='block';
-  document.getElementById('resOk').style.display='none';
-  document.getElementById('resErr').style.display='none';
-  document.getElementById('logs').innerHTML='';
-  setProgress(10);
+function showResult(okId, errId, goId, ok, okMsg, errMsg){
+  var o=document.getElementById(okId), e=document.getElementById(errId), g=document.getElementById(goId);
+  if(ok){o.textContent='✅ '+okMsg;o.style.display='block';g.style.display='block';}
+  else{e.textContent='❌ '+(errMsg||'Ошибка');e.style.display='block';}
+}
 
-  addLog('Сохраняю учётные данные...');
-
-  // Save email and password via API
-  try {
-    await fetch('/api/save-config',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({section:'email',key:'address',value:email})});
-    if(pwd){
-    await fetch('/api/save-config',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({section:'email',key:'password',value:pwd})});
-  }
-
-    addLog('Данные сохранены', 'ok');
-    setProgress(30);
-    addLog('Проверяю подключение к почте...');
-
-    // Test connection
-    var r = await fetch('/api/test-connection',{method:'POST',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({email:email,password:pwd})});
-    var d = await r.json();
-
-    if(d.stream){
-      // Use SSE stream for live progress
-      setProgress(40);
-      var es = new EventSource('/api/playwright-login/stream');
-      es.onmessage = function(e){
-        var msg = JSON.parse(e.data);
-        if(msg.done){
-          es.close();
-          if(msg.ok||d.ok){
-            setProgress(100);
-            addLog('Подключено успешно!', 'ok');
-            showOk();
-          } else {
-            showErr('Не удалось войти в почту');
-          }
-          return;
-        }
-        addLog(msg.msg, msg.type||'info');
-        setProgress(40+Math.min(50,Math.random()*10));
-      };
-      es.onerror = function(){ es.close(); showOk(); };
-    } else if(d.ok){
-      setProgress(100);
-      addLog(d.message||'Подключено!', 'ok');
-      showOk();
-    } else {
-      addLog(d.error||'Ошибка подключения', 'err');
-      // Still save - user can try scanning
-      setProgress(80);
-      addLog('Данные сохранены. Попробуй запустить сканирование.', 'warn');
-      showOk('Данные сохранены (соединение не проверено)');
+// Poll for successful cookie capture
+function startPoll(){
+  var t = setInterval(async function(){
+    var r = await fetch('/api/capture-status').catch(function(){return null;});
+    if(!r) return;
+    var d = await r.json().catch(function(){return{};});
+    if(d.status==='done' && d.success){
+      clearInterval(t);
+      showResult('res1','err1','go1',true,'Куки получены — можно сканировать!');
     }
-  } catch(err){
-    showErr(err.message);
+  },2000);
+}
+
+// Prefill email
+fetch('/api/config').then(function(r){return r.json();}).then(function(d){
+  if(d.email) document.getElementById('emailInp').value=d.email;
+}).catch(function(){});
+
+// Check if already connected
+fetch('/api/auth-status').then(function(r){return r.json();}).then(function(d){
+  if(d.cookie_set){
+    document.getElementById('res1').textContent='✅ Куки уже сохранены — можно сканировать';
+    document.getElementById('res1').style.display='block';
+    document.getElementById('go1').style.display='block';
   }
-
-  btn.disabled=false;
-  btn.textContent='🔐 Сохранить и подключить';
-}
-
-function showOk(msg){
-  var el=document.getElementById('resOk');
-  el.textContent='✅ ' + (msg||'Готово! Данные сохранены.');
-  el.style.display='block';
-  document.getElementById('goBtn').style.display='flex';
-  setProgress(100);
-}
-function showErr(msg){
-  var el=document.getElementById('resErr');
-  el.textContent='❌ '+msg;
-  el.style.display='block';
-}
-
-// Prefill saved credentials
-fetch('/api/config').then(r=>r.json()).then(d=>{
-  if(d.email) document.getElementById('email').value=d.email;
-  // Show password hint if already saved
-  if(d.has_password){
-    var hint=document.createElement('div');
-    hint.style.cssText='font-size:11px;color:#34d399;margin-top:4px';
-    hint.textContent='✓ Пароль уже сохранён — можно оставить пустым для сохранения старого';
-    document.getElementById('pwd').parentElement.after(hint);
-  }
-}).catch(()=>{});
+}).catch(function(){});
 </script>
 </body>
 </html>
