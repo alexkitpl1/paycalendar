@@ -1280,6 +1280,119 @@ def fetch_messages(sess, user_id, mailbox_id, emit, from_date=None, to_date=None
             emit(f"  {ex}", "err")
     return []
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PLAYWRIGHT AUTO-LOGIN  (headless Chromium on Railway)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def playwright_webmail_login(emit=None):
+    """Login to webmail.ee using headless Chromium. Returns cookie string or None."""
+    def say(msg, t="info"):
+        log.info(f"PW: {msg}")
+        if emit: emit(msg, t)
+
+    if not EMAIL_ADDR or not EMAIL_PASS:
+        say("❌ Нет email или пароля — зайди в '🌐 Войти в почту'", "err")
+        return None
+
+    try:
+        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
+    except ImportError:
+        say("❌ Playwright не установлен", "err")
+        return None
+
+    say("🌐 Запускаю браузер для входа в webmail.ee...")
+    try:
+        with sync_playwright() as pw:
+            browser = pw.chromium.launch(
+                headless=True,
+                args=["--no-sandbox", "--disable-setuid-sandbox",
+                      "--disable-dev-shm-usage", "--disable-gpu",
+                      "--no-zygote", "--single-process"]
+            )
+            ctx = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120",
+                locale="et-EE",
+            )
+            page = ctx.new_page()
+
+            say("Открываю webmail.ee...")
+            page.goto("https://webmail.ee", timeout=30000)
+            page.wait_for_load_state("networkidle", timeout=15000)
+
+            # Fill login form
+            say(f"Вхожу как {EMAIL_ADDR}...")
+            
+            # Try different selectors for email field
+            for sel in ['input[name="username"]', 'input[name="email"]',
+                        'input[type="email"]', 'input[name="login"]',
+                        '#username', '#email', '#login']:
+                try:
+                    page.fill(sel, EMAIL_ADDR, timeout=2000)
+                    log.debug(f"PW: filled email with selector {sel}")
+                    break
+                except Exception:
+                    continue
+
+            # Password field
+            for sel in ['input[name="password"]', 'input[type="password"]', '#password']:
+                try:
+                    page.fill(sel, EMAIL_PASS, timeout=2000)
+                    log.debug(f"PW: filled password with selector {sel}")
+                    break
+                except Exception:
+                    continue
+
+            # Submit
+            for sel in ['button[type="submit"]', 'input[type="submit"]',
+                        'button:has-text("Logi sisse")', 'button:has-text("Login")',
+                        'button:has-text("Войти")', '.login-btn', '#login-btn']:
+                try:
+                    page.click(sel, timeout=3000)
+                    log.debug(f"PW: clicked submit {sel}")
+                    break
+                except Exception:
+                    continue
+
+            # Wait for login
+            say("Ожидаю подтверждения входа...")
+            try:
+                page.wait_for_url("**/u/**", timeout=12000)
+                say("✅ Вход выполнен!", "ok")
+            except PWTimeout:
+                # Check if we're past login page anyway
+                if "webmail.ee/u/" in page.url or "webmail.ee/mail" in page.url:
+                    say("✅ Вход выполнен (redirect)!", "ok")
+                else:
+                    # Try to extract cookies anyway
+                    log.warning(f"PW: login timeout, current URL: {page.url}")
+                    say("⚠ Вход не подтверждён — пробую получить куки...", "warn")
+
+            # Extract cookies
+            cookies = ctx.cookies()
+            if cookies:
+                ck_str = "; ".join(
+                    f"{c['name']}={c['value']}"
+                    for c in cookies
+                    if c.get('domain','') in ('webmail.ee', '.webmail.ee',
+                                              'api-mail-v1.webmail.ee')
+                    and c['value']
+                    and ord(c['value'][0]) < 128  # latin-1 safe
+                )
+                if ck_str:
+                    say(f"Получено {len(cookies)} куков ({len(ck_str)} байт)", "ok")
+                    browser.close()
+                    return ck_str
+
+            browser.close()
+            say("❌ Куки не получены после входа", "err")
+            return None
+
+    except Exception as ex:
+        say(f"❌ Ошибка браузера: {ex}", "err")
+        log.error(f"Playwright error: {ex}", exc_info=True)
+        return None
+
 def scan_webmail(emit, from_date=None, to_date=None):
     """Scan Zone.ee webmail via HTTPS."""
     API  = "https://api-mail-v1.webmail.ee"
@@ -1289,25 +1402,32 @@ def scan_webmail(emit, from_date=None, to_date=None):
     ensure_auth()
     reload_config()
     if not WEBMAIL_COOKIE:
-        # Try auto-login with saved password (works on Railway without Chrome)
+        # Try Playwright auto-login first (headless Chromium)
         if EMAIL_PASS and EMAIL_ADDR:
-            emit("Нет сессии — выполняю вход с паролем...", "warn")
-            sess_tmp = make_session()
-            if webmail_login(sess_tmp, EMAIL_ADDR, EMAIL_PASS, emit):
-                # Save new cookies
-                cookie_str = "; ".join(f"{c.name}={c.value}" for c in sess_tmp.cookies)
-                if cookie_str:
-                    save_config_value("email", "webmail_cookie", cookie_str)
-                    reload_config()
-                    emit("Вход выполнен! Куки сохранены.", "ok")
-                else:
-                    emit("❌ Не удалось получить куки после входа", "err")
-                    return []
+            emit("🌐 Нет сессии — запускаю автовход через браузер...", "warn")
+            ck = playwright_webmail_login(emit)
+            if ck:
+                save_config_value("email", "webmail_cookie", ck)
+                reload_config()
+                emit("✅ Автовход выполнен! Куки сохранены.", "ok")
             else:
-                emit("❌ Вход не удался. Проверь email и пароль в настройках почты.", "err")
-                return []
+                # Fallback: try requests-based login
+                sess_tmp = make_session()
+                if webmail_login(sess_tmp, EMAIL_ADDR, EMAIL_PASS, emit):
+                    ck2 = "; ".join(f"{c.name}={c.value}" for c in sess_tmp.cookies
+                                    if all(ord(ch) < 128 for ch in c.value))
+                    if ck2:
+                        save_config_value("email", "webmail_cookie", ck2)
+                        reload_config()
+                        emit("✅ Вход выполнен (fallback)!", "ok")
+                    else:
+                        emit("❌ Не удалось получить куки. Войди через '🌐 Войти в почту'.", "err")
+                        return []
+                else:
+                    emit("❌ Автовход не удался. Войди вручную через '🌐 Войти в почту'.", "err")
+                    return []
         else:
-            emit("❌ Нет куков и не сохранён пароль. Зайди в '⚙ Войти в почту' и введи данные.", "err")
+            emit("❌ Нет пароля. Зайди в '🌐 Войти в почту' и введи email + пароль.", "err")
             return []
     sess = make_session()
 
