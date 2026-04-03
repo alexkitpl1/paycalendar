@@ -786,17 +786,33 @@ function scanSequential(totalMonths) {
 function scanMonth(months){ scanSequential(months); }
 
 function resetAndScan(){
-  if(!confirm("Сбросить историю сканирования и найти все счета заново?\n\nЭто может занять несколько минут.")) return;
+  // Show inline confirm panel instead of confirm() which may be blocked
+  var modals = document.getElementById("modals");
+  if(!modals) return;
+  modals.innerHTML = '<div class="overlay" onclick="if(event.target===this)closeModal()">'
+    + '<div class="modal" style="max-width:360px">'
+    + '<div class="modal-title">🔁 Пересканировать всё</div>'
+    + '<p style="font-size:13px;color:var(--text3);margin:10px 0 18px;line-height:1.6">'
+    + 'Сбросить историю и найти все счета заново?<br>'
+    + '<span style="color:#fbbf24">Это может занять несколько минут.</span></p>'
+    + '<div style="display:flex;gap:10px">'
+    + '<button class="btn btn-glass" style="flex:1" onclick="closeModal()">Отмена</button>'
+    + '<button class="btn" style="flex:1;background:linear-gradient(135deg,#2563eb,#7c3aed);color:#fff;border:none" '
+    + 'onclick="closeModal();doResetScan()">Да, пересканировать</button>'
+    + '</div></div></div>';
+}
+
+function doResetScan(){
   fetch("/api/reset-scan",{method:"POST",credentials:"include"})
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.ok){
-        showNotif("Состояние сброшено — запускаю полное сканирование...","ok");
-        setTimeout(function(){scanSequential(3);},800);
+        showNotif("Состояние сброшено — запускаю сканирование...","ok");
+        setTimeout(function(){scanSequential(4);},600);
       } else {
-        showNotif("Ошибка: "+(d.error||"неизвестно"),"err");
+        showNotif("Ошибка: "+(d.error||d.message||"неизвестно"),"err");
       }
-    }).catch(function(e){showNotif("Ошибка: "+e,"err");});
+    }).catch(function(e){showNotif("Ошибка соединения: "+e,"err");});
 }
 
 function doRefresh() {

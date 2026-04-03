@@ -1,5 +1,6 @@
 [build]
 builder = "NIXPACKS"
+buildCommand = "pip install -r requirements.txt && playwright install chromium --with-deps || pip install -r requirements.txt"
 
 [deploy]
 startCommand = "python app.py"
