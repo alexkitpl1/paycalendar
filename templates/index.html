@@ -194,6 +194,7 @@ input,select{font-family:'DM Sans',sans-serif}
 @keyframes ld{0%{width:0%;margin-left:0%}50%{width:55%;margin-left:22%}100%{width:0%;margin-left:100%}}
 .pulse{animation:pulse 1.4s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
+@keyframes spin{to{transform:rotate(360deg)}}
 </style>
 </head>
 <body>
@@ -950,40 +951,101 @@ function runScan(){
 }
 
 function _runScanUrl(url, onDone){
-  document.getElementById("sc-btn").innerHTML=`<span class="pulse">⏳ Сканирование…</span>`;
-  document.getElementById("sc-btn").disabled=true;
-  document.getElementById("sc-load").style.display="block";
-  const lb=document.getElementById("sc-logs");lb.style.display="block";
+  // Show scan panel inline
+  var panel = document.getElementById('scan-status-panel');
+  if(!panel){
+    panel = document.createElement('div');
+    panel.id = 'scan-status-panel';
+    panel.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#111827;border-top:2px solid #2563eb;padding:12px 16px;z-index:999;font-size:13px;color:#e2e8f0;box-shadow:0 -4px 20px rgba(0,0,0,.5)';
+    document.body.appendChild(panel);
+  }
+  panel.style.display = 'block';
 
-  // Reset progress bar
-  _setProgress(0, 0, 0, 0);
+  function setPanel(html){ panel.innerHTML = html; }
+  function closePanel(){
+    panel.style.display = 'none';
+    document.querySelectorAll('.scan-btn-group button').forEach(b=>{
+      b.disabled=false;
+      b.querySelector('.spin') && (b.innerHTML = b.dataset.orig||b.innerHTML);
+    });
+  }
 
-  const es=new EventSource(url);
-  es.onmessage=e=>{
-    const d=JSON.parse(e.data);
+  // Disable all scan buttons
+  document.querySelectorAll('[id^="scan"]').forEach(b=>{
+    if(!b.dataset.orig) b.dataset.orig = b.innerHTML;
+    b.disabled = true;
+  });
 
-    // Progress event
+  setPanel('<div style="display:flex;align-items:center;gap:10px">'
+    +'<span style="animation:spin .8s linear infinite;display:inline-block;font-size:18px">⏳</span>'
+    +'<span>Подключаюсь к почтовому серверу...</span></div>');
+
+  var logLines = [];
+  var lastStatus = '';
+  var cur=0, tot=0;
+
+  const es = new EventSource(url);
+  es.onmessage = function(e){
+    var d;
+    try { d = JSON.parse(e.data); } catch(ex){ return; }
+
     if(d.type==='progress'){
-      _setProgress(d.current, d.total, d.speed, d.eta);
+      cur = d.current; tot = d.total;
+      var pct = tot>0 ? Math.round(cur/tot*100) : 0;
+      var speed = d.speed>0 ? d.speed.toFixed(1)+' п/с' : '';
+      var eta   = d.eta>0  ? '~'+d.eta+'с' : '';
+      setPanel(
+        '<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">'
+          +'<span style="color:#60a5fa;font-weight:500">📬 Анализирую письма...</span>'
+          +'<span style="color:#9ca3af;font-size:12px">'+cur+'/'+tot+' · '+speed+' · '+eta+'</span>'
+        +'</div>'
+        +'<div style="background:#1e293b;border-radius:6px;height:8px;overflow:hidden">'
+          +'<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#2563eb,#7c3aed);transition:width .3s;border-radius:6px"></div>'
+        +'</div>'
+        +'<div style="margin-top:6px;font-size:11px;color:#6b7280">'+lastStatus+'</div>'
+      );
       return;
     }
 
     if(d.done){
       es.close();
-      _setProgress(d.total||100, d.total||100, 0, 0);
+      var newCount = d.count||0;
+      var msg = newCount>0 ? '✅ Добавлено '+newCount+' новых счетов!' : '✅ Готово — новых счетов не найдено';
+      setPanel('<div style="display:flex;align-items:center;justify-content:space-between">'
+        +'<span style="color:'+(newCount>0?'#34d399':'#9ca3af')+'">'+msg+'</span>'
+        +'<button onclick="document.getElementById('scan-status-panel').style.display='none'" '
+        +'style="background:transparent;border:1px solid #374151;color:#9ca3af;padding:4px 10px;border-radius:5px;cursor:pointer;font-size:12px">✕ Закрыть</button>'
+        +'</div>');
+      setTimeout(closePanel, newCount>0 ? 8000 : 4000);
       loadAll();
-      if(d.count>0) showNotif(`📬 +${d.count} новых счетов`,'ok');
+      if(newCount>0) showNotif('📬 +'+newCount+' новых счетов','ok');
       if(onDone) onDone();
-      document.getElementById("sc-btn").disabled=false;
       return;
     }
-    lb.innerHTML+=`<div class="log-${d.type||"info"}">[${d.ts||""}] ${esc(d.msg||"")}</div>`;
-    lb.scrollTop=lb.scrollHeight;
+
+    // Log line - update status
+    if(d.msg){
+      lastStatus = d.msg;
+      var col = '#9ca3af';
+      if(d.type==='ok')  col='#34d399';
+      if(d.type==='err') col='#f87171';
+      if(d.type==='warn')col='#fbbf24';
+      if(tot===0){
+        // Not yet in progress phase - show current step
+        setPanel('<div style="display:flex;align-items:center;gap:12px">'
+          +'<span style="animation:spin .8s linear infinite;display:inline-block;font-size:16px">⏳</span>'
+          +'<div><div style="color:#e2e8f0;font-size:13px">Сканирование почты...</div>'
+          +'<div style="color:'+col+';font-size:12px;margin-top:2px">'+d.msg+'</div></div>'
+          +'</div>');
+      }
+    }
   };
-  es.onerror=()=>{
+
+  es.onerror = function(){
     es.close();
-    document.getElementById("sc-btn").textContent="Повторить";
-    document.getElementById("sc-btn").disabled=false;
+    setPanel('<div style="color:#f87171">❌ Ошибка соединения. <a href="#" onclick="location.reload()" style="color:#60a5fa">Обновить страницу</a></div>');
+    setTimeout(closePanel, 5000);
+    if(onDone) onDone();
   };
 }
 
