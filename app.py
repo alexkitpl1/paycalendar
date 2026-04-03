@@ -1265,8 +1265,26 @@ def scan_webmail(emit, from_date=None, to_date=None):
     ensure_auth()
     reload_config()
     if not WEBMAIL_COOKIE:
-        emit("❌ Нет куков — войди в почту через '🌐 Войти в почту'", "err")
-        return []
+        # Try auto-login with saved password (works on Railway without Chrome)
+        if EMAIL_PASS and EMAIL_ADDR:
+            emit("Нет сессии — выполняю вход с паролем...", "warn")
+            sess_tmp = make_session()
+            if webmail_login(sess_tmp, EMAIL_ADDR, EMAIL_PASS, emit):
+                # Save new cookies
+                cookie_str = "; ".join(f"{c.name}={c.value}" for c in sess_tmp.cookies)
+                if cookie_str:
+                    save_config_value("email", "webmail_cookie", cookie_str)
+                    reload_config()
+                    emit("Вход выполнен! Куки сохранены.", "ok")
+                else:
+                    emit("❌ Не удалось получить куки после входа", "err")
+                    return []
+            else:
+                emit("❌ Вход не удался. Проверь email и пароль в настройках почты.", "err")
+                return []
+        else:
+            emit("❌ Нет куков и не сохранён пароль. Зайди в '⚙ Войти в почту' и введи данные.", "err")
+            return []
     sess = make_session()
 
     user_id = mailbox_id = None
@@ -1572,6 +1590,18 @@ def api_debug_clear():
         return "<script>window.location='/debug-log'</script>"
     except Exception as ex:
         return str(ex), 500
+
+
+@app.route("/api/reset-scan", methods=["POST"])
+def api_reset_scan():
+    """Reset scan state - next scan will start from scratch."""
+    try:
+        empty = {"last_uid": None, "last_date": None, "scan_count": 0, "scanned_uids": []}
+        save_state(empty)
+        log.info("Scan state reset - will rescan from beginning")
+        return jsonify({"ok": True, "message": "Состояние сброшено — следующий скан начнётся с начала"})
+    except Exception as ex:
+        return jsonify({"ok": False, "error": str(ex)})
 
 @app.route("/api/scan-state")
 def api_scan_state():
