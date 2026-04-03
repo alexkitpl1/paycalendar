@@ -99,7 +99,8 @@ _req.Session.request = _debug_request
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 BASE_DIR    = Path(__file__).parent
-CONFIG_FILE = BASE_DIR / "config.ini"
+# config.ini saved to persistent volume on Railway, local dir on Windows
+CONFIG_FILE = BASE_DIR / "config.ini"  # redefined below after _DATA_DIR
 # Railway: set DATA_DIR=/data after adding a Volume
 # Without Volume, data resets on each deploy
 _DATA_DIR = Path(os.environ.get("DATA_DIR", str(BASE_DIR)))
@@ -107,7 +108,24 @@ try:
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
 except Exception:
     _DATA_DIR = BASE_DIR
-DATA_FILE = _DATA_DIR / "invoices.json"
+DATA_FILE   = _DATA_DIR / "invoices.json"
+# Use persistent dir for config on cloud, app dir on Windows
+CONFIG_FILE  = _DATA_DIR / "config.ini"
+# Copy base config.ini to DATA_DIR if not there yet
+_base_cfg = BASE_DIR / "config.ini"
+if not CONFIG_FILE.exists() and _base_cfg.exists():
+    import shutil as _sh
+    _sh.copy2(_base_cfg, CONFIG_FILE)
+elif not CONFIG_FILE.exists():
+    CONFIG_FILE.write_text(
+        "[email]\naddress =\npassword =\nimap_host = mail.zone.ee\n"
+        "imap_port = 993\nimap_folder = INBOX\n"
+        "scan_last_emails = 500\nquick_scan_emails = 30\n"
+        "auto_scan_minutes = 60\n[claude]\napi_key =\n"
+        "[app]\nport = 5050\nauto_open_browser = true\n"
+        "company_name = PayCalendar\n[notifications]\n"
+        "warn_days_before = 3\nwindows_notifications = true\n",
+        encoding="utf-8")
 STATE_FILE  = _DATA_DIR / "scan_state.json"
 DEBUG_FILE = _DATA_DIR / "debug_full.log"
 # Update file handler to use correct path
@@ -266,10 +284,22 @@ def is_already_scanned(uid):
 
 def reload_config():
     global WEBMAIL_COOKIE, WEBMAIL_XSRF, WEBMAIL_URL
+    global EMAIL_ADDR, EMAIL_PASS, IMAP_HOST, IMAP_PORT, CLAUDE_KEY, COMPANY
     cfg.read(CONFIG_FILE, encoding="utf-8")
     WEBMAIL_COOKIE = c("email", "webmail_cookie", "")
     WEBMAIL_XSRF   = c("email", "webmail_xsrf_token", "")
     WEBMAIL_URL    = c("email", "webmail_session_url", "")
+    # Reload credentials from saved config (overrides env if file has values)
+    _addr = c("email", "address", "")
+    _pass = c("email", "password", "")
+    _host = c("email", "imap_host", "")
+    _key  = c("claude", "api_key", "")
+    _co   = c("app", "company_name", "")
+    if _addr: EMAIL_ADDR = _addr
+    if _pass: EMAIL_PASS = _pass
+    if _host: IMAP_HOST  = _host
+    if _key:  CLAUDE_KEY = _key
+    if _co:   COMPANY    = _co
 
 def save_config_value(section, key, value):
     raw = configparser.RawConfigParser()
@@ -1392,8 +1422,19 @@ def setup():
 
 @app.route("/api/config")
 def api_config():
-    return jsonify({"company":COMPANY,"email":EMAIL_ADDR,"password":EMAIL_PASS,
-                    "warn_days":WARN_DAYS,"auto_scan_minutes":AUTO_SCAN})
+    reload_config()
+    pw  = EMAIL_PASS or ""
+    key = CLAUDE_KEY or ""
+    return jsonify({
+        "company":          COMPANY,
+        "email":            EMAIL_ADDR,
+        "password":         pw[:2]+"***" if pw else "",
+        "warn_days":        WARN_DAYS,
+        "auto_scan_minutes":AUTO_SCAN_MIN if hasattr(sys.modules[__name__],"AUTO_SCAN_MIN") else AUTO_SCAN,
+        "has_password":     bool(pw and pw not in ("your_password_here","")),
+        "has_api_key":      bool(key and "INSERT" not in key and len(key)>20),
+        "imap_host":        IMAP_HOST or "mail.zone.ee",
+    })
 
 @app.route("/api/invoices", methods=["GET"])
 def api_get_invoices():

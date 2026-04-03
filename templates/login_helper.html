@@ -118,7 +118,8 @@ function setProgress(pct){
 async function connect(){
   var email=document.getElementById('email').value.trim();
   var pwd=document.getElementById('pwd').value;
-  if(!email||!pwd){alert('Введи email и пароль');return;}
+  // Allow empty password if already saved on server
+  if(!email){alert('Введи email');return;}
 
   var btn=document.getElementById('connectBtn');
   btn.disabled=true;
@@ -136,9 +137,11 @@ async function connect(){
     await fetch('/api/save-config',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({section:'email',key:'address',value:email})});
+    if(pwd){
     await fetch('/api/save-config',{method:'POST',
       headers:{'Content-Type':'application/json'},
       body:JSON.stringify({section:'email',key:'password',value:pwd})});
+  }
 
     addLog('Данные сохранены', 'ok');
     setProgress(30);
@@ -203,9 +206,16 @@ function showErr(msg){
   el.style.display='block';
 }
 
-// Prefill from config
+// Prefill saved credentials
 fetch('/api/config').then(r=>r.json()).then(d=>{
   if(d.email) document.getElementById('email').value=d.email;
+  // Show password hint if already saved
+  if(d.has_password){
+    var hint=document.createElement('div');
+    hint.style.cssText='font-size:11px;color:#34d399;margin-top:4px';
+    hint.textContent='✓ Пароль уже сохранён — можно оставить пустым для сохранения старого';
+    document.getElementById('pwd').parentElement.after(hint);
+  }
 }).catch(()=>{});
 </script>
 </body>
