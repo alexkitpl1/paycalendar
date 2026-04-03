@@ -229,6 +229,13 @@ If not invoice: {{"is_invoice":false}}"""
 # ── Flask app ─────────────────────────────────────────────────────────────────
 app = Flask(__name__, template_folder=str(TMPL_DIR))
 CORS(app)
+
+@app.after_request
+def set_headers(response):
+    # Allow embedding in claude.ai iframe for testing
+    response.headers.pop('X-Frame-Options', None)
+    response.headers['Content-Security-Policy'] = "frame-ancestors *"
+    return response
 scan_lock = threading.Lock()
 
 # ── Data helpers ──────────────────────────────────────────────────────────────
