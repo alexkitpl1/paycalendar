@@ -15,13 +15,20 @@ from flask_cors import CORS
 # ── Logging ───────────────────────────────────────────────────────────────────
 # ── Debug log file ───────────────────────────────────────────────────────────
 # Log file - uses persistent volume if available
-DEBUG_FILE = _DATA_DIR / "debug_full.log"
 
 class DebugFormatter(logging.Formatter):
     def format(self, record):
         return super().format(record)
 
-# File handler - DEBUG level (everything)
+# File handler - define DEBUG_FILE early using env var (redefined properly later)
+import os as _os
+_early_data_dir = _os.environ.get("DATA_DIR", str(Path(__file__).parent))
+DEBUG_FILE = Path(_early_data_dir) / "debug_full.log"
+try:
+    Path(_early_data_dir).mkdir(parents=True, exist_ok=True)
+except Exception:
+    DEBUG_FILE = Path(__file__).parent / "debug_full.log"
+
 _file_handler = logging.FileHandler(DEBUG_FILE, encoding="utf-8", mode="a")
 _file_handler.setLevel(logging.DEBUG)
 _file_handler.setFormatter(logging.Formatter(
@@ -102,6 +109,14 @@ except Exception:
     _DATA_DIR = BASE_DIR
 DATA_FILE = _DATA_DIR / "invoices.json"
 STATE_FILE  = _DATA_DIR / "scan_state.json"
+DEBUG_FILE = _DATA_DIR / "debug_full.log"
+# Update file handler to use correct path
+try:
+    _file_handler.stream.close()
+    _file_handler.baseFilename = str(DEBUG_FILE)
+    _file_handler.stream = open(str(DEBUG_FILE), 'a', encoding='utf-8')
+except Exception:
+    pass
 TMPL_DIR    = BASE_DIR / "templates"
 
 # ── Config ────────────────────────────────────────────────────────────────────
