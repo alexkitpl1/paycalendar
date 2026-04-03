@@ -14,7 +14,8 @@ from flask_cors import CORS
 
 # ── Logging ───────────────────────────────────────────────────────────────────
 # ── Debug log file ───────────────────────────────────────────────────────────
-DEBUG_FILE = Path(__file__).parent / "debug_full.log"
+# Log file - uses persistent volume if available
+DEBUG_FILE = _DATA_DIR / "debug_full.log"
 
 class DebugFormatter(logging.Formatter):
     def format(self, record):
@@ -1409,44 +1410,97 @@ def api_mark_paid(inv_id):
 
 @app.route("/debug-log")
 def debug_log_view():
-    """View the full debug log in browser."""
+    level   = request.args.get("level", "all")   # all / info / error / warn
+    lines_n = int(request.args.get("n", "500"))
+    search  = request.args.get("q", "").lower()
     try:
-        content = (Path(__file__).parent / "debug_full.log").read_text(encoding="utf-8")
-        lines = content.split("\n")[-500:]  # last 500 lines
-        html_lines = []
-        for line in lines:
-            col = "#e2e8f0"
-            if "[ERROR"   in line: col = "#f87171"
+        content = DEBUG_FILE.read_text(encoding="utf-8", errors="replace") if DEBUG_FILE.exists() else ""
+        all_lines = content.split("\n")
+        # Filter
+        shown = []
+        for line in all_lines:
+            if level == "error" and "[ERROR" not in line: continue
+            if level == "warn"  and "[WARN"  not in line and "[ERROR" not in line: continue
+            if level == "info"  and "[DEBUG" in line: continue
+            if search and search not in line.lower(): continue
+            shown.append(line)
+        shown = shown[-lines_n:]
+        # Colorize
+        parts = []
+        for line in shown:
+            col = "#9ca3af"
+            if   "[ERROR"  in line: col = "#f87171"
             elif "[WARN"   in line: col = "#fbbf24"
+            elif "[INFO"   in line: col = "#e2e8f0"
             elif "[DEBUG"  in line: col = "#6b7280"
-            elif "HTTP"    in line: col = "#60a5fa"
-            elif "AUTH:"   in line: col = "#a78bfa"
-            elif "→ 200"   in line: col = "#34d399"
-            elif "→ 4"     in line: col = "#f87171"
-            line_esc = line.replace("&","&amp;").replace("<","&lt;")
-            html_lines.append(f'<div style="color:{col}">{line_esc}</div>')
-        body = "\n".join(html_lines)
+            if "→ 200"     in line or "OK"   in line or "успешно" in line.lower(): col = "#34d399"
+            if "→ 4" in line or "→ 5" in line: col = "#f87171"
+            esc = line.replace("&","&amp;").replace("<","&lt;").replace(">","&gt;")
+            parts.append(f'<div class="l" style="color:{col}">{esc}</div>')
+        body = "".join(parts) or '<div style="color:#6b7280">Лог пустой</div>'
+        total = len(all_lines)
+        sz    = f"{DEBUG_FILE.stat().st_size//1024} KB" if DEBUG_FILE.exists() else "0"
         return f"""<!DOCTYPE html>
-<html><head><meta charset="UTF-8"><title>PayCalendar Debug Log</title>
-<style>body{{background:#0f1117;font-family:monospace;font-size:12px;
-padding:12px;line-height:1.5}} .top{{background:#1a1f2e;padding:10px 14px;
-border-radius:8px;margin-bottom:12px;color:#f7fafc;font-size:14px;
-display:flex;justify-content:space-between;align-items:center}}
-a{{color:#4b6bff;text-decoration:none}} a:hover{{color:#818cf8}}</style>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PayCalendar — Лог</title>
+<style>
+*{{box-sizing:border-box;margin:0;padding:0}}
+body{{background:#0f1117;font-family:'Courier New',monospace;font-size:12px;color:#9ca3af}}
+.hdr{{background:#1a1f2e;border-bottom:1px solid #2d3748;padding:10px 14px;
+      display:flex;flex-wrap:wrap;gap:8px;align-items:center;position:sticky;top:0;z-index:9}}
+.hdr a,.hdr button{{color:#4b6bff;text-decoration:none;background:none;border:none;
+               cursor:pointer;font-size:12px;padding:3px 8px;border-radius:5px;
+               border:1px solid #374151}}
+.hdr a:hover,.hdr button:hover{{background:#1e293b}}
+.hdr a.active{{background:#2563eb;color:#fff;border-color:#2563eb}}
+.meta{{color:#4b5563;font-size:11px;margin-left:auto}}
+.search{{background:#111827;border:1px solid #374151;color:#e2e8f0;
+         border-radius:5px;padding:4px 8px;font-size:12px;width:160px}}
+.log{{padding:10px 14px;line-height:1.6}}
+.l{{white-space:pre-wrap;word-break:break-all;padding:1px 0}}
+.l:hover{{background:#1a1f2e}}
+</style>
 </head><body>
-<div class="top">
-  <span>📋 PayCalendar Debug Log (последние 500 строк)</span>
-  <span>
-    <a href="/debug-log">🔄 Обновить</a> &nbsp;
-    <a href="/">← Календарь</a> &nbsp;
-    <a href="/api/debug-clear" onclick="return confirm('Очистить лог?')">🗑 Очистить</a>
-  </span>
+<div class="hdr">
+  <a href="/">← Календарь</a>
+  <a href="/debug-log?level=all&n={lines_n}" class="{'active' if level=='all' else ''}">Все</a>
+  <a href="/debug-log?level=info&n={lines_n}" class="{'active' if level=='info' else ''}">INFO</a>
+  <a href="/debug-log?level=warn&n={lines_n}" class="{'active' if level=='warn' else ''}">WARN</a>
+  <a href="/debug-log?level=error&n={lines_n}" class="{'active' if level=='error' else ''}">ERROR</a>
+  <input class="search" type="text" placeholder="Поиск..." value="{search}"
+         onkeydown="if(event.key==='Enter')location='/debug-log?level={level}&q='+encodeURIComponent(this.value)">
+  <a href="/debug-log?level={level}&n={lines_n}&q={search}" id="ref">🔄</a>
+  <a href="/api/debug-clear" onclick="return confirm('Очистить лог?')">🗑</a>
+  <span class="meta">{len(shown)} / {total} строк · {sz} · {str(DEBUG_FILE)}</span>
 </div>
-{body}
-<script>window.scrollTo(0, document.body.scrollHeight);</script>
+<div class="log">{body}</div>
+<script>
+window.scrollTo(0,document.body.scrollHeight);
+// Auto-refresh every 5 sec if ?auto=1
+if(location.search.includes('auto=1'))
+  setTimeout(()=>location.reload(), 5000);
+</script>
 </body></html>"""
     except Exception as ex:
-        return f"<pre>Error reading log: {ex}</pre>", 500
+        return f"<pre style='color:#f87171'>Error: {ex}</pre>", 500
+
+@app.route("/api/logs")
+def api_logs_json():
+    """JSON log endpoint for programmatic access."""
+    n      = int(request.args.get("n", "100"))
+    level  = request.args.get("level", "all")
+    try:
+        content = DEBUG_FILE.read_text(encoding="utf-8", errors="replace") if DEBUG_FILE.exists() else ""
+        lines = content.split("\n")
+        if level != "all":
+            lines = [l for l in lines if f"[{level.upper()}" in l]
+        return jsonify({"lines": lines[-n:], "total": len(lines),
+                        "file": str(DEBUG_FILE), "exists": DEBUG_FILE.exists()})
+    except Exception as ex:
+        return jsonify({"error": str(ex)}), 500
+
 
 @app.route("/api/debug-clear")
 def api_debug_clear():
