@@ -1125,6 +1125,126 @@ def background_scanner():
         scan_email()
         check_notifications()
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  BACKGROUND SCAN WORKER
+#  Scan runs in background thread - survives browser disconnect
+#  Frontend polls /api/scan-status every 3 seconds
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_scan_state_live = {
+    "running":   False,
+    "queued":    False,
+    "task_id":   None,
+    "total":     0,
+    "done":      0,
+    "found":     0,
+    "speed":     0.0,
+    "eta":       0,
+    "pct":       0,
+    "log":       [],       # last 50 messages
+    "from_date": None,
+    "to_date":   None,
+    "started":   None,
+    "finished":  None,
+    "error":     None,
+}
+_scan_state_lock = threading.Lock()
+_MAX_LOG = 80
+
+def _bg_emit(msg, t="info"):
+    """Thread-safe emit that stores to live state + log file."""
+    log.info(f"[scan] {msg}")
+    with _scan_state_lock:
+        # Progress event from parallel worker
+        if t == "progress" and msg.startswith("__progress__"):
+            try:
+                parts = msg.split()
+                cur = int(parts[1]); tot = int(parts[2])
+                spd = float(parts[3]); eta = int(parts[4])
+                _scan_state_live["done"]  = cur
+                _scan_state_live["total"] = tot
+                _scan_state_live["speed"] = spd
+                _scan_state_live["eta"]   = eta
+                _scan_state_live["pct"]   = int(cur/tot*100) if tot > 0 else 0
+            except Exception:
+                pass
+            return
+        # Count found invoices
+        if msg.startswith("✓") or msg.startswith("✅"):
+            if "счет" in msg.lower() or any(c in msg for c in ["€","EUR","$"]):
+                _scan_state_live["found"] = _scan_state_live.get("found", 0) + 1
+        # Add to log
+        entry = {"ts": datetime.now().strftime("%H:%M:%S"), "msg": msg, "t": t}
+        _scan_state_live["log"].append(entry)
+        if len(_scan_state_live["log"]) > _MAX_LOG:
+            _scan_state_live["log"] = _scan_state_live["log"][-_MAX_LOG:]
+    # Also persist to file so it survives gunicorn worker restarts
+    try:
+        progress_file = _DATA_DIR / "scan_progress.json"
+        with open(progress_file, "w", encoding="utf-8") as f:
+            json.dump(_scan_state_live, f, ensure_ascii=False, default=str)
+    except Exception:
+        pass
+
+def _run_bg_scan(task_id, from_date=None, to_date=None, quick=False):
+    """Background scan - runs independently of HTTP connections."""
+    import time as _t
+    with _scan_state_lock:
+        _scan_state_live.update({
+            "running": True, "queued": False, "task_id": task_id,
+            "total": 0, "done": 0, "found": 0, "speed": 0, "eta": 0, "pct": 0,
+            "log": [], "from_date": from_date, "to_date": to_date,
+            "started": datetime.now().isoformat(), "finished": None, "error": None,
+        })
+
+    try:
+        if not scan_lock.acquire(blocking=False):
+            _bg_emit("Скан уже выполняется", "warn")
+            return
+        global SCAN_LIMIT
+        orig_limit = SCAN_LIMIT
+        if quick:
+            SCAN_LIMIT = QUICK_SCAN_LIMIT
+        try:
+            _bg_emit(f"Фоновый скан запущен (task={task_id[:8]}...)", "ok")
+            result = scan_email(_bg_emit, from_date=from_date, to_date=to_date, quick=quick)
+            found = len(result) if isinstance(result, list) else 0
+            with _scan_state_lock:
+                _scan_state_live["found"] = found
+            _bg_emit(f"✅ Скан завершён: {found} новых счетов", "ok")
+        finally:
+            SCAN_LIMIT = orig_limit
+            scan_lock.release()
+    except Exception as ex:
+        _bg_emit(f"❌ Ошибка: {ex}", "err")
+        with _scan_state_lock:
+            _scan_state_live["error"] = str(ex)
+    finally:
+        with _scan_state_lock:
+            _scan_state_live["running"]  = False
+            _scan_state_live["finished"] = datetime.now().isoformat()
+            _scan_state_live["pct"]      = 100
+        _bg_emit("Фоновый скан завершён", "ok")
+
+def start_bg_scan(from_date=None, to_date=None, quick=False):
+    """Start scan in background thread. Returns task_id."""
+    import uuid
+    task_id = str(uuid.uuid4())
+    with _scan_state_lock:
+        if _scan_state_live["running"]:
+            return None  # already running
+        _scan_state_live["queued"] = True
+    t = threading.Thread(
+        target=_run_bg_scan,
+        args=(task_id, from_date, to_date, quick),
+        daemon=True, name=f"scan-{task_id[:8]}"
+    )
+    t.start()
+    log.info(f"Background scan started: task={task_id[:8]}")
+    return task_id
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  ROUTES
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1399,6 +1519,66 @@ def api_debug_clear():
         return "<script>window.location='/debug-log'</script>"
     except Exception as ex:
         return str(ex), 500
+
+
+
+@app.route("/api/scan-status")
+def api_scan_status():
+    """Poll-based scan progress - works even after browser reconnect."""
+    # Try live state first
+    with _scan_state_lock:
+        state = dict(_scan_state_live)
+        state["log"] = list(_scan_state_live["log"])
+
+    # If not running, check persisted state
+    if not state["running"] and not state["started"]:
+        try:
+            pf = _DATA_DIR / "scan_progress.json"
+            if pf.exists():
+                with open(pf, encoding="utf-8") as f:
+                    state = json.load(f)
+        except Exception:
+            pass
+
+    state["invoices_total"] = len(load_invoices())
+    return jsonify(state)
+
+@app.route("/api/scan-start", methods=["POST"])
+def api_scan_start():
+    """Start background scan. Returns immediately with task_id."""
+    data      = request.json or {}
+    from_date = data.get("from_date") or data.get("from")
+    to_date   = data.get("to_date")   or data.get("to")
+    quick     = data.get("quick", False)
+
+    with _scan_state_lock:
+        if _scan_state_live["running"]:
+            return jsonify({
+                "ok": False,
+                "error": "Скан уже выполняется",
+                "task_id": _scan_state_live["task_id"],
+                "running": True,
+            })
+
+    task_id = start_bg_scan(from_date=from_date, to_date=to_date, quick=quick)
+    if not task_id:
+        return jsonify({"ok": False, "error": "Не удалось запустить"})
+    return jsonify({
+        "ok": True, "task_id": task_id,
+        "message": f"Скан запущен в фоне. Закрой страницу — скан продолжится.",
+        "poll": "/api/scan-status",
+    })
+
+@app.route("/api/scan-stop", methods=["POST"])
+def api_scan_stop():
+    """Stop running scan."""
+    try:
+        scan_lock.release()
+    except Exception:
+        pass
+    with _scan_state_lock:
+        _scan_state_live["running"] = False
+    return jsonify({"ok": True})
 
 
 @app.route("/api/reset-scan", methods=["POST"])
