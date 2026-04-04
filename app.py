@@ -759,24 +759,38 @@ def extract_amount(text):
 
 def extract_vendor(subject, sender, body):
     """Extract vendor name from email."""
-    # Try sender name first
+    # 1. Try sender display name (before <email>)
     if sender:
-        name_part = sender.split("<")[0].strip().strip('"').strip("'")
-        if 2 < len(name_part) < 60 and "@" not in name_part:
+        name_part = sender.split("<")[0].strip().strip('"').strip("'").strip()
+        # Skip if it's just an email address or too short
+        if 3 < len(name_part) < 60 and "@" not in name_part and name_part.replace(" ","").isalpha() == False:
+            if not re.match(r'^[a-z0-9._%+-]+$', name_part, re.I):  # not plain email
+                return name_part
+        if 3 < len(name_part) < 60 and "@" not in name_part:
             return name_part
-        # Extract from email domain
-        email_match = re.search(r"@([\w.-]+)", sender)
-        if email_match:
-            domain = email_match.group(1)
-            parts = domain.split(".")
-            if len(parts) >= 2:
-                return parts[-2].title()
-    # Try body/subject for company patterns
+
+    # 2. Look for company name patterns in body
     for pat in VENDOR_PATTERNS:
-        m = re.search(pat, subject + " " + body[:500], re.IGNORECASE | re.MULTILINE)
+        m = re.search(pat, body[:800], re.IGNORECASE | re.MULTILINE)
         if m:
-            return m.group(1).strip()[:60]
-    return subject[:40] if subject else "Unknown"
+            name = m.group(1).strip()[:60]
+            if len(name) > 2:
+                return name
+
+    # 3. Extract from email domain (last resort - use full domain not just first part)
+    if sender:
+        em = re.search(r"@([\w.-]+)", sender)
+        if em:
+            domain = em.group(1)
+            # Skip common email providers
+            skip = {'gmail','yahoo','hotmail','outlook','mail','inbox','zone','yandex','icloud'}
+            parts = [p for p in domain.split(".")[:-1] if p not in skip]
+            if parts:
+                return parts[-1].title()
+
+    # 4. Use subject (clean up Re:/RE: prefixes)
+    clean_subj = re.sub(r'^(Re:|RE:|Fwd:|FW:|\s)+', '', subject, flags=re.I).strip()
+    return clean_subj[:40] if clean_subj else "Unknown"
 
 
 def extract_due_date(text, email_date):
@@ -870,8 +884,13 @@ def is_invoice_by_keywords(subject, body, sender, has_att):
     # Business correspondence boost
     if re.search(r'\d+[.,]\d{2}\s*(eur|usd|gbp|€|\$)', text, re.IGNORECASE):
         score += 20  # has price/amount
+    # Only boost if it's a standalone offer/invoice number (not reply chains)
     if re.search(r'offer\s+\d{4,}|quote\s+\d+|order\s+\d+', text, re.IGNORECASE):
-        score += 20  # numbered offer/quote/order
+        score += 15  # numbered offer/quote/order
+    # Penalize reply chains - Re: Re: is unlikely to be the invoice itself
+    reply_depth = len(re.findall(r'\bRe:\s*|\bRE:\s*', subject, re.I))
+    if reply_depth >= 2:
+        score -= 20  # deep reply chain → less likely primary invoice
     # Negative signals
     if any(k in text for k in ["newsletter","unsubscribe","отписаться",
                                  "promotion","%off","discount code","click here"]):
@@ -905,6 +924,13 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
 
     existing     = load_invoices()
     existing_ids = {i.get("email_uid") for i in existing}
+    # Also deduplicate by normalized subject+date
+    def _norm_subj(s):
+        return re.sub(r'^(Re:|RE:|Fwd:|FW:|Aw:|Vs:|\s)+', '', s, flags=re.IGNORECASE).strip().lower()
+    existing_subj_dates = {
+        (_norm_subj(i.get("description","") or i.get("vendor","")), i.get("issue_date",""))
+        for i in existing
+    }
     new_invs     = []
     last_uid = last_date = None
     all_uids = []
@@ -1000,17 +1026,23 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         except Exception:
             # AI unavailable → keyword-only fallback
             if score >= 35:
-                inv = build_invoice({
-                    "is_invoice": True,
-                    "vendor":   extract_vendor(subj, frm, body),
-                    "amount":   extract_amount(subj + " " + body),
-                    "currency": extract_currency(subj + " " + body[:300]),
-                    "due_date": extract_due_date(body + " " + subj, ds),
-                    "issue_date": ds[:10],
-                    "description": subj[:100],
-                    "category": guess_category(subj, body, frm),
-                    "invoice_number": "",
-                }, uid, subj, frm, ds, att, source)
+                amount   = extract_amount(subj + " " + body)
+                vendor   = extract_vendor(subj, frm, body)
+                # Skip if no amount found and it's not a very strong match
+                if amount == 0 and score < 65:
+                    log.debug(f"KW skip (no amount, score={score}): {subj[:50]}")
+                else:
+                    inv = build_invoice({
+                        "is_invoice": True,
+                        "vendor":   vendor,
+                        "amount":   amount,
+                        "currency": extract_currency(subj + " " + body[:300]),
+                        "due_date": extract_due_date(body + " " + subj, ds),
+                        "issue_date": ds[:10],
+                        "description": subj[:100],
+                        "category": guess_category(subj, body, frm),
+                        "invoice_number": "",
+                    }, uid, subj, frm, ds, att, source)
                 emit(f"✓ [KW:{score}] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
 
         with lock:
@@ -1389,6 +1421,21 @@ def api_config():
         "has_gemini":       bool(GEMINI_KEY),
         "has_groq":         bool(GROQ_KEY),
     })
+
+
+@app.route("/api/invoices/cleanup", methods=["POST"])
+def api_invoices_cleanup():
+    """Remove invoices with amount=0 and no useful data."""
+    invs = load_invoices()
+    before = len(invs)
+    cleaned = [i for i in invs if (
+        float(i.get("amount") or 0) > 0 or
+        i.get("status") == "paid"  # keep paid even if 0
+    )]
+    save_invoices(cleaned)
+    removed = before - len(cleaned)
+    log.info(f"Cleanup: removed {removed} zero-amount invoices")
+    return jsonify({"ok": True, "removed": removed, "remaining": len(cleaned)})
 
 @app.route("/api/invoices", methods=["GET"])
 def api_get_invoices():
