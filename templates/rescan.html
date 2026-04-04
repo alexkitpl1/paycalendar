@@ -73,7 +73,7 @@ async function step2(){
   document.getElementById('btn2').disabled=true;
   L('Сбрасываю состояние...','info'); S('Сброс...');
   try{
-    var r=await api('/api/reset-scan',{});
+    var r=await api('/api/reset-scan',{clear_invoices:true});
     L('Сброс: '+(r.ok?'✅':JSON.stringify(r)),r.ok?'ok':'warn');
     try{
       var cl=await api('/api/invoices/cleanup',{});

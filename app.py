@@ -1022,18 +1022,57 @@ DUE_DATE_PATTERNS = [
 ]
 
 
+# extract_amount moved to new implementation above
+
+
 def extract_amount(text):
-    """Extract monetary amount from text using regex."""
+    """Extract monetary amount. Handles EN (1,800.00) EU (1.800,00) and space (1 800,00) formats."""
+    import re as _re2
+    if not text: return 0.0
+
+    def parse_amt(raw):
+        raw = raw.strip().replace(" ","").replace("\xa0","")
+        if not raw: return None
+        dots = raw.count("."); commas = raw.count(",")
+        try:
+            if dots == 0 and commas == 0:
+                return float(raw)
+            elif dots == 1 and commas == 0:
+                after = raw.split(".")[-1]
+                if len(after) == 3: return float(raw.replace(".",""))  # 1.800 EU thousands
+                return float(raw)  # 1800.00 decimal
+            elif commas == 1 and dots == 0:
+                after = raw.split(",")[-1]
+                if len(after) == 3: return float(raw.replace(",",""))  # 1,800 EN thousands
+                return float(raw.replace(",","."))  # 1800,00 EU decimal
+            elif dots >= 1 and commas >= 1:
+                ld = raw.rfind("."); lc = raw.rfind(",")
+                if ld > lc: return float(raw.replace(",",""))           # 1,800.00 EN
+                return float(raw.replace(".","").replace(",","."))      # 1.800,00 EU
+            else:
+                return float(_re2.sub(r"[.,](?=\d{3})", "", raw).replace(",","."))
+        except: return None
+
+    # Priority: invoice totals
+    PRIORITY = [
+        r"(?:total\s*due|amount\s*due|balance\s*due|grand\s*total|total\s*payable|invoice\s*total)[^\d€$£\n]{0,15}([\d,\.\s]+\d{2})",
+        r"(?:total|subtotal)[^\d€$£\n]{0,8}([\d,\.\s]+\d{2})\s*(?:€|EUR|USD|\$|GBP)?",
+        r"(?:kokku\s*tasuda|tasuda|kokku)[^\d\n]{0,10}([\d\s]+[.,]\d{2})",
+        r"(?:итого|к\s*оплате)[^\d\n]{0,10}([\d\s]+[.,]\d{2})",
+        r"(?:€|EUR|\$|£)\s*([\d]{1,3}(?:[\s,.]\d{3})*[.,]\d{2})",
+        r"([\d]{1,3}(?:[\s,.]\d{3})*[.,]\d{2})\s*(?:€|EUR|\$|£|USD|GBP)",
+    ]
+    for pat in PRIORITY:
+        for m in _re2.finditer(pat, text, _re2.IGNORECASE):
+            v = parse_amt(m.group(1))
+            if v and 0.01 <= v <= 9_999_999: return round(v, 2)
+
+    # Fallback: AMOUNT_PATTERNS
     for pat in AMOUNT_PATTERNS:
-        m = re.search(pat, text, re.IGNORECASE)
+        m = _re2.search(pat, text, _re2.IGNORECASE)
         if m:
-            raw = m.group(1).strip().replace(" ","").replace(",",".")
-            try:
-                val = float(raw)
-                if 0.01 <= val <= 9_999_999:
-                    return round(val, 2)
-            except Exception:
-                pass
+            v = parse_amt(m.group(1))
+            if v and 0.01 <= v <= 9_999_999: return round(v, 2)
     return 0.0
 
 
@@ -2805,12 +2844,19 @@ def api_scan_state():
 
 @app.route("/api/reset-scan", methods=["POST"])
 def api_reset_scan():
-    """Reset scan state - next scan will start from scratch."""
+    """Reset scan state. If clear_invoices=true, also clears all invoices."""
     try:
+        data = request.json or {}
         empty = {"last_uid": None, "last_date": None, "scan_count": 0, "scanned_uids": []}
         save_state(empty)
+        cleared_invoices = 0
+        if data.get("clear_invoices"):
+            existing = load_invoices()
+            cleared_invoices = len(existing)
+            save_invoices([])
+            log.info(f"Cleared {cleared_invoices} invoices for full rescan")
         log.info("Scan state reset - will rescan from beginning")
-        return jsonify({"ok": True, "message": "Состояние сброшено — следующий скан начнётся с начала"})
+        return jsonify({"ok": True, "message": "Состояние сброшено", "cleared_invoices": cleared_invoices})
     except Exception as ex:
         return jsonify({"ok": False, "error": str(ex)})
 
