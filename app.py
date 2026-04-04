@@ -617,18 +617,24 @@ def build_invoice(obj, uid, subject, sender, date_str, attach, source):
 # ── Keyword-based invoice extractor (no Claude API needed) ────────────────────
 INVOICE_KW_STRONG = [
     # Estonian
-    "arve","arve nr","arved","tasuda","makse","maksetähtaeg","maksenõue",
-    # English  
+    "arve","arve nr","arved","tasuda","makse","maksetähtaeg","maksenõue","arvetele",
+    # English
     "invoice","bill","payment due","amount due","please pay","remittance",
-    "overdue","pro forma","statement of account",
+    "overdue","pro forma","statement of account","purchase order","p.o.",
+    "receipt","your order","order confirmation","subscription","renewal",
+    # Commercial offers that may include payment
+    "offer","quote","quotation","proposal","price list","pricelist",
     # Russian
     "счёт","счет","счёт-фактура","к оплате","оплата","квитанция","задолженность",
+    "платёж","платеж","оплатить","услуги","акт","УПД","счёт на оплату",
+    "стоимость","цена","прайс","предложение",
     # German
     "rechnung","zahlung","fällig","betrag fällig","mahnung","zahlungserinnerung",
+    "angebot","kostenpflichtig",
     # Finnish/Nordic
-    "lasku","maksu","eräpäivä","faktura","betalning","förfallodatum",
+    "lasku","maksu","eräpäivä","faktura","betalning","förfallodatum","tilaus",
     # French/Spanish/Italian
-    "facture","factura","fattura","paiement","pago","pagamento",
+    "facture","factura","fattura","paiement","pago","pagamento","devis","offre",
     # Latvian/Lithuanian
     "rēķins","sąskaita","apmokėjimas",
 ]
@@ -769,17 +775,25 @@ def is_invoice_by_keywords(subject, body, sender, has_att):
             score += 10
             break
     
-    # Has attachment = likely invoice
+    # Has attachment = likely invoice/document
     if has_att:
-        score += 20
+        score += 25
+    # Business email patterns
+    if re.search(r'\b(nr|no|#|номер|nummer)\s*\.?\s*\d+', text, re.IGNORECASE):
+        score += 15  # has document number
     
     # Amount pattern found
     if extract_amount(text) > 0:
         score += 30
     
+    # Business correspondence boost
+    if re.search(r'\d+[.,]\d{2}\s*(eur|usd|gbp|€|\$)', text, re.IGNORECASE):
+        score += 20  # has price/amount
+    if re.search(r'offer\s+\d{4,}|quote\s+\d+|order\s+\d+', text, re.IGNORECASE):
+        score += 20  # numbered offer/quote/order
     # Negative signals
     if any(k in text for k in ["newsletter","unsubscribe","отписаться",
-                                 "promotion","sale","%off","discount code"]):
+                                 "promotion","%off","discount code","click here"]):
         score -= 40
     if any(k in text for k in ["meeting","call","calendar","invite","demo"]):
         score -= 30
@@ -831,7 +845,17 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
 
     for idx, em in enumerate(candidates):
         uid  = str(em.get("id") or em.get("_id") or em.get("uid") or "")
-        subj = str(em.get("subject") or "")
+        # Decode RFC2047 encoded subjects (=?UTF-8?B?...?= and =?UTF-8?Q?...?=)
+        _raw_subj = str(em.get("subject") or "")
+        try:
+            import email.header as _eh
+            _parts = _eh.decode_header(_raw_subj)
+            subj = "".join(
+                (p.decode(enc or "utf-8", errors="replace") if isinstance(p, bytes) else p)
+                for p, enc in _parts
+            )
+        except Exception:
+            subj = _raw_subj
         frm  = em.get("from") or em.get("sender") or ""
         if isinstance(frm, dict):
             frm = frm.get("address") or frm.get("name") or ""
@@ -878,7 +902,7 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
             if "credit" in err_str.lower() or "balance" in err_str.lower() or "api" in err_str.lower():
                 emit(f"⚠ Claude недоступен — использую анализ по ключевым словам", "warn")
             score = is_invoice_by_keywords(subj, body, frm, att)
-            if score >= 50:
+            if score >= 35:  # lower threshold when AI unavailable
                 amount   = extract_amount(subj + " " + body[:1000])
                 vendor   = extract_vendor(subj, frm, body)
                 due_date = extract_due_date(body + " " + subj, ds)
@@ -899,8 +923,8 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                 emit(f"✓ [KW] {vendor} {amount} {currency} (score={score})", "ok")
             elif score >= 25:
                 emit(f"  ~ Возможно счёт (score={score}): {subj[:50]}", "warn")
-            if score < 50:
-                emit(f"Пропускаю {uid}: {subj[:40]}", "info")
+            if score < 35:
+                pass  # silently skip non-invoice emails
 
         processed_uids.append(uid)
         last_uid  = uid
