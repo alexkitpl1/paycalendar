@@ -404,12 +404,59 @@ def _active_provider():
     if OPENAI_KEY  and len(OPENAI_KEY)  > 10 and "openai"  not in _provider_blocked: return "openai"
     return None  # will use keyword extractor
 
+
+def _ask_huggingface(prompt):
+    """HuggingFace Inference API - free public models, no key needed."""
+    # Using Mistral-7B via public HuggingFace endpoint
+    models_to_try = [
+        "mistralai/Mistral-7B-Instruct-v0.3",
+        "HuggingFaceH4/zephyr-7b-beta",
+        "microsoft/Phi-3-mini-4k-instruct",
+    ]
+    for model in models_to_try:
+        try:
+            url = f"https://api-inference.huggingface.co/models/{model}"
+            sys_msg = CLAUDE_SYSTEM + "\n\nAnalyze this email and respond with JSON only."
+            r = requests.post(url, json={
+                "inputs": f"[INST] {sys_msg}\n\n{prompt[:1500]} [/INST]",
+                "parameters": {"max_new_tokens": 300, "temperature": 0.1,
+                                "return_full_text": False},
+            }, timeout=20)
+            if r.status_code == 200:
+                result = r.json()
+                if isinstance(result, list) and result:
+                    text = result[0].get("generated_text", "")
+                    if text and "{" in text:
+                        return text
+            elif r.status_code == 503:  # model loading
+                import time as _t; _t.sleep(3)
+        except Exception as ex:
+            log.debug(f"HF {model}: {ex}")
+    raise Exception("HuggingFace: все модели недоступны")
+
+def _ask_cohere(prompt):
+    """Cohere API - free 1000 calls/month. Key from cohere.com"""
+    cohere_key = os.environ.get("COHERE_API_KEY", c("ai", "cohere_key", ""))
+    if not cohere_key:
+        raise ValueError("No Cohere key")
+    r = requests.post(
+        "https://api.cohere.ai/v1/generate",
+        headers={"Authorization": f"Bearer {cohere_key}",
+                 "Content-Type": "application/json"},
+        json={"model": "command", "prompt": CLAUDE_SYSTEM + "\n\n" + prompt[:2000],
+              "max_tokens": 300, "temperature": 0.1},
+        timeout=20
+    )
+    r.raise_for_status()
+    return r.json()["generations"][0]["text"]
+
 def ask_ai(prompt):
-    """Call active AI provider, auto-fallback on quota errors."""
+    """Call AI provider with auto-fallback chain."""
+    # Try configured providers first
     for attempt in range(4):
         provider = _active_provider()
         if not provider:
-            raise ValueError("Все AI провайдеры недоступны — используй ключевые слова")
+            break
         try:
             log.debug(f"ask_ai: trying {provider}")
             if provider == "gemini":  return _ask_gemini(prompt)
@@ -419,14 +466,15 @@ def ask_ai(prompt):
         except Exception as ex:
             err = str(ex).lower()
             if any(k in err for k in ["billing","credit","unauthorized","invalid_api_key"]):
-                log.warning(f"{provider} auth/billing issue — switching to next provider")
                 _provider_blocked.add(provider)
-            elif any(k in err for k in ["429","quota","rate","exceeded","limit"]):
-                log.warning(f"{provider} rate limit — will retry with next model/key")
-                # Don't block gemini entirely - it rotates models internally
-            else:
-                raise
-    raise ValueError("Все провайдеры исчерпали квоту")
+            # Don't block on 429 - model rotation handles it
+    # Final fallback: HuggingFace free public models
+    try:
+        log.info("ask_ai: trying HuggingFace free inference")
+        return _ask_huggingface(prompt)
+    except Exception as ex:
+        log.warning(f"HuggingFace failed: {ex}")
+    raise ValueError("Все AI провайдеры недоступны — используется анализ ключевых слов")
 
 _gemini_last_call = [0.0]
 
