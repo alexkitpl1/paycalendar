@@ -239,99 +239,209 @@ input, select, textarea { font-size: 16px !important; }
   .dow-h { font-size: 10px; padding: 3px 0; }
 }
 
-/* ═══════ MOBILE REDESIGN ═══════ */
-#topbar{display:flex;flex-direction:column;gap:6px;
-  padding:10px 14px 8px;background:var(--bg2);
-  border-bottom:1px solid var(--border);
-  position:sticky;top:0;z-index:50}
-.top-row1{display:flex;align-items:center;justify-content:space-between}
-.brand{display:flex;align-items:center;gap:10px}
-.brand-icon{width:38px;height:38px;border-radius:12px;
-  background:linear-gradient(135deg,#f59e0b,#d97706);
-  display:flex;align-items:center;justify-content:center;
-  font-size:20px;font-weight:700;color:#fff}
-.brand-name{font-size:17px;font-weight:700;color:var(--text)}
-.top-actions{display:flex;align-items:center;gap:2px}
-.th-btn{width:34px;height:34px;border-radius:9px;border:none;
-  background:transparent;cursor:pointer;font-size:15px;color:var(--text3)}
-.th-btn.active,.th-btn:hover{background:var(--bg3)}
-.icon-btn{width:34px;height:34px;border-radius:9px;border:none;
-  background:transparent;cursor:pointer;font-size:22px;
-  color:var(--text2);line-height:1}
-.top-row2{display:flex;align-items:center;justify-content:center;gap:14px}
-#month-label{font-family:'Playfair Display',serif;font-size:19px;
-  font-weight:700;color:var(--text);min-width:170px;text-align:center}
-.view-tabs{display:flex;gap:3px}
-.vtab{flex:1;padding:8px 10px;border-radius:9px;border:none;
-  background:transparent;color:var(--text3);font-size:13px;
-  font-weight:500;cursor:pointer;min-height:38px;transition:all .15s}
-.vtab.active{background:var(--bg3);color:var(--text);font-weight:600}
-#stat-pills{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
-.stat-pill{padding:4px 12px;border-radius:20px;font-size:12px;
-  background:var(--bg3);border:1px solid var(--border);
-  color:var(--text2);white-space:nowrap}
-.stat-pill.overdue{border-color:#ef4444;color:#ef4444}
-[data-theme="dark"] .stat-pill.overdue{background:#2d0b0b}
-.nav-btn{width:36px;height:36px;border-radius:9px;
-  border:1px solid var(--border2);background:var(--bg3);
-  color:var(--text2);cursor:pointer;font-size:16px;
-  display:flex;align-items:center;justify-content:center}
-.nav-btn:hover{border-color:var(--border3);color:var(--text)}
-#fab-scan{position:fixed;bottom:28px;right:20px;z-index:90;
-  width:58px;height:58px;border-radius:50%;border:none;
-  background:linear-gradient(135deg,#f59e0b,#d97706);
-  color:#fff;font-size:22px;cursor:pointer;
-  box-shadow:0 4px 20px rgba(245,158,11,.45);
-  display:flex;align-items:center;justify-content:center;
-  transition:transform .15s,box-shadow .15s}
-#fab-scan:active{transform:scale(.93)}
-.sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100}
-.sheet-body{position:fixed;bottom:0;left:0;right:0;z-index:101;
-  background:var(--bg2);border-radius:22px 22px 0 0;
-  padding:16px 14px calc(20px + env(safe-area-inset-bottom));
-  box-shadow:0 -4px 30px rgba(0,0,0,.18)}
-.sheet-title{font-size:12px;font-weight:700;color:var(--text3);
-  text-align:center;margin-bottom:14px;text-transform:uppercase;letter-spacing:.6px}
-.sheet-div{height:1px;background:var(--border);margin:8px 0}
-.sheet-btn{display:block;width:100%;padding:15px 16px;border-radius:13px;
-  border:none;background:var(--bg3);color:var(--text);font-size:15px;
-  font-weight:500;cursor:pointer;margin-bottom:6px;text-align:left}
-.sheet-btn:active{filter:brightness(.95)}
-.sheet-btn.primary{background:linear-gradient(135deg,#f59e0b,#d97706);
-  color:#fff;font-weight:600}
-.sheet-btn.danger{color:#ef4444}
-.sheet-btn.muted{color:var(--text3);font-size:14px;text-align:center}
-.menu-item{padding:11px 14px;font-size:14px;color:var(--text2);
-  cursor:pointer;border-radius:9px;transition:background .1s}
-.menu-item:hover{background:var(--bg3)}
-.cal-wrap{padding:10px 8px 90px}
-#m-grid{gap:2px}
-.day{min-height:64px;padding:4px;border-radius:9px}
-#scan-panel,.scan-panel-fixed{
-  padding-bottom:calc(12px + env(safe-area-inset-bottom)) !important}
-/* Hide old desktop elements */
-.brand-sub,.topbar-center,.topbar-right,.theme-sw,.view-toggle{display:none!important}
-@media(min-width:700px){
-  #fab-scan{bottom:32px;right:32px}
-  .sheet-body{max-width:420px;left:50%;transform:translateX(-50%);border-radius:22px 22px 0 0}
+
+/* ══════════════════════════════════════════════════════
+   MOBILE UI v3  –  Clean, minimal, beautiful
+══════════════════════════════════════════════════════ */
+
+/* ── Header ─────────────────────────────────────────── */
+#topbar {
+  display: flex; flex-direction: column; gap: 0;
+  background: var(--bg2);
+  border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 50;
+  padding-bottom: 0;
 }
+.hdr-line1 {
+  display: flex; align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px 8px;
+}
+.hdr-brand { display: flex; align-items: center; gap: 8px; }
+.brand-icon {
+  width: 32px; height: 32px; border-radius: 9px;
+  background: linear-gradient(145deg,#f59e0b,#d97706);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 17px; font-weight: 800; color: #fff;
+}
+.brand-name { font-size: 15px; font-weight: 700; color: var(--text); }
+.th-btn {
+  width: 30px; height: 30px; border-radius: 8px; border: none;
+  background: transparent; cursor: pointer; font-size: 14px; color: var(--text3);
+}
+.th-btn.active { background: var(--bg3); }
+.icon-btn {
+  width: 34px; height: 34px; border-radius: 8px; border: none;
+  background: transparent; cursor: pointer; font-size: 22px;
+  color: var(--text3); display: flex; align-items: center; justify-content: center;
+}
+
+/* ── Month nav ───────────────────────────────────────── */
+.hdr-line2 {
+  display: flex; align-items: center; justify-content: space-between;
+  padding: 0 10px 10px;
+}
+.nav-btn {
+  width: 40px; height: 40px; border-radius: 12px;
+  border: 1px solid var(--border2); background: var(--bg3);
+  color: var(--text2); cursor: pointer; font-size: 18px;
+  display: flex; align-items: center; justify-content: center;
+}
+.nav-btn:active { background: var(--border2); }
+#month-label {
+  font-family: 'Playfair Display', serif;
+  font-size: 22px; font-weight: 700; color: var(--text);
+  text-align: center; flex: 1;
+}
+
+/* ── Stat pills ──────────────────────────────────────── */
+#stat-pills {
+  display: flex; gap: 6px; padding: 0 14px 10px;
+  overflow-x: auto; scrollbar-width: none;
+}
+#stat-pills::-webkit-scrollbar { display: none; }
+.stat-pill {
+  padding: 5px 12px; border-radius: 20px; font-size: 12px; font-weight: 500;
+  background: var(--bg3); border: 1px solid var(--border);
+  color: var(--text2); white-space: nowrap; flex-shrink: 0;
+}
+.stat-pill.overdue {
+  background: #fff1f2; border-color: #fca5a5; color: #dc2626;
+}
+[data-theme="dark"] .stat-pill.overdue { background: #2d0b0b; }
+
+/* ── View tabs ───────────────────────────────────────── */
+.view-tabs {
+  display: flex; border-top: 1px solid var(--border);
+}
+.vtab {
+  flex: 1; padding: 10px 4px; border: none; border-bottom: 2.5px solid transparent;
+  background: transparent; color: var(--text3); font-size: 13px;
+  font-weight: 500; cursor: pointer; transition: all .15s;
+}
+.vtab.active {
+  color: #f59e0b; border-bottom-color: #f59e0b; font-weight: 700;
+}
+
+/* ── Calendar ────────────────────────────────────────── */
+.cal-wrap { padding: 6px 8px 100px; }
+#m-grid { gap: 2px; }
+.dow-h { font-size: 11px; font-weight: 600; letter-spacing: .3px; }
+.day {
+  min-height: 62px; padding: 5px 4px 3px; border-radius: 10px;
+  border: 1px solid var(--border);
+}
+.day.today { border-color: #f59e0b; background: #fffbeb; }
+[data-theme="dark"] .day.today { background: #1c1400; border-color: #f59e0b; }
+
+/* ── FAB ─────────────────────────────────────────────── */
+#fab-scan {
+  position: fixed; bottom: 28px; right: 20px; z-index: 90;
+  width: 56px; height: 56px; border-radius: 50%; border: none;
+  background: linear-gradient(145deg,#f59e0b,#d97706);
+  color: #fff; font-size: 20px; cursor: pointer;
+  box-shadow: 0 4px 18px rgba(245,158,11,.5);
+  display: flex; align-items: center; justify-content: center;
+  transition: transform .15s;
+}
+#fab-scan:active { transform: scale(.92); }
+
+/* ── Bottom sheet ────────────────────────────────────── */
+.sheet-bg {
+  position: fixed; inset: 0; background: rgba(0,0,0,.35); z-index: 100;
+  animation: fadeIn .2s;
+}
+.sheet-body {
+  position: fixed; bottom: 0; left: 0; right: 0; z-index: 101;
+  background: var(--bg2); border-radius: 24px 24px 0 0;
+  padding: 0 14px calc(24px + env(safe-area-inset-bottom));
+  box-shadow: 0 -4px 40px rgba(0,0,0,.18);
+  animation: slideUp .25s cubic-bezier(.22,.68,0,1.2);
+}
+.sheet-handle {
+  width: 36px; height: 4px; border-radius: 2px;
+  background: var(--border2); margin: 10px auto 14px;
+}
+.sheet-title {
+  font-size: 11px; font-weight: 700; color: var(--text3);
+  text-align: center; text-transform: uppercase; letter-spacing: .7px;
+  margin-bottom: 10px;
+}
+.sheet-btn {
+  display: flex; align-items: center; gap: 12px; width: 100%;
+  padding: 13px 14px; border-radius: 14px; border: none;
+  background: var(--bg3); margin-bottom: 6px; cursor: pointer;
+  text-align: left; transition: filter .1s;
+}
+.sheet-btn:active { filter: brightness(.94); }
+.sheet-btn.primary { background: linear-gradient(135deg,#f59e0b,#d97706); }
+.sheet-btn.primary .sbl { color: #fff; }
+.sheet-btn.primary .sbs { color: rgba(255,255,255,.75); }
+.sheet-btn.danger .sbl { color: #dc2626; }
+.sbico { font-size: 20px; flex-shrink: 0; }
+.sbl { font-size: 14px; font-weight: 600; color: var(--text); }
+.sbs { font-size: 11px; color: var(--text3); margin-top: 1px; }
+.sheet-div { height: 1px; background: var(--border); margin: 6px 0 8px; }
+.sheet-close {
+  display: block; width: 100%; padding: 14px; border-radius: 14px;
+  border: none; background: var(--bg3); color: var(--text3);
+  font-size: 14px; font-weight: 600; cursor: pointer; margin-top: 4px;
+}
+
+/* ── Scan progress panel ─────────────────────────────── */
+#scan-panel, .scan-panel-fixed {
+  position: sticky; bottom: 0;
+  background: #1e293b;
+  border-top: 2px solid #f59e0b;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  display: none; z-index: 80;
+  box-shadow: 0 -4px 24px rgba(0,0,0,.3);
+}
+.prog-bar {
+  height: 5px; background: rgba(255,255,255,.1);
+  border-radius: 3px; overflow: hidden; margin: 8px 0 4px;
+}
+.prog-fill {
+  height: 100%; width: 0%;
+  background: linear-gradient(90deg,#f59e0b,#f97316);
+  border-radius: 3px; transition: width .4s ease;
+}
+
+/* ── Dropdown menu ───────────────────────────────────── */
+.menu-item {
+  padding: 11px 14px; font-size: 14px; color: var(--text2);
+  cursor: pointer; border-radius: 10px;
+}
+.menu-item:active { background: var(--bg3); }
+
+/* ── Animations ──────────────────────────────────────── */
+@keyframes fadeIn { from{opacity:0} to{opacity:1} }
+@keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
+
+/* ── Hide old desktop cruft ──────────────────────────── */
+.brand-sub, .topbar-center, .topbar-right,
+.theme-sw, .view-toggle { display: none !important; }
+
+/* ── Sum bar ─────────────────────────────────────────── */
+.sum-bar { overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
+.sum-bar::-webkit-scrollbar { display: none; }
 </style>
 </head>
 <body>
 
 <div id="topbar">
-  <div class="top-row1">
-    <div class="brand">
+  <div class="hdr-line1">
+    <button class="icon-btn" onclick="toggleMenu()">⋮</button>
+    <div class="hdr-brand">
       <div class="brand-icon">₽</div>
-      <div class="brand-name">PayCalendar</div>
+      <span class="brand-name">PayCalendar</span>
     </div>
-    <div class="top-actions">
-      <button class="th-btn" id="th-dark"  onclick="setTheme('dark')"  title="Тёмная">🌑</button>
-      <button class="th-btn active" id="th-white" onclick="setTheme('white')" title="Светлая">☀️</button>
-      <button class="icon-btn" onclick="toggleMenu()" title="Меню">⋮</button>
+    <div style="display:flex;gap:2px">
+      <button class="th-btn" id="th-dark"  onclick="setTheme('dark')">🌑</button>
+      <button class="th-btn active" id="th-white" onclick="setTheme('white')">☀️</button>
     </div>
   </div>
-  <div class="top-row2">
+  <div class="hdr-line2">
     <button class="nav-btn" onclick="prevP()">‹</button>
     <div id="month-label">—</div>
     <button class="nav-btn" onclick="nextP()">›</button>
@@ -340,7 +450,40 @@ input, select, textarea { font-size: 16px !important; }
   <div class="view-tabs">
     <button class="vtab active" id="vt-m" onclick="setView('month')">Месяц</button>
     <button class="vtab" id="vt-w" onclick="setView('week')">Неделя</button>
-    <button class="vtab" id="vt-o" onclick="setView('overdue')">⚠ Долги</button>
+    <button class="vtab" id="vt-o" onclick="setView('overdue')">Долги</button>
+  </div>
+</div>
+<div id="top-menu" style="display:none;position:fixed;top:64px;left:12px;
+  background:var(--bg2);border:1px solid var(--border2);border-radius:16px;
+  padding:8px;z-index:200;min-width:190px;
+  box-shadow:0 8px 32px rgba(0,0,0,.15)">
+  <div class="menu-item" onclick="hideMenu();window.location='/login-helper'">🌐 Настройки почты</div>
+  <div class="menu-item" onclick="hideMenu();showScanMenu()">📥 Сканировать</div>
+  <div class="menu-item" onclick="hideMenu();window.open('/debug-log','_blank')">📋 Лог отладки</div>
+</div>
+<button id="fab-scan" onclick="showScanMenu()">📥</button>
+<div id="scan-sheet" style="display:none">
+  <div class="sheet-bg" onclick="hideScanSheet()"></div>
+  <div class="sheet-body">
+    <div class="sheet-handle"></div>
+    <div class="sheet-title">Сканировать почту</div>
+    <button class="sheet-btn primary" id="scanThisBtn" onclick="hideScanSheet();scanSequential(1)">
+      <span class="sbico">📥</span><div><div class="sbl">Этот месяц</div><div class="sbs">Апрель 2026</div></div>
+    </button>
+    <button class="sheet-btn" id="scan2Btn" onclick="hideScanSheet();scanSequential(2)">
+      <span class="sbico">📅</span><div><div class="sbl">+ Предыдущий</div><div class="sbs">Март—Апрель</div></div>
+    </button>
+    <button class="sheet-btn" id="scan3Btn" onclick="hideScanSheet();scanSequential(4)">
+      <span class="sbico">📆</span><div><div class="sbl">+ 3 месяца</div><div class="sbs">Янв—Апрель</div></div>
+    </button>
+    <div class="sheet-div"></div>
+    <button class="sheet-btn" id="refreshBtn" onclick="hideScanSheet();doRefresh()">
+      <span class="sbico">🔄</span><div><div class="sbl">Обновить</div><div class="sbs">Последние 30 писем</div></div>
+    </button>
+    <button class="sheet-btn danger" onclick="hideScanSheet();resetAndScan()">
+      <span class="sbico">🔁</span><div><div class="sbl">Пересканировать всё</div><div class="sbs">Сброс + полный скан</div></div>
+    </button>
+    <button class="sheet-close" onclick="hideScanSheet()">Отмена</button>
   </div>
 </div>
 <div id="top-menu" style="display:none;position:fixed;top:68px;right:12px;
@@ -1097,12 +1240,12 @@ function _runScanUrl(url, onDone){
   if(!panel){
     panel = document.createElement('div');
     panel.id = 'scan-status-panel';
-    panel.style.cssText = 'position:fixed;bottom:0;left:0;right:0;background:#111827;border-top:2px solid #2563eb;padding:12px 16px;z-index:999;font-size:13px;color:#e2e8f0;box-shadow:0 -4px 20px rgba(0,0,0,.5)';
+    panel.style.cssText = 'position:sticky;bottom:0;left:0;right:0;background:#1e293b;border-top:2px solid #f59e0b;padding:12px 16px;z-index:80;font-size:13px;color:#e2e8f0;box-shadow:0 -4px 24px rgba(0,0,0,.3)';
     document.body.appendChild(panel);
   }
   panel.style.display = 'block';
 
-  function setPanel(html){ panel.innerHTML = html; }
+  function setPanel(content){ panel.innerHTML = content; }
   function closePanel(){
     panel.style.display = 'none';
     document.querySelectorAll('.scan-btn-group button').forEach(b=>{
@@ -1136,14 +1279,17 @@ function _runScanUrl(url, onDone){
       var speed = d.speed>0 ? d.speed.toFixed(1)+' п/с' : '';
       var eta   = d.eta>0  ? '~'+d.eta+'с' : '';
       setPanel(
-        '<div style="margin-bottom:8px;display:flex;justify-content:space-between;align-items:center">'
-          +'<span style="color:#60a5fa;font-weight:500">📬 Анализирую письма...</span>'
-          +'<span style="color:#9ca3af;font-size:12px">'+cur+'/'+tot+' · '+speed+' · '+eta+'</span>'
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">'
+          +'<span style="color:#fbbf24;font-weight:600;font-size:13px">📬 Анализирую письма...</span>'
+          +'<span style="color:#9ca3af;font-size:11px">'+cur+' / '+tot+'</span>'
         +'</div>'
-        +'<div style="background:#1e293b;border-radius:6px;height:8px;overflow:hidden">'
-          +'<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#2563eb,#7c3aed);transition:width .3s;border-radius:6px"></div>'
+        +'<div style="background:rgba(255,255,255,.1);border-radius:4px;height:6px;overflow:hidden">'
+          +'<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#f59e0b,#f97316);transition:width .4s;border-radius:4px"></div>'
         +'</div>'
-        +'<div style="margin-top:6px;font-size:11px;color:#6b7280">'+lastStatus+'</div>'
+        +'<div style="display:flex;justify-content:space-between;margin-top:5px">'
+          +'<span style="font-size:11px;color:#6b7280">'+lastStatus+'</span>'
+          +'<span style="font-size:11px;color:#6b7280">'+(speed?speed.toFixed(1)+' п/с':'')+(eta?' · ~'+eta+'с':'')+'</span>'
+        +'</div>'
       );
       return;
     }
@@ -1321,6 +1467,16 @@ window.addEventListener('load', ()=>{
 });
 
 function showScanMenu(){
+  // Update dynamic month names in sheet
+  var now=new Date();
+  var MN=['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+  var cur=MN[now.getMonth()]+' '+now.getFullYear();
+  var prev1=MN[(now.getMonth()-1+12)%12];
+  var prev3=MN[(now.getMonth()-3+12)%12];
+  var subs=document.querySelectorAll('.sbs');
+  if(subs[0]) subs[0].textContent=cur;
+  if(subs[1]) subs[1].textContent=prev1+'—'+MN[now.getMonth()];
+  if(subs[2]) subs[2].textContent=prev3+'—'+MN[now.getMonth()];
   var s=document.getElementById('scan-sheet');
   if(s){s.style.display='block';document.body.style.overflow='hidden';}
 }
