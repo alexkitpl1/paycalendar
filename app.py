@@ -2128,6 +2128,18 @@ def api_version():
         "provider": _active_provider() or "keyword",
     })
 
+
+@app.route("/api/version")  
+def api_version():
+    return jsonify({
+        "version": "2026-04-04-v12",
+        "imap_host": IMAP_HOST,
+        "imap_env": os.environ.get("PC_EMAIL_IMAP_HOST","not_set"),
+        "gemini_key": GEMINI_KEY[:15]+"..." if GEMINI_KEY else "none",
+        "provider": _active_provider() or "keyword",
+        "data_dir": str(_DATA_DIR),
+    })
+
 @app.route("/health")
 def health():
     return "ok", 200
