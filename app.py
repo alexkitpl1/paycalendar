@@ -1342,11 +1342,16 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         body  = em["body"]; ds   = em["ds"];  att = em["att"]
         score = em["score"]
 
-        # Fetch full body if IMAP
+        # Fetch full body + PDFs
         if fetch_body and uid:
             try:
                 fb = fetch_body(uid)
-                if fb: body = fb[:3000]
+                if fb:
+                    body = fb[:3000]
+                    # Re-score with full body content (original was header-only)
+                    new_score = is_invoice_by_keywords(subj, body, frm, att)
+                    if new_score > score:
+                        score = new_score
             except Exception: pass
 
         inv = None
@@ -1516,19 +1521,32 @@ def scan_imap(emit, from_date=None, to_date=None):
             except Exception as ex:
                 emit(f"Дата-поиск ошибка: {ex}", "warn")
 
-        # Subject keyword search — WITHOUT date filter (get ALL matching emails)
-        # This catches invoices outside the date range too
-        kw_before = len(ids)
-        for term in IMAP_SUBJECTS:
-            try:
-                _, data = mail.search(None, term)
-                if data[0]:
-                    for uid in data[0].split():
-                        ids.add(uid)
-            except Exception:
-                pass
-        kw_added = len(ids) - kw_before
-        emit(f"🔍 По ключевым словам: {kw_added} новых (итого: {len(ids)})", "ok")
+        # Get ALL emails and filter locally (avoids IMAP case-sensitivity issues)
+        # Zone.eu SUBJECT search is case-sensitive: "arve" ≠ "Arve" ≠ "ARVE"
+        emit("📥 Загружаю все письма для локальной фильтрации...", "info")
+        try:
+            _, all_data = mail.search(None, "ALL")
+            all_uids = all_data[0].split() if all_data[0] else []
+            emit(f"📬 Всего в ящике: {len(all_uids)} писем", "ok")
+            # Add newest first (up to limit)
+            all_sorted = sorted(all_uids,
+                key=lambda x: int(x.decode() if isinstance(x,bytes) else x),
+                reverse=True)
+            for uid in all_sorted[:SCAN_LIMIT]:
+                ids.add(uid)
+            emit(f"📊 Взяли последних: {len(ids)} писем (из {len(all_uids)})", "ok")
+        except Exception as ex:
+            emit(f"⚠ ALL search failed: {ex}", "warn")
+            # Fallback to keyword search
+            for term in IMAP_SUBJECTS:
+                try:
+                    _, data = mail.search(None, term)
+                    if data[0]:
+                        for uid in data[0].split():
+                            ids.add(uid)
+                except Exception:
+                    pass
+            emit(f"🔍 Fallback keyword search: {len(ids)} писем", "ok")
 
         # New since last scan
         if last_uid and not from_date:
@@ -1565,14 +1583,12 @@ def scan_imap(emit, from_date=None, to_date=None):
             all_ids = data[0].split()
             ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
 
-                # Sort newest first, limit to SCAN_LIMIT
+                # Final sort (already limited above)
         try:
             ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x,bytes) else x), reverse=True)
         except Exception:
             ids_sorted = list(ids)
-        ids_sorted = ids_sorted[:SCAN_LIMIT]
-        emit(f"📬 {len(ids_sorted)} писем для анализа (из {len(ids)} найденных)", "ok")
-        ids = set(ids_sorted)
+        emit(f"📬 {len(ids_sorted)} писем для анализа", "ok")
 
         # Fetch headers
         emails_raw = []
