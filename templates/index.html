@@ -531,10 +531,15 @@ body {
 <!-- Dropdown menu -->
 <div id="top-menu" style="display:none;position:fixed;top:120px;left:12px;
   background:var(--bg2);border:1px solid var(--border2);border-radius:14px;
-  padding:8px;z-index:200;min-width:180px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
-  <div class="menu-item" onclick="hideMenu();window.location='/login-helper'">🌐 Настройки почты</div>
+  padding:8px;z-index:200;min-width:210px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
+  <div id="menu-email-list" style="padding:6px 10px 8px;border-bottom:1px solid var(--border);margin-bottom:4px;display:none">
+    <div style="font-size:10px;font-weight:700;color:var(--text3);letter-spacing:.5px;text-transform:uppercase;margin-bottom:6px">Почтовые ящики</div>
+    <div id="menu-accs"></div>
+    <div onclick="hideMenu();window.location='/keys'" style="font-size:11px;color:var(--text3);margin-top:6px;cursor:pointer">+ Добавить ящик</div>
+  </div>
   <div class="menu-item" onclick="hideMenu();showScanMenu()">📥 Сканировать</div>
   <div class="menu-item" onclick="hideMenu();window.open('/debug-log','_blank')">📋 Лог</div>
+  <div class="menu-item" onclick="hideMenu();window.location='/keys'">⚙️ Настройки</div>
 </div>
 
 <!-- FAB (mobile only) -->
@@ -1009,6 +1014,23 @@ function renderTopbar(){
   }).length;
   if(ofCount)h+=`<div class="stat-pill" style="border-color:#8b5cf655;color:#8b5cf6;cursor:pointer" onclick="setView('offers')">💼 Офферы <span class="pv">${ofCount}</span></div>`;
   setStatPills(h);
+  fetch('/api/email-accounts',{credentials:'include'})
+    .then(function(r){return r.json();})
+    .then(function(accs){
+      if(!accs||accs.length<=1) return;
+      ['sp-desktop','sp-mobile'].forEach(function(sid){
+        var sp=document.getElementById(sid);
+        if(!sp) return;
+        var old=sp.querySelector('.acc-pill');
+        if(old) sp.removeChild(old);
+        var p=document.createElement('div');
+        p.className='stat-pill acc-pill';
+        p.setAttribute('style','border-color:rgba(45,212,191,.3);color:#2dd4bf;cursor:pointer');
+        p.textContent=String.fromCodePoint(128231)+' '+accs.length+' ящ.';
+        p.onclick=function(){window.location='/keys';};
+        sp.appendChild(p);
+      });
+    }).catch(function(){});
 }
 
 function renderSumBar(){
@@ -1700,7 +1722,27 @@ function hideScanSheet(){
 }
 function toggleMenu(){
   var m=document.getElementById('top-menu');
-  if(m) m.style.display=m.style.display==='none'?'block':'none';
+  if(!m) return;
+  var showing = m.style.display!=='none';
+  if(showing){ m.style.display='none'; return; }
+  m.style.display='block';
+  // Load email accounts into menu
+  fetch('/api/email-accounts',{credentials:'include'})
+    .then(function(r){return r.json();})
+    .then(function(accs){
+      var list=document.getElementById('menu-accs');
+      var wrap=document.getElementById('menu-email-list');
+      if(!list||!accs||!accs.length) return;
+      list.innerHTML=accs.map(function(a){
+        var isPrimary=a.id==='primary';
+        return '<div style="display:flex;align-items:center;gap:7px;padding:3px 0">'
+          +'<span style="width:7px;height:7px;border-radius:50%;background:'+(isPrimary?'#34d399':'#60a5fa')+';flex-shrink:0"></span>'
+          +'<span style="font-size:12px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+a.email+'</span>'
+          +(isPrimary?'<span style="font-size:9px;color:var(--text3);margin-left:auto">осн.</span>':'')
+        +'</div>';
+      }).join('');
+      wrap.style.display='block';
+    }).catch(function(){});
 }
 function hideMenu(){
   var m=document.getElementById('top-menu');
