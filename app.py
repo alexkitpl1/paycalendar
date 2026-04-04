@@ -164,7 +164,7 @@ def c(sec, key, fb=""):
 
 EMAIL_ADDR     = c("email", "address")
 EMAIL_PASS     = c("email", "password")
-IMAP_HOST      = c("email", "imap_host", "mail.zone.ee")
+IMAP_HOST      = c("email", "imap_host", "imap.zone.eu")
 IMAP_PORT      = int(c("email", "imap_port", "993"))
 IMAP_FOLDER    = c("email", "imap_folder", "INBOX")
 WEBMAIL_URL    = c("email", "webmail_session_url", "")
@@ -1392,9 +1392,10 @@ def scan_imap(emit, from_date=None, to_date=None):
     emit(f"Подключение к почте {IMAP_HOST}...")
     # Try multiple hostnames - DNS might resolve differently
     alt_hosts = list(dict.fromkeys([
-        IMAP_HOST,
-        "imap.zone.ee",
-        "mail.zone.eu",
+        "imap.zone.eu",   # Zone.ee official IMAP server
+        IMAP_HOST,        # config value
+        "mail.zone.ee",   # legacy
+        "pop3.zone.eu",   # POP3 fallback (same DNS)
         f"mail.{EMAIL_ADDR.split('@')[1]}" if EMAIL_ADDR else "",
     ]))
     alt_hosts = [h for h in alt_hosts if h]
@@ -2186,7 +2187,7 @@ def api_test_scan():
             imap_r["doh_ip"] = ip
             imap_r["doh_ok"] = ip != IMAP_HOST
 
-            alt = [IMAP_HOST, "imap.zone.ee", "mail.zone.eu"]
+            alt = ["imap.zone.eu", IMAP_HOST, "mail.zone.ee"]
             mail_conn, used_host = _try_imap_connect(alt, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
             if not mail_conn:
                 raise Exception("Все IMAP хосты недоступны")
@@ -3092,6 +3093,13 @@ def _start_background():
     log.info("Background services started")
 
 # Auto-start when imported (gunicorn)
+# Auto-fix wrong IMAP host (mail.zone.ee → imap.zone.eu)
+_saved_host = c("email", "imap_host", "")
+if _saved_host in ("mail.zone.ee", ""):
+    save_config_value("email", "imap_host", "imap.zone.eu")
+    IMAP_HOST = "imap.zone.eu"
+    log.info("IMAP host set to imap.zone.eu (Zone.ee official server)")
+
 if os.environ.get("RAILWAY_ENVIRONMENT") or os.environ.get("RENDER"):
     # Auto-clear bad cookies on startup
     _ck = c("email", "webmail_cookie", "")
