@@ -1784,50 +1784,54 @@ def api_stats():
 
 @app.route("/api/scan-month/stream")
 def api_scan_month_stream():
-    """Scan emails for a specific month. ?month=YYYY-MM"""
+    """Scan emails for a specific date range. ?from=YYYY-MM-DD&to=YYYY-MM-DD"""
     from_date = request.args.get("from", "") or request.args.get("from_date", "")
-    to_date   = request.args.get("to",   "") or request.args.get("to_date", "")
-    month_str = request.args.get("month", "")
-    try:
-        if month_str:
-            year, mon = int(month_str[:4]), int(month_str[5:7])
-        else:
-            year, mon = date.today().year, date.today().month
-        from_date = f"{year:04d}-{mon:02d}-01"
-        to_date   = f"{year:04d}-{mon:02d}-{__import__('calendar').monthrange(year, mon)[1]:02d}"
-    except Exception:
-        from_date = to_date = None
+    to_date   = request.args.get("to",   "") or request.args.get("to_date",   "")
+    # Only recalculate dates if not explicitly provided
+    if not from_date or not to_date:
+        month_str = request.args.get("month", "")
+        try:
+            if month_str:
+                year, mon = int(month_str[:4]), int(month_str[5:7])
+            else:
+                year, mon = date.today().year, date.today().month
+            from_date = f"{year:04d}-{mon:02d}-01"
+            to_date   = f"{year:04d}-{mon:02d}-{__import__('calendar').monthrange(year, mon)[1]:02d}"
+        except Exception:
+            from_date = to_date = None
+    log.info(f"scan-month: from={from_date} to={to_date}")
+
+    import queue as _q, threading as _th
+    q = _q.Queue()
+    sentinel = object()
+    _cnt = [0]
+
+    def emit(msg, t="info"):
+        q.put((msg, t))
+
+    def run():
+        result = scan_email(emit, from_date=from_date, to_date=to_date)
+        _cnt[0] = len(result) if isinstance(result, list) else 0
+        q.put(sentinel)
+
+    _th.Thread(target=run, daemon=True).start()
 
     def generate():
-        import queue as _q
-        q = _q.Queue()
-        sentinel = object()
-
-        def emit(msg, t="info"):
-            q.put((msg, t))
-
-        def run():
-            scan_email(emit, from_date=from_date, to_date=to_date)
-            q.put(sentinel)
-
-        import threading as _th
-        _th.Thread(target=run, daemon=True).start()
-
         while True:
             try:
-                item = q.get(timeout=30)
+                item = q.get(timeout=60)
             except Exception:
-                yield f"data: {json.dumps({'done': True, 'count': 0})}\n\n"
+                yield f"data: {json.dumps({'done': True, 'count': _cnt[0]})}\n\n"
                 return
             if item is sentinel:
-                yield f"data: {json.dumps({'done': True, 'count': 0})}\n\n"
+                yield f"data: {json.dumps({'done': True, 'count': _cnt[0]})}\n\n"
                 return
             msg, t = item
             if t == "progress" and msg.startswith("__progress__"):
                 parts = msg.split()
                 try:
                     cur,tot,spd,eta = int(parts[1]),int(parts[2]),float(parts[3]),int(parts[4])
-                    pct = int(cur/tot*100) if tot > 0 else 0
+                    pct = int(cur/tot*100) if tot>0 else 0
                     ts  = datetime.now().strftime("%H:%M:%S")
                     yield f"data: {json.dumps({'type':'progress','current':cur,'total':tot,'pct':pct,'speed':spd,'eta':eta,'ts':ts})}\n\n"
                 except Exception:
@@ -1839,6 +1843,7 @@ def api_scan_month_stream():
     return Response(stream_with_context(generate()),
                     content_type="text/event-stream",
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
 
 @app.route("/api/scan/stream")
 def api_scan_stream():
@@ -1853,11 +1858,14 @@ def _make_scan_stream(quick=False):
     q = _q.Queue()
     sentinel = object()
 
+    _cnt = [0]
+
     def emit(msg, t="info"):
         q.put((msg, t))
 
     def run():
-        scan_email(emit, quick=quick)
+        new_invs = scan_email(emit, quick=quick)
+        _cnt[0] = len(new_invs) if isinstance(new_invs, list) else 0
         q.put(sentinel)
 
     import threading as _th
@@ -1873,7 +1881,7 @@ def _make_scan_stream(quick=False):
                 return
 
             if item is sentinel:
-                yield f"data: {json.dumps({'done': True, 'count': result_count})}\n\n"
+                yield f"data: {json.dumps({'done': True, 'count': _cnt[0]})}\n\n"
                 return
 
             msg, t = item
