@@ -1,270 +1,293 @@
 <!DOCTYPE html>
-<html><head>
+<html lang="ru">
+<head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>PayCalendar — API Keys</title>
+<title>PayCalendar — Настройки</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
-  background:#0f1117;color:#e2e8f0;padding:20px;max-width:500px;margin:0 auto}
-h1{font-size:18px;color:#f59e0b;margin-bottom:4px}
-.sub{color:#6b89a5;font-size:13px;margin-bottom:24px}
-.card{background:#1a1f2e;border:1px solid #2d3748;border-radius:14px;
-  padding:16px;margin-bottom:14px}
-.card-title{font-size:12px;font-weight:700;text-transform:uppercase;
-  letter-spacing:.5px;color:#6b89a5;margin-bottom:10px}
-.status-row{display:flex;align-items:center;justify-content:space-between;
-  margin-bottom:8px}
-.badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
-.ok{background:#064e3b;color:#34d399}
-.warn{background:#451a03;color:#fbbf24}
-.err{background:#2d0b0b;color:#f87171}
-input{width:100%;padding:10px 14px;border-radius:9px;border:1px solid #2d3748;
-  background:#111827;color:#e2e8f0;font-size:13px;outline:none;margin:8px 0;
-  font-family:monospace}
-input:focus{border-color:#f59e0b}
-.btn{display:block;width:100%;padding:12px;border-radius:9px;border:none;
-  background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;
-  font-size:14px;font-weight:700;cursor:pointer;margin-top:6px}
-.btn2{background:linear-gradient(135deg,#2563eb,#1d4ed8)}
-.btn:disabled{opacity:.5;cursor:not-allowed}
-.log{font-family:monospace;font-size:11px;background:#111827;border-radius:8px;
-  padding:10px;margin-top:10px;line-height:1.8;display:none}
-.log-ok{color:#34d399} .log-err{color:#f87171} .log-info{color:#9ca3af}
-a{color:#60a5fa;font-size:12px;text-decoration:none}
-.provider-tabs{display:flex;gap:6px;margin-bottom:10px}
-.ptab{padding:6px 14px;border-radius:7px;border:1px solid #2d3748;
-  background:transparent;color:#6b89a5;font-size:12px;cursor:pointer}
-.ptab.active{background:#f59e0b;border-color:#f59e0b;color:#0f1117;font-weight:700}
-.hint{font-size:11px;color:#6b89a5;margin-top:6px;line-height:1.5}
-a.hint-link{color:#60a5fa}
-</style></head><body>
+body{font-family:'DM Sans',sans-serif;background:#0c0f14;color:#c8d8ec;min-height:100vh;padding:0 0 60px}
+a{color:#60a5fa;text-decoration:none}
+.topbar{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid #131e2d;background:#0f1520;position:sticky;top:0;z-index:10}
+.back{color:#6b7280;font-size:13px;padding:6px 12px;border:1px solid #1e2d45;border-radius:8px;background:#111820}
+.back:hover{color:#c8d8ec;border-color:#2a3a50}
+h1{font-size:17px;font-weight:600;color:#f0f6ff}
+.wrap{max-width:600px;margin:0 auto;padding:20px 16px}
+.card{background:#0f1520;border:1px solid #131e2d;border-radius:14px;padding:18px;margin-bottom:16px}
+.card-title{font-size:13px;font-weight:700;color:#5a7a9a;text-transform:uppercase;letter-spacing:.6px;margin-bottom:14px}
+label{display:block;font-size:11px;color:#5a7a9a;margin-bottom:5px;letter-spacing:.3px}
+input[type=text],input[type=email],input[type=password]{width:100%;padding:10px 12px;border-radius:8px;border:1px solid #1e2d45;background:#111820;color:#c8d8ec;font-size:13px;outline:none;transition:border .15s}
+input:focus{border-color:#38bdf8}
+.btn{display:inline-flex;align-items:center;gap:6px;padding:9px 16px;border-radius:8px;border:none;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.btn1{background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;width:100%;justify-content:center;margin-top:10px}
+.btn1:hover{filter:brightness(1.1)}
+.btn1:disabled{opacity:.45;cursor:not-allowed}
+.btn2{background:#111820;color:#8aa8c8;border:1px solid #1e2d45;width:100%;justify-content:center;margin-top:8px}
+.btn2:hover{border-color:#2a3a50;color:#c8d8ec}
+.btn-red{background:rgba(248,113,113,.08);color:#f87171;border:1px solid rgba(248,113,113,.2)}
+.log{background:#080c12;border:1px solid #131e2d;border-radius:8px;padding:12px;font-family:'DM Mono',monospace;font-size:11px;line-height:1.9;margin-top:12px;max-height:200px;overflow-y:auto;min-height:40px;color:#5a7a9a}
+.log-ok{color:#4ade80}.log-err{color:#f87171}.log-warn{color:#fbbf24}.log-info{color:#60a5fa}
+.hint{font-size:12px;color:#5a7a9a;margin-bottom:12px;line-height:1.6}
+.pill{display:inline-flex;align-items:center;gap:5px;padding:3px 10px;border-radius:12px;font-size:11px;font-weight:600}
+.pill-green{background:rgba(74,222,128,.1);color:#4ade80;border:1px solid rgba(74,222,128,.2)}
+.pill-red{background:rgba(248,113,113,.1);color:#f87171;border:1px solid rgba(248,113,113,.2)}
+.pill-blue{background:rgba(56,189,248,.1);color:#38bdf8;border:1px solid rgba(56,189,248,.2)}
+.pill-amber{background:rgba(251,191,36,.1);color:#fbbf24;border:1px solid rgba(251,191,36,.2)}
+.tab-row{display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap}
+.tab{padding:6px 14px;border-radius:8px;border:1px solid #1e2d45;background:#111820;color:#5a7a9a;font-size:12px;font-weight:600;cursor:pointer}
+.tab.active{background:#1e2d45;color:#38bdf8;border-color:#38bdf8}
+.acc-item{display:flex;align-items:center;gap:10px;padding:10px;background:#111820;border-radius:8px;border:1px solid #131e2d;margin-bottom:6px}
+.acc-avatar{width:34px;height:34px;border-radius:50%;background:#1e3a5f;display:flex;align-items:center;justify-content:center;font-size:16px;flex-shrink:0}
+.acc-info{flex:1;min-width:0}
+.acc-email{font-size:13px;color:#c8d8ec;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.acc-sub{font-size:11px;color:#5a7a9a;margin-top:2px}
+.sep{height:1px;background:#131e2d;margin:14px 0}
+</style>
+</head>
+<body>
 
-<h1>🔑 API Keys Manager</h1>
-<p class="sub">Добавь несколько ключей — автоматически ротируются при исчерпании</p>
-
-<!-- Status -->
-<div class="card" id="statusCard">
-  <div class="card-title">Статус пулов</div>
-  <div id="statusContent"><span style="color:#6b89a5">Загрузка...</span></div>
+<div class="topbar">
+  <a href="/" class="back">← Календарь</a>
+  <h1>⚙️ Настройки</h1>
 </div>
 
-<!-- Add key -->
+<div class="wrap">
+
+<!-- AI KEYS -->
 <div class="card">
-  <div class="card-title">Добавить ключ</div>
-  <div class="provider-tabs">
-    <button class="ptab active" onclick="selectProvider('gemini',this)">Gemini</button>
-    <button class="ptab" onclick="selectProvider('groq',this)">Groq</button>
-    <button class="ptab" onclick="selectProvider('openai',this)">OpenAI</button>
+  <div class="card-title">🤖 AI ключи</div>
+  <div class="hint">Для анализа писем. Без ключей работает по ключевым словам.</div>
+  <div id="ai-status"></div>
+  <div class="sep"></div>
+  <div class="tab-row">
+    <button class="tab active" onclick="selProv('gemini',this)">Gemini</button>
+    <button class="tab" onclick="selProv('groq',this)">Groq</button>
+    <button class="tab" onclick="selProv('openai',this)">OpenAI</button>
+    <button class="tab" onclick="selProv('claude',this)">Claude</button>
   </div>
-  <div id="provHint" class="hint">
-    Бесплатно: <a href="https://aistudio.google.com" target="_blank" class="hint-link">aistudio.google.com</a> → Get API Key → Create
-  </div>
-  <input type="text" id="newKey" placeholder="AIzaSy... (вставь новый ключ)">
-  <button class="btn" onclick="addKey()">+ Добавить ключ</button>
-  <div class="log" id="addLog"></div>
+  <label>API ключ</label>
+  <input type="text" id="apiKey" placeholder="Вставь ключ..." autocomplete="off">
+  <button class="btn btn1" onclick="addKey()">💾 Сохранить ключ</button>
+  <div class="log" id="keyLog"></div>
 </div>
 
-
-<!-- Email Accounts -->
+<!-- EMAIL ACCOUNTS -->
 <div class="card">
   <div class="card-title">📧 Email аккаунты</div>
-  <p style="color:#9ca3af;font-size:12px;margin-bottom:14px">
-    Добавь все адреса на которые приходят счета — они будут сканироваться вместе
-  </p>
-  <div id="accountsList" style="margin-bottom:14px"></div>
-  <div style="background:#111827;border-radius:10px;padding:14px;margin-bottom:10px">
-    <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Добавить аккаунт</div>
-    <input type="email" id="newEmail" placeholder="info@welltechnology.eu" style="width:100%;padding:10px;border-radius:8px;border:1px solid #2d3748;background:#0f1117;color:#e2e8f0;font-size:13px;margin-bottom:8px">
-    <input type="password" id="newPass" placeholder="Пароль" style="width:100%;padding:10px;border-radius:8px;border:1px solid #2d3748;background:#0f1117;color:#e2e8f0;font-size:13px;margin-bottom:8px">
-    <input type="text" id="newImap" placeholder="IMAP сервер (необязательно, по умолч. imap.zone.eu)" style="width:100%;padding:10px;border-radius:8px;border:1px solid #2d3748;background:#0f1117;color:#e2e8f0;font-size:13px;margin-bottom:10px">
-    <button class="btn btn2" onclick="testAndAddAccount()" id="addAccBtn">➕ Проверить и добавить</button>
-  </div>
+  <div class="hint">Все ящики сканируются вместе при каждом скане.</div>
+  <div id="accList"></div>
+  <div class="sep"></div>
+  <label>Email адрес</label>
+  <input type="email" id="newEmail" placeholder="info@company.eu" autocomplete="off">
+  <label style="margin-top:8px">Пароль</label>
+  <input type="password" id="newPass" placeholder="Пароль от почты" autocomplete="off">
+  <label style="margin-top:8px">IMAP сервер</label>
+  <input type="text" id="newImap" placeholder="imap.zone.eu" autocomplete="off">
+  <button class="btn btn1" id="addAccBtn" onclick="addAccount()">🔌 Проверить и добавить</button>
   <div class="log" id="accLog"></div>
 </div>
 
-<!-- Fix IMAP -->
+<!-- IMAP SETTINGS -->
 <div class="card">
-  <div class="card-title">Исправить IMAP (Zone.ee)</div>
-  <button class="btn btn2" onclick="fixImap()">🔧 Установить imap.zone.eu</button>
+  <div class="card-title">📡 IMAP соединение</div>
+  <div id="imapStatus" class="hint"></div>
+  <button class="btn btn2" onclick="fixImap()">🔧 Исправить хост (imap.zone.eu)</button>
+  <button class="btn btn2" style="margin-top:8px" onclick="testImap()">📡 Проверить соединение</button>
   <div class="log" id="imapLog"></div>
 </div>
 
-<!-- Test -->
+<!-- DATA MANAGEMENT -->
 <div class="card">
-  <div class="card-title">Диагностика</div>
-  <button class="btn btn2" onclick="runTest()">▶ Запустить тест (~15 сек)</button>
-  <div class="log" id="testLog"></div>
+  <div class="card-title">🗄️ Управление данными</div>
+  <button class="btn btn2" onclick="doAction('/api/reset-scan','POST',{},'resetLog','Сброс состояния сканирования...')">🔄 Сбросить состояние скана</button>
+  <button class="btn btn2" style="margin-top:8px" onclick="doAction('/api/invoices/cleanup','POST',{},'resetLog','Очистка нулевых счетов...')">🧹 Очистить нулевые счета</button>
+  <button class="btn btn2" style="margin-top:8px" onclick="doAction('/api/invoices/fix-offers','POST',{},'resetLog','Исправление офферов...')">✂️ Исправить дубликаты офферов</button>
+  <div class="log" id="resetLog"></div>
 </div>
 
+</div><!-- .wrap -->
+
 <script>
-const BASE  = 'https://paycalendar-production.up.railway.app';
-const TOKEN = 'pay123';
-let provider = 'gemini';
+var _prov = 'gemini';
 
-const HINTS = {
-  gemini: 'Бесплатно: <a href="https://aistudio.google.com" target="_blank" class="hint-link">aistudio.google.com</a> → Get API Key → Create API key',
-  groq:   'Бесплатно: <a href="https://console.groq.com" target="_blank" class="hint-link">console.groq.com</a> → API Keys → Create API Key',
-  openai: 'Платно: <a href="https://platform.openai.com/api-keys" target="_blank" class="hint-link">platform.openai.com</a> → API Keys',
-};
-const PLACEHOLDERS = {
-  gemini: 'AIzaSy...',
-  groq:   'gsk_...',
-  openai: 'sk-...',
-};
-
-function selectProvider(p, el) {
-  provider = p;
-  document.querySelectorAll('.ptab').forEach(b=>b.classList.remove('active'));
+function selProv(p, el){
+  _prov = p;
+  document.querySelectorAll('.tab').forEach(function(t){ t.classList.remove('active'); });
   el.classList.add('active');
-  document.getElementById('provHint').innerHTML = HINTS[p];
-  document.getElementById('newKey').placeholder = PLACEHOLDERS[p];
+  document.getElementById('apiKey').placeholder = {
+    gemini:'AIzaSy... (aistudio.google.com)',
+    groq:'gsk_... (console.groq.com)',
+    openai:'sk-... (platform.openai.com)',
+    claude:'sk-ant-... (console.anthropic.com)',
+  }[p] || 'API ключ';
 }
 
-async function api(path, data) {
-  var opts = {headers:{'Content-Type':'application/json','X-PC-Token':TOKEN}};
-  if(data){opts.method='POST';opts.body=JSON.stringify(data);}
-  var r = await fetch(BASE+path, opts);
+function log(id, msg, cls){
+  var el = document.getElementById(id);
+  if(!el) return;
+  var ts = new Date().toLocaleTimeString('ru');
+  el.innerHTML += '<div class="log-'+(cls||'info')+'">['+ts+'] '+msg+'</div>';
+  el.scrollTop = el.scrollHeight;
+}
+
+async function api(path, data){
+  var opts = {credentials:'include', headers:{'Content-Type':'application/json'}};
+  if(data !== undefined){ opts.method = 'POST'; opts.body = JSON.stringify(data); }
+  var r = await fetch(path, opts);
   return r.json();
 }
 
-function addLog(id, msg, cls) {
-  var el = document.getElementById(id);
-  el.style.display = 'block';
-  el.innerHTML += '<div class="log-'+(cls||'info')+'">'+msg+'</div>';
-}
-
-async function loadStatus() {
+async function loadAiStatus(){
   try {
     var d = await api('/api/keys');
-    var html = '';
-    for(var [name,pool] of [['Gemini',d.gemini],['Groq',d.groq],['OpenAI',d.openai]]) {
-      if(!pool || !pool.total) continue;
-      var cls = pool.working > 0 ? 'ok' : 'err';
-      html += '<div class="status-row"><span>'+name+'</span>'
-        +'<span class="badge '+cls+'">'+pool.working+'/'+pool.total+' работает</span></div>';
-    }
-    html += '<div class="status-row"><span>Активный</span>'
-      +'<span class="badge ok">'+d.active_provider+'</span></div>';
-    document.getElementById('statusContent').innerHTML = html || '<span style="color:#6b89a5">Нет ключей</span>';
-  } catch(e) {
-    document.getElementById('statusContent').innerHTML = '<span class="log-err">'+e.message+'</span>';
-  }
-}
-
-async function addKey() {
-  var key = document.getElementById('newKey').value.trim();
-  if(!key){alert('Вставь ключ');return;}
-  document.getElementById('addLog').innerHTML = '';
-  addLog('addLog', 'Добавляю ключ '+provider+'...', 'info');
-  try {
-    var r = await api('/api/keys/add', {provider, key});
-    if(r.ok) {
-      addLog('addLog', '✅ Ключ добавлен! Пул: '+JSON.stringify(r.pool), 'ok');
-      document.getElementById('newKey').value = '';
-      loadStatus();
-    } else {
-      addLog('addLog', '❌ '+r.error, 'err');
-    }
-  } catch(e) {
-    addLog('addLog', '❌ '+e.message, 'err');
-  }
-}
-
-async function fixImap() {
-  document.getElementById('imapLog').innerHTML = '';
-  addLog('imapLog', 'Исправляю IMAP...', 'info');
-  try {
-    var r1 = await api('/api/save-config', {section:'email',key:'imap_host',value:'imap.zone.eu'});
-    addLog('imapLog', 'imap_host → imap.zone.eu: '+(r1.ok?'✅':'❌ '+JSON.stringify(r1)), r1.ok?'ok':'err');
-  } catch(e) {
-    addLog('imapLog', '❌ '+e.message, 'err');
-  }
-}
-
-async function runTest() {
-  var log = document.getElementById('testLog');
-  log.innerHTML = '';
-  log.style.display = 'block';
-  addLog('testLog', 'Тест запущен (~15 сек)...', 'info');
-  try {
-    var r = await fetch(BASE+'/api/test-scan', {headers:{'X-PC-Token':TOKEN}});
-    var d = await r.json();
-    var imap = d.imap||{}, gem = d.gemini||{};
-    addLog('testLog', 'IMAP: '+(imap.ok?'✅ '+imap.total+' писем':'❌ '+imap.error), imap.ok?'ok':'err');
-    addLog('testLog', 'AI: '+(gem.ok?'✅':'❌ '+gem.status), gem.ok?'ok':'err');
-    addLog('testLog', 'Счетов: '+(d.summary||{}).invoices_found, 'info');
-    (d.emails||[]).slice(0,5).forEach(function(e){
-      addLog('testLog', (e.invoice?'💰':'  ')+' '+e.subject.slice(0,50), e.invoice?'ok':'info');
+    var h = '';
+    var providers = [
+      {name:'Gemini', key:'gemini', color:'amber'},
+      {name:'Groq',   key:'groq',   color:'green'},
+      {name:'OpenAI', key:'openai', color:'blue'},
+      {name:'Claude', key:'claude', color:'blue'},
+    ];
+    providers.forEach(function(p){
+      var cnt = (d[p.key+'_keys'] || []).length;
+      var active = d.active_provider === p.key;
+      h += '<span class="pill pill-'+(cnt>0?p.color:'red')+'" style="margin:0 4px 4px 0">'
+           +p.name+' '+(cnt>0?cnt+' ключ':'нет')+(active?' ✓':'')+'</span>';
     });
-  } catch(e) {
-    addLog('testLog', '❌ '+e.message, 'err');
-  }
+    if(!h) h = '<span class="pill pill-amber">Только ключевые слова</span>';
+    document.getElementById('ai-status').innerHTML = h;
+  } catch(e){ document.getElementById('ai-status').textContent = 'Ошибка загрузки'; }
 }
 
-loadStatus();
+async function addKey(){
+  var key = document.getElementById('apiKey').value.trim();
+  if(!key){ log('keyLog','Введи ключ','err'); return; }
+  log('keyLog','Сохраняю '+_prov+' ключ...','info');
+  try {
+    var r = await api('/api/keys/add', {key:key, provider:_prov});
+    if(r.ok){
+      log('keyLog','✅ Ключ сохранён (provider: '+_prov+')','ok');
+      document.getElementById('apiKey').value = '';
+      loadAiStatus();
+    } else {
+      log('keyLog','❌ '+r.error,'err');
+    }
+  } catch(e){ log('keyLog','❌ '+e.message,'err'); }
+}
 
 async function loadAccounts(){
   try {
     var accs = await api('/api/email-accounts');
-    var html2 = '';
-    accs.forEach(function(acc){
-      var isPrimary = acc.id === 'primary';
-      html2 += '<div style="display:flex;align-items:center;gap:8px;padding:10px;background:#111827;border-radius:8px;margin-bottom:6px">'
-        +'<div style="width:36px;height:36px;border-radius:50%;background:#1e3a5f;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">📧</div>'
-        +'<div style="flex:1;min-width:0">'
-          +'<div style="font-size:13px;color:#e2e8f0;font-weight:600">'+acc.email+'</div>'
-          +'<div style="font-size:11px;color:#6b7280">'+acc.imap+' · '+(isPrimary?'<span style="color:#34d399">основной</span>':'дополнительный')+'</div>'
-        +'</div>'
-        +(isPrimary?'':'<button onclick="deleteAccount(''+acc.id+'')" style="padding:4px 10px;border-radius:6px;border:1px solid #374151;background:transparent;color:#f87171;font-size:11px;cursor:pointer">✕</button>')
-      +'</div>';
+    var h = '';
+    if(!accs || !accs.length){
+      h = '<div style="color:#5a7a9a;font-size:13px;text-align:center;padding:10px">Нет аккаунтов</div>';
+    } else {
+      accs.forEach(function(acc){
+        var isPrimary = acc.id === 'primary';
+        var delBtn = isPrimary ? '' :
+          '<button class="btn btn-red" style="padding:4px 10px;font-size:11px" data-id="'+acc.id+'">✕</button>';
+        h += '<div class="acc-item">'
+          + '<div class="acc-avatar">📧</div>'
+          + '<div class="acc-info">'
+            + '<div class="acc-email">'+esc(acc.email)+'</div>'
+            + '<div class="acc-sub">'+esc(acc.imap)+' · '+(isPrimary?'<span style="color:#4ade80">основной</span>':'дополнительный')+'</div>'
+          + '</div>'
+          + delBtn
+          + '</div>';
+      });
+    }
+    document.getElementById('accList').innerHTML = h;
+    // Attach delete handlers
+    document.querySelectorAll('#accList .btn-red').forEach(function(btn){
+      btn.onclick = function(){
+        var accId = btn.getAttribute('data-id');
+        delAccount(accId);
+      };
     });
-    if(accs.length === 0) html2 = '<div style="color:#6b7280;font-size:13px;text-align:center;padding:10px">Нет аккаунтов</div>';
-    document.getElementById('accountsList').innerHTML = html2;
-  } catch(e){ console.error(e); }
+  } catch(e){ document.getElementById('accList').innerHTML = '<div style="color:#f87171">Ошибка: '+e.message+'</div>'; }
 }
 
-async function testAndAddAccount(){
+function esc(s){ return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+async function addAccount(){
   var email = document.getElementById('newEmail').value.trim();
   var pass  = document.getElementById('newPass').value.trim();
   var imap  = document.getElementById('newImap').value.trim() || 'imap.zone.eu';
-  if(!email||!pass){ addLog('accLog','Введи email и пароль','err'); return; }
-  
-  document.getElementById('addAccBtn').disabled = true;
-  addLog('accLog','Проверяю подключение...','info');
-  
+  if(!email || !pass){ log('accLog','Введи email и пароль','err'); return; }
+
+  var btn = document.getElementById('addAccBtn');
+  btn.disabled = true;
+  log('accLog','Проверяю подключение к '+imap+'...','info');
+
   try {
-    // Test first
-    var test = await api('/api/email-accounts/test', {email,password:pass,imap});
-    if(!test.ok){ addLog('accLog','❌ '+test.error,'err'); document.getElementById('addAccBtn').disabled=false; return; }
-    addLog('accLog','✅ '+test.email+' — '+test.total+' писем на '+test.host,'ok');
-    
-    // Save
-    var save = await api('/api/email-accounts/add', {email,password:pass,imap});
+    var test = await api('/api/email-accounts/test', {email:email, password:pass, imap:imap});
+    if(!test.ok){
+      log('accLog','❌ '+test.error,'err');
+      btn.disabled = false; return;
+    }
+    log('accLog','✅ '+test.email+' — '+test.total+' писем','ok');
+
+    var save = await api('/api/email-accounts/add', {email:email, password:pass, imap:imap});
     if(save.ok){
-      addLog('accLog','✅ Аккаунт #'+save.idx+' сохранён!','ok');
-      document.getElementById('newEmail').value='';
-      document.getElementById('newPass').value='';
-      document.getElementById('newImap').value='';
+      log('accLog','✅ Аккаунт #'+save.idx+' сохранён','ok');
+      document.getElementById('newEmail').value = '';
+      document.getElementById('newPass').value  = '';
       loadAccounts();
     } else {
-      addLog('accLog','❌ '+save.error,'err');
+      log('accLog','❌ '+save.error,'err');
     }
-  } catch(e){
-    addLog('accLog','❌ '+e.message,'err');
-  }
-  document.getElementById('addAccBtn').disabled=false;
+  } catch(e){ log('accLog','❌ '+e.message,'err'); }
+  btn.disabled = false;
 }
 
-async function deleteAccount(id){
-  if(!confirm('Удалить аккаунт '+id+'?')) return;
-  var idx = parseInt(id.replace('account_',''));
-  var r = await api('/api/email-accounts/delete', {idx});
-  if(r.ok){ addLog('accLog','Удалён','ok'); loadAccounts(); }
-  else addLog('accLog','❌ '+r.error,'err');
+async function delAccount(accId){
+  var idx = parseInt(accId.replace('account_',''));
+  if(!confirm('Удалить аккаунт?')) return;
+  try {
+    var r = await api('/api/email-accounts/delete', {idx:idx});
+    log('accLog', r.ok ? '✅ Удалён' : '❌ '+r.error, r.ok?'ok':'err');
+    loadAccounts();
+  } catch(e){ log('accLog','❌ '+e.message,'err'); }
 }
 
+async function fixImap(){
+  log('imapLog','Исправляю IMAP хост...','info');
+  try {
+    var r = await api('/api/setup-zone', {});
+    log('imapLog', r.ok ? '✅ '+r.message : '❌ '+r.error, r.ok?'ok':'err');
+    loadImapStatus();
+  } catch(e){ log('imapLog','❌ '+e.message,'err'); }
+}
+
+async function testImap(){
+  log('imapLog','Проверяю соединение...','info');
+  try {
+    var d = await api('/api/test-scan');
+    var im = d.imap || {};
+    log('imapLog','IMAP: '+(im.ok ? '✅ '+im.total+' писем на '+im.doh_ip : '❌ '+(im.error||'нет ответа')), im.ok?'ok':'err');
+    log('imapLog','AI: '+(d.gemini&&d.gemini.ok ? '✅ Gemini OK' : '⚠ Gemini недоступен — используются ключевые слова'),'warn');
+  } catch(e){ log('imapLog','❌ '+e.message,'err'); }
+}
+
+async function loadImapStatus(){
+  try {
+    var d = await api('/api/config');
+    document.getElementById('imapStatus').textContent = 'Текущий хост: '+d.imap_host+' · Email: '+d.email;
+  } catch(e){}
+}
+
+async function doAction(path, method, data, logId, msg){
+  log(logId, msg, 'info');
+  try {
+    var r = await api(path, data);
+    var detail = r.message || r.error || JSON.stringify(r).slice(0,80);
+    log(logId, (r.ok!==false?'✅ ':'❌ ')+detail, r.ok!==false?'ok':'err');
+  } catch(e){ log(logId,'❌ '+e.message,'err'); }
+}
+
+// Init
+loadAiStatus();
 loadAccounts();
-
+loadImapStatus();
 </script>
-</body></html>
+</body>
+</html>
