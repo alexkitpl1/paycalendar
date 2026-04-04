@@ -324,29 +324,36 @@ GEMINI_KEY  = c("ai", "gemini_key") or os.environ.get("GEMINI_API_KEY","AIzaSyDy
 GROQ_KEY    = c("ai", "groq_key")   or os.environ.get("GROQ_API_KEY","")
 OPENAI_KEY  = c("ai", "openai_key") or os.environ.get("OPENAI_API_KEY","")
 
+_provider_blocked = set()  # tracks quota-exceeded providers
+
 def _active_provider():
-    """Return first available AI provider."""
-    if GEMINI_KEY and len(GEMINI_KEY) > 10:  return "gemini"
-    if API_KEY    and len(API_KEY)    > 20:  return "claude"
-    if GROQ_KEY   and len(GROQ_KEY)   > 10:  return "groq"
-    if OPENAI_KEY and len(OPENAI_KEY) > 10:  return "openai"
-    return None
+    """Return first available AI provider (skips quota-exceeded ones)."""
+    if GEMINI_KEY  and len(GEMINI_KEY)  > 10 and "gemini"  not in _provider_blocked: return "gemini"
+    if API_KEY     and len(API_KEY)     > 20 and "claude"  not in _provider_blocked: return "claude"
+    if GROQ_KEY    and len(GROQ_KEY)    > 10 and "groq"    not in _provider_blocked: return "groq"
+    if OPENAI_KEY  and len(OPENAI_KEY)  > 10 and "openai"  not in _provider_blocked: return "openai"
+    return None  # will use keyword extractor
 
 def ask_ai(prompt):
-    """Call active AI provider. Falls back through providers automatically."""
-    provider = _active_provider()
-    log.debug(f"ask_ai: using provider={provider}")
-
-    if provider == "gemini":
-        return _ask_gemini(prompt)
-    elif provider == "claude":
-        return _ask_claude(prompt)
-    elif provider == "groq":
-        return _ask_groq(prompt)
-    elif provider == "openai":
-        return _ask_openai(prompt)
-    else:
-        raise ValueError("Нет доступного AI. Добавь GEMINI_API_KEY или другой ключ в Railway Variables.")
+    """Call active AI provider, auto-fallback on quota errors."""
+    for attempt in range(4):
+        provider = _active_provider()
+        if not provider:
+            raise ValueError("Все AI провайдеры недоступны — используй ключевые слова")
+        try:
+            log.debug(f"ask_ai: trying {provider}")
+            if provider == "gemini":  return _ask_gemini(prompt)
+            if provider == "claude":  return _ask_claude(prompt)
+            if provider == "groq":    return _ask_groq(prompt)
+            if provider == "openai":  return _ask_openai(prompt)
+        except Exception as ex:
+            err = str(ex).lower()
+            if any(k in err for k in ["429","quota","rate","exceeded","limit","billing","credit"]):
+                log.warning(f"{provider} quota/rate limit — switching to next provider")
+                _provider_blocked.add(provider)
+            else:
+                raise
+    raise ValueError("Все провайдеры исчерпали квоту")
 
 _gemini_last_call = [0.0]
 
@@ -1343,39 +1350,60 @@ def _playwright_login_old(emit=None):
 
 
 def _resolve_host_doh(hostname):
-    """Resolve hostname via Cloudflare DNS-over-HTTPS (bypasses Railway DNS issues)."""
-    try:
-        r = requests.get(
-            f"https://cloudflare-dns.com/dns-query?name={hostname}&type=A",
-            headers={"Accept": "application/dns-json"}, timeout=5
-        )
-        answers = r.json().get("Answer", [])
-        ips = [a["data"] for a in answers if a.get("type") == 1]
-        if ips:
-            log.info(f"DoH resolved {hostname} → {ips[0]}")
-            return ips[0]
-    except Exception as ex:
-        log.debug(f"DoH failed for {hostname}: {ex}")
-    return hostname  # fallback to original
+    """Resolve hostname via multiple DoH providers."""
+    providers = [
+        f"https://dns.google/resolve?name={hostname}&type=A",
+        f"https://cloudflare-dns.com/dns-query?name={hostname}&type=A",
+        f"https://dns.quad9.net:5053/dns-query?name={hostname}&type=A",
+    ]
+    for url in providers:
+        try:
+            r = requests.get(url, headers={"Accept": "application/dns-json"}, timeout=4)
+            if r.status_code == 200:
+                answers = r.json().get("Answer", [])
+                ips = [a["data"] for a in answers if a.get("type") == 1]
+                if ips:
+                    log.info(f"DoH resolved {hostname} → {ips[0]}")
+                    return ips[0]
+        except Exception as ex:
+            log.debug(f"DoH {url[:30]} failed: {ex}")
+    return hostname
+
+def _try_imap_connect(hosts, port, email, password):
+    """Try connecting to multiple IMAP hostnames in order."""
+    import ssl as _ssl
+    for host in hosts:
+        ip = _resolve_host_doh(host)
+        for target in ([ip, host] if ip != host else [host]):
+            try:
+                ctx = _ssl.create_default_context()
+                if target != host:
+                    ctx.check_hostname = False
+                    ctx.verify_mode = _ssl.CERT_NONE
+                mail = imaplib.IMAP4_SSL(target, port, ssl_context=ctx)
+                mail.login(email, password)
+                log.info(f"IMAP connected: {host} via {target}")
+                return mail, host
+            except Exception as ex:
+                log.debug(f"IMAP {target}: {ex}")
+    return None, None
 
 def scan_imap(emit, from_date=None, to_date=None):
-    emit(f"Connecting IMAP {IMAP_HOST}:{IMAP_PORT}...")
-    # Try DoH resolution first (fixes Railway DNS issues with .ee domains)
-    host_ip = _resolve_host_doh(IMAP_HOST)
-    if host_ip != IMAP_HOST:
-        emit(f"Resolved {IMAP_HOST} → {host_ip}", "ok")
-    try:
-        import ssl as _ssl
-        ctx = _ssl.create_default_context()
-        ctx.check_hostname = (host_ip == IMAP_HOST)  # skip if using IP
-        if host_ip != IMAP_HOST:
-            ctx.verify_mode = _ssl.CERT_NONE  # IP connection - skip cert verify
-        mail = imaplib.IMAP4_SSL(host_ip, IMAP_PORT, ssl_context=ctx)
-        mail.login(EMAIL_ADDR, EMAIL_PASS)
-        emit(f"Connected ✓", "ok")
-    except Exception as ex:
-        emit(f"IMAP error: {ex}", "err")
-        return []
+    emit(f"Подключение к почте {IMAP_HOST}...")
+    # Try multiple hostnames - DNS might resolve differently
+    alt_hosts = list(dict.fromkeys([
+        IMAP_HOST,
+        "imap.zone.ee",
+        "mail.zone.eu",
+        f"mail.{EMAIL_ADDR.split('@')[1]}" if EMAIL_ADDR else "",
+    ]))
+    alt_hosts = [h for h in alt_hosts if h]
+    emit(f"Пробую: {', '.join(alt_hosts)}", "info")
+    mail, connected_host = _try_imap_connect(alt_hosts, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
+    if not mail:
+        emit(f"IMAP недоступен — переключаюсь на webmail", "warn")
+        return None  # caller will use webmail
+    emit(f"✓ Подключено через {connected_host}", "ok")
 
     try:
         mail.select(IMAP_FOLDER)
@@ -1834,7 +1862,10 @@ def scan_email(emit=None, quick=False, from_date=None, to_date=None):
         try:
             with socket.create_connection((IMAP_HOST, IMAP_PORT), timeout=5):
                 emitter("IMAP reachable", "ok")
-                return scan_imap(emitter, from_date=from_date, to_date=to_date)
+                result = scan_imap(emitter, from_date=from_date, to_date=to_date)
+                if result is not None:
+                    return result
+                # scan_imap returned None → fall through to webmail
         except Exception as ex:
             emitter(f"IMAP blocked ({type(ex).__name__}) — using HTTPS", "warn")
             return scan_webmail(emitter, from_date=from_date, to_date=to_date)
@@ -2155,13 +2186,12 @@ def api_test_scan():
             imap_r["doh_ip"] = ip
             imap_r["doh_ok"] = ip != IMAP_HOST
 
-            ctx = _ssl2.create_default_context()
-            if ip != IMAP_HOST:
-                ctx.check_hostname = False
-                ctx.verify_mode = _ssl2.CERT_NONE
-
-            mail = _il.IMAP4_SSL(ip, IMAP_PORT, ssl_context=ctx)
-            mail.login(EMAIL_ADDR, EMAIL_PASS)
+            alt = [IMAP_HOST, "imap.zone.ee", "mail.zone.eu"]
+            mail_conn, used_host = _try_imap_connect(alt, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
+            if not mail_conn:
+                raise Exception("Все IMAP хосты недоступны")
+            imap_r["connected_via"] = used_host
+            mail = mail_conn
             mail.select("INBOX")
             _, data = mail.search(None, "ALL")
             ids = data[0].split()
