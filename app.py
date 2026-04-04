@@ -319,10 +319,52 @@ def save_config_value(section, key, value):
     reload_config()
 
 # ── Claude ────────────────────────────────────────────────────────────────────
-def ask_claude(prompt):
-    if not API_KEY or len(API_KEY) < 20:
-        log.error("Claude API key not set! Set PC_CLAUDE_API_KEY in Railway Variables.")
-        raise ValueError("Claude API key not configured")
+# ── AI provider config ───────────────────────────────────────────────────────
+GEMINI_KEY  = c("ai", "gemini_key") or os.environ.get("GEMINI_API_KEY","")
+GROQ_KEY    = c("ai", "groq_key")   or os.environ.get("GROQ_API_KEY","")
+OPENAI_KEY  = c("ai", "openai_key") or os.environ.get("OPENAI_API_KEY","")
+
+def _active_provider():
+    """Return first available AI provider."""
+    if GEMINI_KEY and len(GEMINI_KEY) > 10:  return "gemini"
+    if API_KEY    and len(API_KEY)    > 20:  return "claude"
+    if GROQ_KEY   and len(GROQ_KEY)   > 10:  return "groq"
+    if OPENAI_KEY and len(OPENAI_KEY) > 10:  return "openai"
+    return None
+
+def ask_ai(prompt):
+    """Call active AI provider. Falls back through providers automatically."""
+    provider = _active_provider()
+    log.debug(f"ask_ai: using provider={provider}")
+
+    if provider == "gemini":
+        return _ask_gemini(prompt)
+    elif provider == "claude":
+        return _ask_claude(prompt)
+    elif provider == "groq":
+        return _ask_groq(prompt)
+    elif provider == "openai":
+        return _ask_openai(prompt)
+    else:
+        raise ValueError("Нет доступного AI. Добавь GEMINI_API_KEY или другой ключ в Railway Variables.")
+
+def _ask_gemini(prompt):
+    """Google Gemini Flash — free tier: 15 RPM, 1M tokens/day."""
+    model = "gemini-2.0-flash"
+    url   = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
+    body  = {
+        "contents": [{"parts": [{"text": CLAUDE_SYSTEM + "\n\n" + prompt}]}],
+        "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.1},
+    }
+    r = requests.post(url, json=body, timeout=30)
+    if r.status_code != 200:
+        log.error(f"Gemini error: {r.status_code} {r.text[:200]}")
+        r.raise_for_status()
+    parts = r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[])
+    return "".join(p.get("text","") for p in parts)
+
+def _ask_claude(prompt):
+    """Anthropic Claude — paid."""
     r = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={"Content-Type":"application/json",
@@ -337,6 +379,43 @@ def ask_claude(prompt):
         log.error(f"Claude API error: {r.status_code} {r.text[:200]}")
         r.raise_for_status()
     return "".join(b.get("text","") for b in r.json().get("content",[]))
+
+def _ask_groq(prompt):
+    """Groq — free tier with Llama 3."""
+    r = requests.post(
+        "https://api.groq.com/openai/v1/chat/completions",
+        headers={"Authorization": f"Bearer {GROQ_KEY}",
+                 "Content-Type": "application/json"},
+        json={"model": "llama-3.3-70b-versatile",
+              "max_tokens": 1000, "temperature": 0.1,
+              "messages": [
+                  {"role": "system", "content": CLAUDE_SYSTEM},
+                  {"role": "user",   "content": prompt},
+              ]},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+def _ask_openai(prompt):
+    """OpenAI GPT — paid."""
+    r = requests.post(
+        "https://api.openai.com/v1/chat/completions",
+        headers={"Authorization": f"Bearer {OPENAI_KEY}",
+                 "Content-Type": "application/json"},
+        json={"model": "gpt-4o-mini", "max_tokens": 1000, "temperature": 0.1,
+              "messages": [
+                  {"role": "system", "content": CLAUDE_SYSTEM},
+                  {"role": "user",   "content": prompt},
+              ]},
+        timeout=30,
+    )
+    r.raise_for_status()
+    return r.json()["choices"][0]["message"]["content"]
+
+# backward compat alias
+def ask_claude(prompt):
+    return ask_ai(prompt)
 
 def extract_json(text):
     for o, cl in [("{","}"),("[","]")]:
@@ -682,7 +761,7 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
             if obj and obj.get("is_invoice"):
                 inv = build_invoice(obj, uid, subj, frm, ds, att, source)
                 new_invs.append(inv)
-                emit(f"✓ [AI] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
+                emit(f"✓ [{_active_provider().upper()}] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
         except Exception as ex:
             # Claude failed (no credits/API error) → use keyword extractor
             err_str = str(ex)
@@ -1843,6 +1922,7 @@ def api_config():
     reload_config()
     pw  = EMAIL_PASS or ""
     key = CLAUDE_KEY or ""
+    provider = _active_provider()
     return jsonify({
         "company":          COMPANY,
         "email":            EMAIL_ADDR,
@@ -1852,6 +1932,9 @@ def api_config():
         "has_password":     bool(pw and pw not in ("your_password_here","")),
         "has_api_key":      bool(key and "INSERT" not in key and len(key)>20),
         "imap_host":        IMAP_HOST or "mail.zone.ee",
+        "ai_provider":      provider or "keyword",
+        "has_gemini":       bool(GEMINI_KEY),
+        "has_groq":         bool(GROQ_KEY),
     })
 
 @app.route("/api/invoices", methods=["GET"])
