@@ -179,7 +179,7 @@ AUTO_BROWSER   = c("app", "auto_open_browser", "true").lower() == "true"
 COMPANY        = c("app", "company_name", "My Company")
 WARN_DAYS      = int(c("notifications", "warn_days_before", "3"))
 WIN_NOTIFY     = c("notifications", "windows_notifications", "true").lower() == "true"
-MODEL          = "claude-sonnet-4-20250514"
+MODEL          = "claude-sonnet-4-5"
 
 # ── Keywords (8 languages) ────────────────────────────────────────────────────
 INVOICE_KW = [
@@ -320,6 +320,9 @@ def save_config_value(section, key, value):
 
 # ── Claude ────────────────────────────────────────────────────────────────────
 def ask_claude(prompt):
+    if not API_KEY or len(API_KEY) < 20:
+        log.error("Claude API key not set! Set PC_CLAUDE_API_KEY in Railway Variables.")
+        raise ValueError("Claude API key not configured")
     r = requests.post(
         "https://api.anthropic.com/v1/messages",
         headers={"Content-Type":"application/json",
@@ -330,7 +333,9 @@ def ask_claude(prompt):
               "messages": [{"role":"user","content": prompt}]},
         timeout=30,
     )
-    r.raise_for_status()
+    if r.status_code != 200:
+        log.error(f"Claude API error: {r.status_code} {r.text[:200]}")
+        r.raise_for_status()
     return "".join(b.get("text","") for b in r.json().get("content",[]))
 
 def extract_json(text):
@@ -1068,20 +1073,31 @@ def scan_imap(emit, from_date=None, to_date=None):
             date_terms.append(f"BEFORE {before_str}".encode())
 
         ids = set()
-        # Search by subject keywords
-        for term in IMAP_SUBJECTS:
+
+        # When date range given - fetch ALL emails in range (most complete)
+        if date_terms:
             try:
-                search_args = [term] + date_terms if date_terms else [term]
-                _, data = mail.search(None, *search_args)
+                _, data = mail.search(None, *date_terms)
                 for uid in data[0].split():
                     ids.add(uid)
-            except Exception:
-                pass
+                emit(f"Date-range search: {len(ids)} emails", "ok")
+            except Exception as ex:
+                emit(f"Date search failed: {ex}, falling back to keywords", "warn")
 
-        # If we have a last UID, also grab newer messages
+        # Also search by subject keywords (catches emails outside date range)
+        if not date_terms or len(ids) == 0:
+            for term in IMAP_SUBJECTS:
+                try:
+                    search_args = [term] + date_terms if date_terms else [term]
+                    _, data = mail.search(None, *search_args)
+                    for uid in data[0].split():
+                        ids.add(uid)
+                except Exception:
+                    pass
+
+        # If we have a last UID, grab newer messages too
         if last_uid and not from_date:
             try:
-                # IMAP UID SEARCH: all UIDs > last_uid
                 _, data = mail.search(None, f"UID {int(last_uid)+1}:*")
                 for uid in data[0].split():
                     ids.add(uid)
@@ -1089,7 +1105,9 @@ def scan_imap(emit, from_date=None, to_date=None):
             except Exception:
                 pass
 
+        # Last resort: ALL emails up to limit
         if not ids:
+            emit("No keyword matches - scanning all recent emails...", "warn")
             _, data = mail.search(None, "ALL")
             all_ids = data[0].split()
             ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
@@ -1774,6 +1792,59 @@ def api_reset_scan():
         return jsonify({"ok": True, "message": "Состояние сброшено — следующий скан начнётся с начала"})
     except Exception as ex:
         return jsonify({"ok": False, "error": str(ex)})
+
+
+@app.route("/api/diagnose")
+def api_diagnose():
+    """Diagnostic endpoint - shows system status."""
+    import imaplib as _il, socket as _so
+    results = {}
+
+    # Config
+    reload_config()
+    results["config"] = {
+        "email":        EMAIL_ADDR,
+        "has_password": bool(EMAIL_PASS and len(EMAIL_PASS) > 3),
+        "imap_host":    IMAP_HOST,
+        "imap_port":    IMAP_PORT,
+        "has_api_key":  bool(API_KEY and len(API_KEY) > 20),
+        "api_key_prefix": API_KEY[:15] + "..." if API_KEY else "",
+        "data_dir":     str(_DATA_DIR),
+        "invoices":     len(load_invoices()),
+        "scan_count":   load_state().get("scan_count", 0),
+        "last_date":    load_state().get("last_date"),
+    }
+
+    # IMAP test
+    try:
+        m = _il.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+        m.login(EMAIL_ADDR, EMAIL_PASS)
+        m.select("INBOX")
+        _, data = m.search(None, "ALL")
+        total = len(data[0].split()) if data[0] else 0
+        m.logout()
+        results["imap"] = {"ok": True, "total_emails": total}
+    except Exception as ex:
+        results["imap"] = {"ok": False, "error": str(ex)}
+
+    # Claude API test
+    try:
+        r = requests.post(
+            "https://api.anthropic.com/v1/messages",
+            headers={"Content-Type": "application/json",
+                     "x-api-key": API_KEY,
+                     "anthropic-version": "2023-06-01"},
+            json={"model": MODEL, "max_tokens": 10,
+                  "messages": [{"role": "user", "content": "Hi"}]},
+            timeout=10,
+        )
+        results["claude"] = {"ok": r.status_code == 200, "status": r.status_code}
+        if r.status_code != 200:
+            results["claude"]["error"] = r.text[:200]
+    except Exception as ex:
+        results["claude"] = {"ok": False, "error": str(ex)}
+
+    return jsonify(results)
 
 @app.route("/api/scan-state")
 def api_scan_state():
