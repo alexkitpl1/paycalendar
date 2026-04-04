@@ -293,6 +293,15 @@ const daysU = s=>{if(!s)return null;const d=new Date(s);d.setHours(0,0,0,0);cons
 const stOf = i=>{if(i.status==="paid")return"paid";if(!i.due_date)return"pending";const d=daysU(i.due_date);if(d<0)return"overdue";if(d<=3)return"urgent";return"upcoming"};
 const esc = s=>String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;");
 
+async function apiGet(url){
+  try {
+    const r = await fetch(url, {credentials:'include'});
+    if(r.redirected && r.url.includes('login-page')){window.location='/login-page';return {};}
+    if(r.status===401||r.status===403){window.location='/login-page';return {};}
+    if(!r.ok) return {};
+    return await r.json();
+  } catch(e){ console.error('apiGet',url,e); return {}; }
+}
 async function apiPost(url,data){
   try {
     const r = await fetch(url,{method:"POST",credentials:'include',
@@ -376,13 +385,14 @@ async function deleteInv(id){
 /* ─── Theme ─────────────────────────────────────────────────────────────── */
 function setTheme(t){
   S.theme=t;
-  document.documentElement.setAttribute("data-theme",t);
-  localStorage.setItem("pcal_theme",t);
+  try{document.documentElement.setAttribute("data-theme",t);}catch(e){}
+  try{localStorage.setItem("pcal_theme",t);}catch(e){}
   ["dark","grey","white"].forEach(x=>{
-    document.getElementById("th-"+x).classList.toggle("active",x===t);
+    var el=document.getElementById("th-"+x);
+    if(el) el.classList.toggle("active",x===t);
   });
 }
-setTheme(S.theme);
+try{setTheme(S.theme);}catch(e){}
 
 /* ─── Computed ──────────────────────────────────────────────────────────── */
 function monthStats(){
