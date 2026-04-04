@@ -942,7 +942,24 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
     for em in emails_raw:
         uid = str(em.get("id") or em.get("_id") or em.get("uid") or "")
         if uid in existing_ids:
+            # Same email seen again → increment reminder count
+            for _inv in existing:
+                if _inv.get("email_uid") == uid:
+                    _inv["reminder_count"] = _inv.get("reminder_count", 1) + 1
+                    _inv["last_reminded"] = datetime.now().strftime("%Y-%m-%d")
+                    break
             skipped_dup += 1; all_uids.append(uid); continue
+        # Normalise subject to catch Re:/RE: thread duplicates
+        norm_key = (_norm_subj(subj), ds[:10])
+        if norm_key in existing_subj_dates:
+            for _inv in existing:
+                inv_key = (_norm_subj(_inv.get("description","") or ""), _inv.get("issue_date","")[:10])
+                if inv_key == norm_key:
+                    _inv["reminder_count"] = _inv.get("reminder_count", 1) + 1
+                    _inv["last_reminded"] = ds
+                    break
+            skipped_dup += 1; all_uids.append(uid); continue
+        existing_subj_dates.add(norm_key)
 
         # Decode RFC2047 subject
         raw_subj = str(em.get("subject") or "")
@@ -1072,7 +1089,7 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         last_uid = uid
         if inv: new_invs.append(inv)
 
-    if new_invs:
+    # Always save: new invoices + updated reminder counts
         save_invoices(existing + new_invs)
         emit(f"✅ Добавлено {len(new_invs)} счетов!", "ok")
     else:

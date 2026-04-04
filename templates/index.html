@@ -454,6 +454,18 @@ input, select, textarea { font-size: 16px !important; }
     z-index: -1;
   }
 }
+
+/* Reminder count badge */
+.ic-remind {
+  display: inline-flex; align-items: center; gap: 3px;
+  padding: 2px 8px; border-radius: 12px; font-size: 11px;
+  font-weight: 700; background: #1e3a5f; color: #60a5fa;
+  border: 1px solid #2563eb33;
+}
+.chip-remind {
+  font-size: 9px; color: #60a5fa; font-weight: 700;
+  margin-left: 2px; vertical-align: super;
+}
 </style>
 </head>
 <body>
@@ -756,7 +768,7 @@ function dayHTML(date){
     const st=stOf(inv),cat=CAT[inv.category]||CAT.other;
     h+=`<div class="chip" style="background:${cat.b};border-left-color:${SC[st]};color:${cat.c}">
       <span class="chip-d"></span><span class="chip-n">${esc(inv.vendor||"Счёт")}</span>
-      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
+      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.reminder_count>1?"<span class='chip-remind'>🔔"+inv.reminder_count+"</span>":""}${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
   }
   if(extra>0)h+=`<div class="more">+${extra}</div>`;
   return{h,total};
@@ -991,6 +1003,7 @@ function renderSP(){
         <div class="ic-m">
           <span class="ic-a" style="color:${st==="paid"?"var(--green)":"var(--red)"}">${fmtAmt(inv.amount,inv.currency)}</span>
           <span class="ic-b" style="background:${SC[st]}22;color:${SC[st]}">${SL[st]}</span>
+          ${inv.reminder_count>1?`<span class="ic-remind" title="Повторных напоминаний: ${inv.reminder_count-1}">🔔 ×${inv.reminder_count}</span>`:""}
           ${st==="overdue"?`<span class="ic-overdue">⚠ просрочено ${Math.abs(daysU(inv.due_date))} дн.</span>`:""}
         </div>
         ${(inv.vat_amount||inv.vat_rate)?`<div class="ic-vat">
