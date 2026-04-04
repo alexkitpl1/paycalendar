@@ -348,20 +348,37 @@ def ask_ai(prompt):
     else:
         raise ValueError("Нет доступного AI. Добавь GEMINI_API_KEY или другой ключ в Railway Variables.")
 
+_gemini_last_call = [0.0]
+
 def _ask_gemini(prompt):
-    """Google Gemini Flash — free tier: 15 RPM, 1M tokens/day."""
+    """Google Gemini Flash — free tier: 15 RPM. Rate limited to 1 req/4s."""
+    import time as _t
+    # Rate limit: wait between calls (free tier = 15 req/min = 1 per 4s)
+    elapsed = _t.time() - _gemini_last_call[0]
+    if elapsed < 4.0:
+        _t.sleep(4.0 - elapsed)
+    _gemini_last_call[0] = _t.time()
+
     model = "gemini-2.0-flash"
     url   = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
     body  = {
         "contents": [{"parts": [{"text": CLAUDE_SYSTEM + "\n\n" + prompt}]}],
-        "generationConfig": {"maxOutputTokens": 1000, "temperature": 0.1},
+        "generationConfig": {"maxOutputTokens": 512, "temperature": 0.1},
     }
-    r = requests.post(url, json=body, timeout=30)
-    if r.status_code != 200:
-        log.error(f"Gemini error: {r.status_code} {r.text[:200]}")
-        r.raise_for_status()
-    parts = r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[])
-    return "".join(p.get("text","") for p in parts)
+    # Retry up to 3 times on 429
+    for attempt in range(3):
+        r = requests.post(url, json=body, timeout=30)
+        if r.status_code == 200:
+            parts = r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[])
+            return "".join(p.get("text","") for p in parts)
+        elif r.status_code == 429:
+            wait = (attempt + 1) * 10
+            log.warning(f"Gemini 429 rate limit — waiting {wait}s (attempt {attempt+1}/3)")
+            _t.sleep(wait)
+        else:
+            log.error(f"Gemini error: {r.status_code} {r.text[:200]}")
+            r.raise_for_status()
+    raise Exception("Gemini: exceeded retry limit on 429")
 
 def _ask_claude(prompt):
     """Anthropic Claude — paid."""
@@ -1325,12 +1342,37 @@ def _playwright_login_old(emit=None):
     """
 
 
+def _resolve_host_doh(hostname):
+    """Resolve hostname via Cloudflare DNS-over-HTTPS (bypasses Railway DNS issues)."""
+    try:
+        r = requests.get(
+            f"https://cloudflare-dns.com/dns-query?name={hostname}&type=A",
+            headers={"Accept": "application/dns-json"}, timeout=5
+        )
+        answers = r.json().get("Answer", [])
+        ips = [a["data"] for a in answers if a.get("type") == 1]
+        if ips:
+            log.info(f"DoH resolved {hostname} → {ips[0]}")
+            return ips[0]
+    except Exception as ex:
+        log.debug(f"DoH failed for {hostname}: {ex}")
+    return hostname  # fallback to original
+
 def scan_imap(emit, from_date=None, to_date=None):
     emit(f"Connecting IMAP {IMAP_HOST}:{IMAP_PORT}...")
+    # Try DoH resolution first (fixes Railway DNS issues with .ee domains)
+    host_ip = _resolve_host_doh(IMAP_HOST)
+    if host_ip != IMAP_HOST:
+        emit(f"Resolved {IMAP_HOST} → {host_ip}", "ok")
     try:
-        mail = imaplib.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+        import ssl as _ssl
+        ctx = _ssl.create_default_context()
+        ctx.check_hostname = (host_ip == IMAP_HOST)  # skip if using IP
+        if host_ip != IMAP_HOST:
+            ctx.verify_mode = _ssl.CERT_NONE  # IP connection - skip cert verify
+        mail = imaplib.IMAP4_SSL(host_ip, IMAP_PORT, ssl_context=ctx)
         mail.login(EMAIL_ADDR, EMAIL_PASS)
-        emit(f"Connected", "ok")
+        emit(f"Connected ✓", "ok")
     except Exception as ex:
         emit(f"IMAP error: {ex}", "err")
         return []
@@ -2109,12 +2151,14 @@ def api_test_scan():
     # 2. IMAP connection
     try:
         import socket as _so
-        with _so.create_connection((IMAP_HOST, IMAP_PORT), timeout=8):
-            step("imap_tcp", True, f"{IMAP_HOST}:{IMAP_PORT} reachable")
+        host_ip = _resolve_host_doh(IMAP_HOST)
+        step("imap_doh", host_ip != IMAP_HOST, f"{IMAP_HOST} → {host_ip}")
+        with _so.create_connection((host_ip, IMAP_PORT), timeout=8):
+            step("imap_tcp", True, f"{host_ip}:{IMAP_PORT} reachable")
     except Exception as ex:
         step("imap_tcp", False, str(ex))
         results["imap_available"] = False
-        results["note"] = "IMAP blocked - will use webmail"
+        results["note"] = "IMAP blocked - will try webmail"
     
     # 3. IMAP login + fetch emails
     emails_found = []
