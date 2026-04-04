@@ -320,7 +320,7 @@ def save_config_value(section, key, value):
 
 # ── Claude ────────────────────────────────────────────────────────────────────
 # ── AI provider config ───────────────────────────────────────────────────────
-GEMINI_KEY  = c("ai", "gemini_key") or os.environ.get("GEMINI_API_KEY","")
+GEMINI_KEY  = c("ai", "gemini_key") or os.environ.get("GEMINI_API_KEY","AIzaSyDyrZ8ZkPmoNRGL7Wv9P1qs_laKClKIIAw")
 GROQ_KEY    = c("ai", "groq_key")   or os.environ.get("GROQ_API_KEY","")
 OPENAI_KEY  = c("ai", "openai_key") or os.environ.get("OPENAI_API_KEY","")
 
