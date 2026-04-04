@@ -1133,8 +1133,15 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                 search_text = subj + " " + body + " " + pdf_text
                 amount   = extract_amount(search_text)
                 vendor   = extract_vendor(subj, frm, body)
-                # Skip if no amount found and it's not a very strong match
-                if amount == 0 and score < 65:
+                # Skip Re: offer threads with no amount - these are email discussions, not invoices
+                _offer_kws = ["offer","quote","proposal","предложение"]
+                _is_offer_reply = (
+                    re.match(r"^(re:|fw:|fwd:)", subj.strip(), re.IGNORECASE) and
+                    any(k in subj.lower() for k in _offer_kws)
+                )
+                if _is_offer_reply and amount == 0:
+                    log.debug(f"KW skip (offer reply, no amount): {subj[:50]}")
+                elif amount == 0 and score < 65:
                     log.debug(f"KW skip (no amount, score={score}): {subj[:50]}")
                 else:
                     inv = build_invoice({
@@ -1865,18 +1872,32 @@ def api_fix_offers():
         desc = (inv.get("description") or "").lower()
         has_offer   = any(k in desc for k in OFFER_KW)
         has_invoice = any(k in desc for k in INVOICE_KW)
+        amount      = float(inv.get("amount") or 0)
+
+        # DELETE: zero-amount items with offer keyword and Re: thread prefix
+        if has_offer and not has_invoice and amount == 0:
+            import re as _re2
+            is_reply = bool(_re2.match(r"^(re:|fw:|fwd:)", desc.strip(), _re2.IGNORECASE))
+            if is_reply:
+                deduped += 1
+                continue  # drop silently
 
         # Move invoice-keyword items out of "offer" status
         if has_invoice and inv.get("is_offer"):
             inv.pop("is_offer", None)
             moved += 1
 
-        # Deduplicate offer threads (Re: Re: same subject)
+        # Move offer-only items (non-invoice) to offer tab
+        if has_offer and not has_invoice and not inv.get("is_offer"):
+            inv["is_offer"] = True
+            moved += 1
+
+        # Deduplicate remaining offer threads by normalised subject
         norm = re.sub(r"^(re:|fwd:|fw:)\s*", "", desc, flags=re.IGNORECASE).strip()[:60]
-        if has_offer and not has_invoice:
+        if inv.get("is_offer"):
             if norm in seen_desc:
                 deduped += 1
-                continue  # skip duplicate
+                continue
             seen_desc[norm] = True
 
         cleaned.append(inv)
