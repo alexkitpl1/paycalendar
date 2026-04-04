@@ -1229,22 +1229,15 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
 # ── Main scan dispatcher ──────────────────────────────────────────────────────
 
 def _resolve_host_doh(hostname):
-    """Resolve hostname via multiple DoH providers (bypasses Railway DNS for .ee domains)."""
-    providers = [
-        f"https://dns.google/resolve?name={hostname}&type=A",
-        f"https://cloudflare-dns.com/dns-query?name={hostname}&type=A",
-    ]
-    for url in providers:
-        try:
-            r = requests.get(url, headers={"Accept":"application/dns-json"}, timeout=4)
-            if r.status_code == 200:
-                answers = r.json().get("Answer",[])
-                ips = [a["data"] for a in answers if a.get("type")==1]
-                if ips:
-                    log.info(f"DoH {hostname} → {ips[0]}")
-                    return ips[0]
-        except Exception as ex:
-            log.debug(f"DoH failed {hostname}: {ex}")
+    """Resolve hostname via socket (Railway has direct DNS access)."""
+    try:
+        import socket as _sock
+        ip = _sock.gethostbyname(hostname)
+        if ip and ip != hostname:
+            log.debug(f"DNS {hostname} → {ip}")
+            return ip
+    except Exception as ex:
+        log.debug(f"DNS resolve {hostname}: {ex}")
     return hostname
 
 
@@ -1958,7 +1951,7 @@ _MAX_LOG = 80
 
 
 
-@app.route("/api/setup-zone")
+@app.route("/api/setup-zone", methods=["GET","POST"])
 def api_setup_zone():
     """Force correct Zone.ee IMAP settings - no auth needed."""
     global IMAP_HOST
