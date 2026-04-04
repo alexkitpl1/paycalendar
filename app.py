@@ -1902,7 +1902,10 @@ def start_bg_scan(from_date=None, to_date=None, quick=False):
     with _scan_state_lock:
         if _scan_state_live["running"]:
             return None  # already running
-        _scan_state_live["queued"] = True
+        # Set running=True NOW (before thread starts) to prevent race condition
+        _scan_state_live["running"] = True
+        _scan_state_live["task_id"] = task_id
+        _scan_state_live["queued"]  = False
     t = threading.Thread(
         target=_run_bg_scan,
         args=(task_id, from_date, to_date, quick),
@@ -2178,19 +2181,27 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
             date_terms.append(f"BEFORE {before_dt.strftime('%d-%b-%Y')}".encode())
 
         ids = set()
-        if date_terms:
-            _, data = mail.search(None, *date_terms)
-            for uid in data[0].split(): ids.add(uid)
-        else:
+        # ALL emails strategy — bypasses case-sensitive IMAP SUBJECT search on zone.eu
+        try:
+            _, _ad = mail.search(None, b"ALL")
+            _all_uids = _ad[0].split() if (_ad and _ad[0]) else []
+            try:
+                _sorted = sorted(_all_uids,
+                    key=lambda x: int(x.decode() if isinstance(x,bytes) else x),
+                    reverse=True)
+            except Exception:
+                _sorted = list(reversed(_all_uids))
+            for uid in _sorted[:SCAN_LIMIT]:
+                ids.add(uid)
+            emit(f"  📬 {len(ids)}/{len(_all_uids)} писем", "ok")
+        except Exception as ex:
+            emit(f"  ⚠ ALL: {ex} — fallback keyword", "warn")
             for term in IMAP_SUBJECTS:
                 try:
                     _, data = mail.search(None, term)
-                    for uid in data[0].split(): ids.add(uid)
+                    if data and data[0]:
+                        for uid in data[0].split(): ids.add(uid)
                 except Exception: pass
-            if not ids:
-                _, data = mail.search(None, "ALL")
-                all_ids = data[0].split()
-                ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
 
         ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x,bytes) else x), reverse=True)
         ids = set(ids_sorted[:SCAN_LIMIT])
