@@ -1836,6 +1836,11 @@ def background_scanner():
 #  ROUTES
 # ═══════════════════════════════════════════════════════════════════════════════
 
+
+@app.route("/health")
+def health():
+    return "ok", 200
+
 @app.route("/manifest.json")
 def serve_manifest():
     return send_from_directory(BASE_DIR, "manifest.json",
@@ -1901,7 +1906,8 @@ def _check_token():
 @app.before_request
 def require_auth():
     """Block unauthenticated API calls."""
-    if request.path.startswith("/api/") and request.path not in ("/api/auth-check",):
+    skip = ("/api/auth-check", "/api/stats", "/health")
+    if request.path.startswith("/api/") and request.path not in skip:
         if not _check_token():
             return jsonify({"error": "unauthorized"}), 401
 
