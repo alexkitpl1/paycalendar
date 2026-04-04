@@ -1956,7 +1956,7 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
 
 
 
-@app.route("/api/setup-zone")
+@app.route("/api/setup-zone", "/rescan")
 def api_setup_zone():
     """Force correct Zone.ee IMAP settings - no auth needed."""
     global IMAP_HOST
@@ -2070,6 +2070,11 @@ def api_auth_check():
 @app.route("/keys")
 def keys_page():
     return send_from_directory(TMPL_DIR, "keys.html")
+
+
+@app.route("/rescan")
+def rescan_page():
+    return send_from_directory(TMPL_DIR, "rescan.html")
 
 @app.route("/setup")
 def setup():

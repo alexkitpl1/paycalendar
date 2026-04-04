@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PayCalendar — Пересканировать</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:sans-serif;background:#0f1117;color:#e2e8f0;padding:20px;max-width:520px;margin:0 auto}
+h2{color:#f59e0b;margin-bottom:6px;font-size:18px}
+p{color:#6b7280;font-size:13px;margin-bottom:20px}
+.btn{width:100%;padding:14px;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;transition:opacity .15s}
+.btn-amber{background:linear-gradient(135deg,#f59e0b,#d97706);color:#000}
+.btn-blue{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff}
+.btn-green{background:linear-gradient(135deg,#059669,#047857);color:#fff}
+.btn:disabled{opacity:.4;cursor:not-allowed}
+.log{background:#111827;border-radius:10px;padding:14px;font-family:monospace;font-size:12px;line-height:1.9;margin-top:16px;max-height:420px;overflow-y:auto;min-height:60px}
+.ok{color:#34d399}.err{color:#f87171}.info{color:#9ca3af}.warn{color:#fbbf24}
+.prog{height:6px;background:#1e293b;border-radius:3px;margin:10px 0;overflow:hidden}
+.prog-fill{height:100%;width:0%;background:linear-gradient(90deg,#f59e0b,#f97316);border-radius:3px;transition:width .5s}
+.status{font-size:13px;color:#fbbf24;margin:8px 0;min-height:20px}
+a.back{display:inline-block;margin-bottom:16px;color:#60a5fa;font-size:13px;text-decoration:none}
+</style></head><body>
+
+<a class="back" href="/">← PayCalendar</a>
+<h2>🔄 Пересканировать с января 2026</h2>
+<p>Полное сканирование почты за январь–апрель 2026. Нажимай кнопки по порядку.</p>
+
+<button class="btn btn-amber" id="btn1" onclick="step1()">Шаг 1: Исправить IMAP + проверить</button>
+<button class="btn btn-blue"  id="btn2" onclick="step2()" disabled>Шаг 2: Сбросить + очистить дубли</button>
+<button class="btn btn-green" id="btn3" onclick="step3()" disabled>Шаг 3: Запустить скан янв–апр 2026</button>
+
+<div class="prog"><div class="prog-fill" id="prog"></div></div>
+<div class="status" id="status">Нажми Шаг 1 для начала</div>
+<div class="log" id="log">Готов...</div>
+
+<script>
+function L(msg,cls){
+  var d=document.getElementById('log');
+  var ts=new Date().toLocaleTimeString('ru');
+  d.innerHTML+='<div class="'+(cls||'info')+'">['+ts+'] '+msg+'</div>';
+  d.scrollTop=d.scrollHeight;
+}
+function S(t){document.getElementById('status').textContent=t;}
+function P(n){document.getElementById('prog').style.width=n+'%';}
+
+async function api(path,data){
+  var opts={headers:{'Content-Type':'application/json'},credentials:'include'};
+  if(data){opts.method='POST';opts.body=JSON.stringify(data);}
+  var r=await fetch(path,opts);
+  return r.json();
+}
+
+async function step1(){
+  document.getElementById('btn1').disabled=true;
+  L('Исправляю IMAP хост...','info'); S('Исправляю...');
+  try{
+    var r1=await api('/api/save-config',{section:'email',key:'imap_host',value:'imap.zone.eu'});
+    L('imap_host → imap.zone.eu: '+(r1.ok?'✅':'❌ '+JSON.stringify(r1)),r1.ok?'ok':'err');
+    L('Проверяю подключение (~12 сек)...','info');
+    var td=await api('/api/test-scan');
+    var im=td.imap||{};
+    L('IMAP: '+(im.ok?'✅ '+im.total+' писем':'❌ '+im.error),im.ok?'ok':'err');
+    L('AI: '+(td.gemini&&td.gemini.ok?'✅ Gemini':'⚠ квота — используем ключевые слова'),td.gemini&&td.gemini.ok?'ok':'warn');
+    P(33); S(im.ok?'IMAP ✅ — нажми Шаг 2':'⚠ IMAP не ответил — всё равно жми Шаг 2');
+    document.getElementById('btn2').disabled=false;
+  }catch(e){
+    L('❌ '+e.message,'err');
+    document.getElementById('btn1').disabled=false;
+  }
+}
+
+async function step2(){
+  document.getElementById('btn2').disabled=true;
+  L('Сбрасываю состояние...','info'); S('Сброс...');
+  try{
+    var r=await api('/api/reset-scan',{});
+    L('Сброс: '+(r.ok?'✅':JSON.stringify(r)),r.ok?'ok':'warn');
+    try{
+      var cl=await api('/api/invoices/cleanup',{});
+      L('Очистка нулевых: убрано '+cl.removed,'info');
+      var fx=await api('/api/invoices/fix-offers',{});
+      L('Очистка офферов: дублей '+fx.deduped+', перемещено '+fx.moved,'info');
+    }catch(e){L('Очистка: '+e.message,'warn');}
+    P(50); S('Сброшено ✅ — нажми Шаг 3');
+    document.getElementById('btn3').disabled=false;
+  }catch(e){
+    L('❌ '+e.message,'err');
+    document.getElementById('btn2').disabled=false;
+  }
+}
+
+async function step3(){
+  document.getElementById('btn3').disabled=true;
+  var months=[
+    {from:'2026-01-01',to:'2026-01-31',label:'Январь 2026'},
+    {from:'2026-02-01',to:'2026-02-28',label:'Февраль 2026'},
+    {from:'2026-03-01',to:'2026-03-31',label:'Март 2026'},
+    {from:'2026-04-01',to:'2026-04-30',label:'Апрель 2026'},
+  ];
+  var total=0;
+  for(var i=0;i<months.length;i++){
+    var m=months[i];
+    L('📅 '+m.label+'...','info');
+    S('Сканирую '+m.label+' ('+(i+1)+'/4)');
+    try{
+      var r=await api('/api/scan-start',{from_date:m.from,to_date:m.to});
+      L('  '+(r.ok||r.running?'Запущен ▶':'❌ '+r.error),r.ok||r.running?'ok':'err');
+      if(!r.ok && !r.running) continue;
+      // Poll until done
+      var done=false,tries=0;
+      while(!done&&tries<150){
+        await new Promise(res=>setTimeout(res,3000)); tries++;
+        var st=await api('/api/scan-status');
+        // Show last log line
+        if(st.log&&st.log.length){
+          var last=st.log[st.log.length-1];
+          if(last.msg&&!last.msg.startsWith('__'))
+            document.getElementById('status').textContent=last.msg.slice(0,60);
+        }
+        P(Math.round(50+(i*12)+(st.pct||0)*0.12));
+        if(!st.running&&st.started){
+          done=true; total+=st.found||0;
+          L('✅ '+m.label+': найдено '+(st.found||0),'ok');
+        }
+      }
+      if(!done) L('⚠ Таймаут '+m.label,'warn');
+    }catch(e){L('❌ '+m.label+': '+e.message,'err');}
+    await new Promise(res=>setTimeout(res,500));
+  }
+  P(100); S('✅ Готово! Счетов найдено: '+total);
+  L('════════════════════════','info');
+  L('✅ Итого найдено: '+total+' счетов','ok');
+  document.getElementById('btn3').textContent='🔄 Повторить';
+  document.getElementById('btn3').disabled=false;
+}
+</script>
+</body></html>
