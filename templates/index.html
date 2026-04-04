@@ -449,6 +449,12 @@ body {
 .of-btn-del  { color:#ef4444 !important;border-color:#ef444433 !important; }
 @keyframes slideUp { from{transform:translateY(100%)} to{transform:translateY(0)} }
 @keyframes fadeIn  { from{opacity:0} to{opacity:1} }>
+
+.chip-pdf {
+  font-size: 10px; cursor: pointer; margin-left: 2px;
+  opacity: .8; transition: opacity .15s; vertical-align: middle;
+}
+.chip-pdf:hover { opacity: 1; transform: scale(1.2); }
 </style>
 </head>
 <body>
@@ -777,9 +783,9 @@ function dayHTML(date){
   let h="";
   for(const inv of vis){
     const st=stOf(inv),cat=CAT[inv.category]||CAT.other;
-    h+=`<div class="chip" style="background:${cat.b};border-left-color:${SC[st]};color:${cat.c}">
+    h+=`<div class="chip" style="background:${cat.b};border-left-color:${SC[st]};color:${cat.c}" onclick="event.stopPropagation();selDay('${toISO(dc.date)}')">
       <span class="chip-d"></span><span class="chip-n">${esc(inv.vendor||"Счёт")}</span>
-      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.reminder_count>1?"<span class='chip-remind'>🔔"+inv.reminder_count+"</span>":""}${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
+      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.has_pdf?`<span class="chip-pdf" onclick="event.stopPropagation();openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">📄</span>`:""}${inv.reminder_count>1?"<span class='chip-remind'>🔔"+inv.reminder_count+"</span>":""}${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
   }
   if(extra>0)h+=`<div class="more">+${extra}</div>`;
   return{h,total};
@@ -1717,6 +1723,20 @@ function _checkResumePolling(){
       }
     }).catch(function(){});
 }
+
+function openPdf(invId){
+  // Open PDF in new tab via our API
+  var url = '/api/invoice/'+invId+'/pdf';
+  // Try to open inline first
+  var win = window.open(url, '_blank');
+  if(!win){
+    // Fallback: create hidden link and click
+    var a = document.createElement('a');
+    a.href = url; a.target = '_blank'; a.rel = 'noopener';
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  }
+}
+
 setTimeout(_checkResumePolling, 1500);
 
 // Offer action event delegation

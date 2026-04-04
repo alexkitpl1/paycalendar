@@ -696,6 +696,40 @@ def build_invoice(obj, uid, subject, sender, date_str, attach, source):
 # ── Core email processor ──────────────────────────────────────────────────────
 
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PDF STORAGE
+#  PDFs saved to /data/pdfs/{inv_id}.pdf during IMAP scan
+#  Served via /api/invoice/<id>/pdf
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_PDF_DIR = _DATA_DIR / "pdfs"
+_PDF_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def save_pdf(inv_id: str, pdf_bytes: bytes, filename: str = "") -> Path:
+    """Save PDF bytes to disk. Returns path."""
+    _PDF_DIR.mkdir(parents=True, exist_ok=True)
+    # Sanitize inv_id for filename
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", inv_id)[:80]
+    path = _PDF_DIR / f"{safe_id}.pdf"
+    path.write_bytes(pdf_bytes)
+    log.info(f"PDF saved: {path.name} ({len(pdf_bytes)//1024}KB) fn={filename}")
+    return path
+
+
+def get_pdf_path(inv_id: str) -> Path | None:
+    """Get path to stored PDF for invoice. None if not found."""
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", inv_id)[:80]
+    path = _PDF_DIR / f"{safe_id}.pdf"
+    return path if path.exists() else None
+
+
+def pdf_count() -> int:
+    """Count stored PDFs."""
+    return len(list(_PDF_DIR.glob("*.pdf"))) if _PDF_DIR.exists() else 0
+
+
 # ── PDF Attachment Parser ─────────────────────────────────────────────────────
 def extract_pdf_text(pdf_bytes: bytes, max_chars: int = 3000) -> str:
     """Extract text from PDF bytes. Returns empty string on failure."""
@@ -1304,18 +1338,16 @@ def scan_imap(emit, from_date=None, to_date=None):
                 emit(f"Ошибка заголовка {uid}: {ex}", "err")
 
         # Hook for PDF fetching - pass mail connection
+        _pending_pdfs = {}  # uid_str -> {filename, bytes}
+
         def _fetch_pdf_and_body(uid_str):
-            """Fetch body text + PDF text for given UID."""
+            """Fetch body + PDF text, also save PDF to disk."""
             try:
                 uid_b = uid_str.encode() if isinstance(uid_str, str) else uid_str
                 _, data = mail.fetch(uid_b, "(RFC822)")
                 if not data or not data[0]: return ""
                 raw_msg = email.message_from_bytes(data[0][1])
-                
-                # Get plain text body
                 body_text = get_plain_body(raw_msg)
-                
-                # Get PDF attachments
                 pdf_texts = []
                 for part in raw_msg.walk():
                     ct = part.get_content_type() or ""
@@ -1327,10 +1359,11 @@ def scan_imap(emit, from_date=None, to_date=None):
                                 pt = extract_pdf_text(pdf_bytes)
                                 if pt:
                                     pdf_texts.append(f"[PDF: {fn}]\n{pt}")
-                                    emit(f"  📄 PDF: {fn} ({len(pt)} симв.)", "ok")
+                                # Save PDF bytes for later storage (after invoice ID is known)
+                                _pending_pdfs[uid_str] = {"filename": fn, "bytes": pdf_bytes}
+                                emit(f"  📄 PDF: {fn} ({len(pdf_bytes)//1024}КБ)", "ok")
                         except Exception as pe:
                             log.debug(f"PDF {fn}: {pe}")
-                
                 result = body_text
                 if pdf_texts:
                     result += "\n\n--- ВЛОЖЕНИЯ PDF ---\n" + "\n".join(pdf_texts)
@@ -1341,6 +1374,30 @@ def scan_imap(emit, from_date=None, to_date=None):
 
         result = process_emails(emails_raw, emit,
                                 fetch_body=_fetch_pdf_and_body, source="imap")
+
+        # Save PDFs to disk, link to invoice IDs
+        if _pending_pdfs and isinstance(result, list):
+            existing_all = load_invoices()
+            for inv in result:
+                uid = inv.get("email_uid","")
+                if uid in _pending_pdfs:
+                    pdf_info = _pending_pdfs[uid]
+                    try:
+                        save_pdf(inv["id"], pdf_info["bytes"], pdf_info["filename"])
+                        inv["has_pdf"]      = True
+                        inv["pdf_filename"] = pdf_info["filename"]
+                        log.info(f"PDF linked to invoice {inv['id']}: {pdf_info['filename']}")
+                    except Exception as pe:
+                        log.error(f"PDF save error: {pe}")
+            # Re-save invoices with has_pdf flag
+            if any(i.get("has_pdf") for i in result):
+                all_invs = load_invoices()
+                inv_map  = {i["id"]: i for i in result}
+                for i, inv in enumerate(all_invs):
+                    if inv["id"] in inv_map:
+                        all_invs[i] = inv_map[inv["id"]]
+                save_invoices(all_invs)
+
         try: mail.logout()
         except Exception: pass
         return result
@@ -2473,6 +2530,40 @@ def api_reset_scan():
         return jsonify({"ok": False, "error": str(ex)})
 
 
+
+
+@app.route("/api/invoice/<inv_id>/pdf")
+def api_serve_pdf(inv_id):
+    """Serve stored PDF for an invoice."""
+    path = get_pdf_path(inv_id)
+    if not path:
+        return jsonify({"error":"PDF не найден"}), 404
+    invs = load_invoices()
+    inv  = next((i for i in invs if i.get("id") == inv_id), {})
+    filename = inv.get("pdf_filename","invoice.pdf")
+    return send_from_directory(str(_PDF_DIR), path.name,
+                               mimetype="application/pdf",
+                               as_attachment=False,
+                               download_name=filename)
+
+@app.route("/api/invoice/<inv_id>/pdf-info")
+def api_pdf_info(inv_id):
+    """Check if PDF exists for invoice."""
+    path = get_pdf_path(inv_id)
+    return jsonify({
+        "has_pdf": path is not None,
+        "size":    path.stat().st_size if path else 0,
+        "name":    path.name if path else None,
+    })
+
+@app.route("/api/pdfs/stats")
+def api_pdfs_stats():
+    return jsonify({
+        "count": pdf_count(),
+        "dir": str(_PDF_DIR),
+        "total_mb": round(sum(f.stat().st_size for f in _PDF_DIR.glob("*.pdf")) / 1024/1024, 2)
+             if _PDF_DIR.exists() else 0
+    })
 
 @app.route("/api/test-scan")
 def api_test_scan():
