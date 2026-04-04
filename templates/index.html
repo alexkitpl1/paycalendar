@@ -2066,33 +2066,10 @@ body { height: 100dvh; display: flex; flex-direction: column; overflow: hidden; 
 </div>
 
 <!-- FAB (mobile only) -->
-<button id="fab-scan" onclick="showScanMenu()">📥</button>
+📥</button>
 
 <!-- Scan bottom sheet (mobile only) -->
-<div id="scan-sheet" style="display:none">
-  <div class="sheet-bg" onclick="hideScanSheet()"></div>
-  <div class="sheet-body">
-    <div class="sheet-handle"></div>
-    <div class="sheet-title">Сканировать почту</div>
-    <button class="sheet-btn primary" onclick="hideScanSheet();scanSequential(1)">
-      <span class="sbico">📥</span><div><div class="sbl">Этот месяц</div><div class="sbs" id="sbs1">—</div></div>
-    </button>
-    <button class="sheet-btn" onclick="hideScanSheet();scanSequential(2)">
-      <span class="sbico">📅</span><div><div class="sbl">+ Предыдущий</div><div class="sbs" id="sbs2">—</div></div>
-    </button>
-    <button class="sheet-btn" onclick="hideScanSheet();scanSequential(4)">
-      <span class="sbico">📆</span><div><div class="sbl">+ 3 месяца</div><div class="sbs" id="sbs3">—</div></div>
-    </button>
-    <div class="sheet-div"></div>
-    <button class="sheet-btn" onclick="hideScanSheet();doRefresh()">
-      <span class="sbico">🔄</span><div><div class="sbl">Обновить</div><div class="sbs">Последние 30 писем</div></div>
-    </button>
-    <button class="sheet-btn danger" onclick="hideScanSheet();resetAndScan()">
-      <span class="sbico">🔁</span><div><div class="sbl">Пересканировать всё</div><div class="sbs">Сброс + полный скан</div></div>
-    </button>
-    <button class="sheet-close" onclick="hideScanSheet()">Отмена</button>
-  </div>
-</div>
+
 
 <div id="sum-bar"></div>
 <div id="content-wrap">
