@@ -1311,8 +1311,7 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                             "body": body, "ds": ds, "att": att, "score": score})
 
     total = len(candidates)
-    emit(f"📬 Предфильтр: {len(emails_raw)} писем → {total} кандидатов "
-         f"(пропущено: {skipped_dup} дубл, {skipped_kw} не счёт)", "ok")
+    emit(f"📬 Предфильтр: {len(emails_raw)} писем → {total} кандидатов (дубл:{skipped_dup} не_счёт:{skipped_kw})", "ok")
 
     if total == 0:
         update_scan_state(all_uids, last_uid, last_date)
@@ -1523,21 +1522,23 @@ def scan_imap(emit, from_date=None, to_date=None):
 
         # Get ALL emails and filter locally (avoids IMAP case-sensitivity issues)
         # Zone.eu SUBJECT search is case-sensitive: "arve" ≠ "Arve" ≠ "ARVE"
-        emit("📥 Загружаю все письма для локальной фильтрации...", "info")
+        emit("📥 Загружаю список всех писем...", "info")
         try:
-            _, all_data = mail.search(None, "ALL")
+            _, all_data = mail.search(None, b"ALL")
             all_uids = all_data[0].split() if all_data[0] else []
             emit(f"📬 Всего в ящике: {len(all_uids)} писем", "ok")
-            # Add newest first (up to limit)
-            all_sorted = sorted(all_uids,
-                key=lambda x: int(x.decode() if isinstance(x,bytes) else x),
-                reverse=True)
+            # Take newest first up to SCAN_LIMIT
+            try:
+                all_sorted = sorted(all_uids,
+                    key=lambda x: int(x.decode() if isinstance(x,bytes) else x),
+                    reverse=True)
+            except Exception:
+                all_sorted = list(reversed(all_uids))
             for uid in all_sorted[:SCAN_LIMIT]:
                 ids.add(uid)
-            emit(f"📊 Взяли последних: {len(ids)} писем (из {len(all_uids)})", "ok")
+            emit(f"📊 Берём: {len(ids)} писем (лимит {SCAN_LIMIT})", "ok")
         except Exception as ex:
-            emit(f"⚠ ALL search failed: {ex}", "warn")
-            # Fallback to keyword search
+            emit(f"⚠ ALL search: {ex} — пробую keyword", "warn")
             for term in IMAP_SUBJECTS:
                 try:
                     _, data = mail.search(None, term)
@@ -1546,7 +1547,7 @@ def scan_imap(emit, from_date=None, to_date=None):
                             ids.add(uid)
                 except Exception:
                     pass
-            emit(f"🔍 Fallback keyword search: {len(ids)} писем", "ok")
+            emit(f"🔍 Keyword fallback: {len(ids)} писем", "ok")
 
         # New since last scan
         if last_uid and not from_date:
@@ -1759,10 +1760,8 @@ def scan_email(emit=None, quick=False, from_date=None, to_date=None):
         log.info(msg)
         if emit: emit(msg, t)
 
-    if not scan_lock.acquire(blocking=False):
-        emitter("Scan already running", "warn")
-        return []
-    # Temporarily override scan limit for quick scan
+    # Note: scan_lock is managed by start_bg_scan / api_scan_start
+    # Don't acquire here to avoid double-locking
     global SCAN_LIMIT
     orig_limit = SCAN_LIMIT
     if quick:
@@ -1796,7 +1795,6 @@ def scan_email(emit=None, quick=False, from_date=None, to_date=None):
             return []
     finally:
         SCAN_LIMIT = orig_limit  # always restore, even on exception
-        scan_lock.release()
 
 def check_notifications():
     today = date.today()
