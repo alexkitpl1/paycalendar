@@ -1260,37 +1260,17 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
 
     for em in emails_raw:
         uid = str(em.get("id") or em.get("_id") or em.get("uid") or "")
+
+        # Skip already-processed emails
         if uid in existing_ids:
-            # Same email seen again → increment reminder count
             for _inv in existing:
                 if _inv.get("email_uid") == uid:
                     _inv["reminder_count"] = _inv.get("reminder_count", 1) + 1
-                    _inv["last_reminded"] = datetime.now().strftime("%Y-%m-%d")
+                    _inv["last_reminded"]  = datetime.now().strftime("%Y-%m-%d")
                     break
             skipped_dup += 1; all_uids.append(uid); continue
-        # Decode RFC2047 subject
-        raw_subj = str(em.get("subject") or "")
-        try:
-            import email.header as _eh
-            parts = _eh.decode_header(raw_subj)
-            subj = "".join(
-                (p.decode(enc or "utf-8", errors="replace") if isinstance(p, bytes) else p)
-                for p, enc in parts)
-        except Exception:
-            subj = raw_subj
-        # Normalise subject to catch Re:/RE: thread duplicates
-        norm_key = (_norm_subj(subj), ds[:10])
-        if norm_key in existing_subj_dates:
-            for _inv in existing:
-                inv_key = (_norm_subj(_inv.get("description","") or ""), _inv.get("issue_date","")[:10])
-                if inv_key == norm_key:
-                    _inv["reminder_count"] = _inv.get("reminder_count", 1) + 1
-                    _inv["last_reminded"] = ds
-                    break
-            skipped_dup += 1; all_uids.append(uid); continue
-        existing_subj_dates.add(norm_key)
 
-        # Decode RFC2047 subject
+        # ── Decode all fields first ────────────────────────────────────────
         raw_subj = str(em.get("subject") or "")
         try:
             import email.header as _eh
@@ -1301,7 +1281,7 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         except Exception:
             subj = raw_subj
 
-        frm = str(em.get("from") or em.get("sender") or "")
+        frm  = str(em.get("from") or em.get("sender") or "")
         if isinstance(em.get("from"), dict):
             frm = em["from"].get("address") or em["from"].get("name") or ""
         body = str(em.get("text") or em.get("intro") or em.get("body") or "")[:2000]
@@ -1311,6 +1291,19 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         except Exception:
             ds = date.today().isoformat()
 
+        # ── Deduplication by (normalised subject, date) ───────────────────
+        norm_key = (_norm_subj(subj), ds[:10])
+        if norm_key in existing_subj_dates:
+            for _inv in existing:
+                inv_key = (_norm_subj(_inv.get("description","") or ""), _inv.get("issue_date","")[:10])
+                if inv_key == norm_key:
+                    _inv["reminder_count"] = _inv.get("reminder_count", 1) + 1
+                    _inv["last_reminded"]  = ds
+                    break
+            skipped_dup += 1; all_uids.append(uid); continue
+        existing_subj_dates.add(norm_key)
+
+        # ── Keyword pre-filter ────────────────────────────────────────────
         score = is_invoice_by_keywords(subj, body, frm, att)
         if score < 15:
             skipped_kw += 1; all_uids.append(uid)
@@ -1351,12 +1344,17 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         uid   = em["uid"]; subj = em["subj"]; frm = em["frm"]
         body  = em["body"]; ds   = em["ds"];  att = em["att"]
         score = em["score"]
+        pdf_text = ""  # will be filled after fetch_body
 
-        # Fetch full body if IMAP
+        # Fetch full body + PDFs (result includes PDF text appended)
         if fetch_body and uid:
             try:
                 fb = fetch_body(uid)
-                if fb: body = fb[:3000]
+                if fb:
+                    body     = fb[:3000]
+                    pdf_text = fb  # PDF text already appended by _fetch_pdf_and_body
+                    new_score = is_invoice_by_keywords(subj, body, frm, att)
+                    if new_score > score: score = new_score
             except Exception: pass
 
         inv = None
