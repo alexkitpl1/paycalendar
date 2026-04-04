@@ -1898,13 +1898,25 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
         return []
 
 
+
+# ── Global state for background scan worker ──────────────────────────────────
+import threading as _thr_global
+_scan_state_lock = _thr_global.Lock()
+_scan_state_live = {
+    "running": False, "queued": False, "task_id": None,
+    "total": 0, "done": 0, "found": 0, "speed": 0.0, "eta": 0,
+    "pct": 0, "log": [], "from_date": None, "to_date": None,
+    "started": None, "finished": None, "error": None,
+}
+_MAX_LOG = 80
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  ROUTES
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
 
-@app.route("/api/setup-zone", "/rescan")
+@app.route("/api/setup-zone")
 def api_setup_zone():
     """Force correct Zone.ee IMAP settings - no auth needed."""
     global IMAP_HOST
@@ -2446,6 +2458,59 @@ def api_bitrix_push():
         return jsonify({"ok":False,"error":str(ex)})
 
 
+
+@app.route("/api/stats")
+def api_stats():
+    invs  = load_invoices()
+    today = date.today()
+    pend  = [i for i in invs if i.get("status") != "paid"]
+    over  = [i for i in pend if i.get("due_date") and date.fromisoformat(i["due_date"]) < today]
+    urg   = [i for i in pend if i.get("due_date") and
+             0 <= (date.fromisoformat(i["due_date"]) - today).days <= WARN_DAYS]
+    return jsonify({
+        "total":len(invs), "pending":len(pend), "overdue":len(over), "urgent":len(urg),
+        "sum_pending": round(sum(float(i.get("amount",0)) for i in pend), 2),
+        "sum_paid":    round(sum(float(i.get("amount",0)) for i in invs if i.get("status")=="paid"), 2),
+    })
+
+
+@app.route("/api/config")
+def api_config():
+    reload_config()
+    pw  = EMAIL_PASS or ""
+    key = API_KEY or ""
+    provider = _active_provider()
+    return jsonify({
+        "company":           COMPANY,
+        "email":             EMAIL_ADDR,
+        "password":          pw[:2]+"***" if pw else "",
+        "warn_days":         WARN_DAYS,
+        "auto_scan_minutes": AUTO_SCAN,
+        "has_password":      bool(pw and pw not in ("your_password_here","")),
+        "has_api_key":       bool(key and "INSERT" not in key and len(key)>20),
+        "imap_host":         IMAP_HOST or "imap.zone.eu",
+        "ai_provider":       provider or "keyword",
+        "has_gemini":        bool(GEMINI_KEY),
+        "has_groq":          bool(GROQ_KEY),
+    })
+
+
+@app.route("/api/scan-state")
+def api_scan_state():
+    st   = load_state()
+    invs = load_invoices()
+    ld   = st.get("last_date")
+    sc   = st.get("scan_count", 0)
+    return jsonify({
+        "scan_count":         sc,
+        "last_date":          ld,
+        "last_uid":           st.get("last_uid"),
+        "scanned_uids_count": len(st.get("scanned_uids", [])),
+        "total_invoices":     len(invs),
+        "next_scan_from":     ld if ld else ("начало" if sc == 0 else "все письма"),
+        "data_dir":           str(_DATA_DIR),
+    })
+
 @app.route("/api/reset-scan", methods=["POST"])
 def api_reset_scan():
     """Reset scan state - next scan will start from scratch."""
@@ -2656,6 +2721,8 @@ def api_save_config():
     except Exception as ex:
         return jsonify({"ok": False, "error": str(ex)})
 
+
+_bg_started = False
 
 def _start_background():
     global _bg_started
