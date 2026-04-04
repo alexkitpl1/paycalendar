@@ -1906,7 +1906,7 @@ def _check_token():
 @app.before_request
 def require_auth():
     """Block unauthenticated API calls."""
-    skip = ("/api/auth-check", "/api/stats", "/health")
+    skip = ("/api/auth-check", "/api/stats", "/health", "/api/test-scan", "/api/diagnose")
     if request.path.startswith("/api/") and request.path not in skip:
         if not _check_token():
             return jsonify({"error": "unauthorized"}), 401
@@ -2141,7 +2141,6 @@ def api_test_scan():
                         if ll.startswith("subject:"): subj = line[8:].strip()[:80]
                         elif ll.startswith("from:"): frm = line[5:].strip()[:60]
                         elif ll.startswith("date:"): dt = line[5:].strip()[:30]
-                    from app import is_invoice_by_keywords, INVOICE_KW_STRONG
                     score = is_invoice_by_keywords(subj, "", frm, False)
                     emails_found.append({
                         "uid": uid.decode(),
