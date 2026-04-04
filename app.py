@@ -418,49 +418,77 @@ def ask_ai(prompt):
             if provider == "openai":  return _ask_openai(prompt)
         except Exception as ex:
             err = str(ex).lower()
-            if any(k in err for k in ["429","quota","rate","exceeded","limit","billing","credit"]):
-                log.warning(f"{provider} quota/rate limit — switching to next provider")
+            if any(k in err for k in ["billing","credit","unauthorized","invalid_api_key"]):
+                log.warning(f"{provider} auth/billing issue — switching to next provider")
                 _provider_blocked.add(provider)
+            elif any(k in err for k in ["429","quota","rate","exceeded","limit"]):
+                log.warning(f"{provider} rate limit — will retry with next model/key")
+                # Don't block gemini entirely - it rotates models internally
             else:
                 raise
     raise ValueError("Все провайдеры исчерпали квоту")
 
 _gemini_last_call = [0.0]
 
+# Gemini models - each has SEPARATE daily quota (free tier)
+_GEMINI_MODELS = [
+    "gemini-2.0-flash",       # 1500 req/day free
+    "gemini-1.5-flash",       # 1500 req/day free (separate quota!)
+    "gemini-1.5-flash-8b",    # 1000 req/day free (separate quota!)
+    "gemini-2.0-flash-lite",  # experimental free
+]
+_gemini_model_idx = [0]
+_gemini_model_failed = set()
+
 def _ask_gemini(prompt):
-    """Google Gemini Flash with auto key rotation."""
+    """Google Gemini with model rotation (each model = separate free quota)."""
     import time as _t
     elapsed = _t.time() - _gemini_last_call[0]
-    if elapsed < 3.0:
-        _t.sleep(3.0 - elapsed)
+    if elapsed < 2.0:
+        _t.sleep(2.0 - elapsed)
     _gemini_last_call[0] = _t.time()
 
-    model = "gemini-2.0-flash"
-    body  = {
+    body = {
         "contents": [{"parts": [{"text": CLAUDE_SYSTEM + "\n\n" + prompt}]}],
         "generationConfig": {"maxOutputTokens": 512, "temperature": 0.1},
     }
-    for attempt in range(_gemini_pool.status()["total"] + 1):
-        key = _gemini_pool.current()
-        if not key:
-            raise Exception("Gemini: все ключи исчерпаны")
+    key = _gemini_pool.current()
+    if not key:
+        raise Exception("Gemini: нет ключей")
+
+    # Try each model (separate quotas)
+    good_models = [m for m in _GEMINI_MODELS if m not in _gemini_model_failed]
+    if not good_models:
+        _gemini_model_failed.clear()  # reset and retry
+        good_models = list(_GEMINI_MODELS)
+
+    for model in good_models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
         try:
-            r = requests.post(url, json=body, timeout=30)
+            r = requests.post(url, json=body, timeout=25)
             if r.status_code == 200:
+                log.debug(f"Gemini OK via {model}")
                 parts = r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[])
                 return "".join(p.get("text","") for p in parts)
-            elif r.status_code in (429, 403):
-                log.warning(f"Gemini key {key[:12]}... quota hit → rotating")
-                _gemini_pool.rotate(key)
-                _t.sleep(2)
+            elif r.status_code == 429:
+                log.warning(f"Gemini {model} quota hit → trying next model")
+                _gemini_model_failed.add(model)
+                _t.sleep(1)
+                continue
+            elif r.status_code == 404:
+                _gemini_model_failed.add(model)  # model not available
+                continue
             else:
                 r.raise_for_status()
         except requests.HTTPError:
             raise
-        except Exception as ex:
-            _gemini_pool.rotate(key)
-    raise Exception("Gemini: все ключи исчерпали квоту")
+        except Exception:
+            continue
+
+    # All models exhausted → rotate key
+    _gemini_pool.rotate(key)
+    _gemini_model_failed.clear()
+    raise Exception("Gemini: все модели исчерпали квоту на этом ключе")
 
 def _ask_claude(prompt):
     """Anthropic Claude — paid."""
@@ -2338,7 +2366,17 @@ def api_test_scan():
                     subj = frm = dt = ""
                     for line in raw.split("\n"):
                         ll = line.lower()
-                        if ll.startswith("subject:"): subj = line[8:].strip()[:80]
+                        if ll.startswith("subject:"):
+                            _s = line[8:].strip()
+                            try:
+                                import email.header as _eh2
+                                _parts = _eh2.decode_header(_s)
+                                subj = "".join(
+                                    (p.decode(enc or "utf-8", errors="replace") if isinstance(p,bytes) else p)
+                                    for p,enc in _parts
+                                )[:80]
+                            except Exception:
+                                subj = _s[:80]
                         elif ll.startswith("from:"):   frm  = line[5:].strip()[:60]
                         elif ll.startswith("date:"):   dt   = line[5:].strip()[:25]
                     score = is_invoice_by_keywords(subj, "", frm, False)
