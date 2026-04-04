@@ -2119,15 +2119,6 @@ def api_setup_zone():
     })
 
 
-@app.route("/api/version")
-def api_version():
-    return jsonify({
-        "version": "2.5.0",
-        "features": ["KeyPool","HuggingFace","GeminiRotation","imap.zone.eu"],
-        "imap_host": IMAP_HOST,
-        "provider": _active_provider() or "keyword",
-    })
-
 
 @app.route("/api/version")  
 def api_version():
@@ -2235,7 +2226,7 @@ def setup():
 def api_config():
     reload_config()
     pw  = EMAIL_PASS or ""
-    key = CLAUDE_KEY or ""
+    key = API_KEY or ""
     provider = _active_provider()
     return jsonify({
         "company":          COMPANY,
