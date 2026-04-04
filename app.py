@@ -883,1151 +883,179 @@ def is_invoice_by_keywords(subject, body, sender, has_att):
 
 
 
+def update_scan_state(uids, last_uid, last_date):
+    if not uids: return
+    st = load_state()
+    seen = set(st.get("scanned_uids", []))
+    seen.update(uids)
+    st["scanned_uids"] = list(seen)[-5000:]  # keep last 5000
+    if last_uid:  st["last_uid"]  = last_uid
+    if last_date: st["last_date"] = last_date
+    st["scan_count"] = st.get("scan_count", 0) + 1
+    save_state(st)
+
+
 def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
     """
-    Run Claude on list of email dicts.
-    Emits progress events and skips already-scanned UIDs.
-    Returns list of new invoices.
+    PARALLEL email analysis:
+    Phase 1 — keyword pre-filter (instant, no API)
+    Phase 2 — ThreadPoolExecutor, 1 worker per available API key
     """
+    import concurrent.futures as _cf, time as _t
+
     existing     = load_invoices()
     existing_ids = {i.get("email_uid") for i in existing}
     new_invs     = []
+    last_uid = last_date = None
+    all_uids = []
+    t0 = _t.time()
 
-    # Filter to unprocessed candidates
-    # Only skip emails already saved as invoices (existing_ids)
-    # Don't skip based on scanned_uids — date/uid offsets handle dedup
-    candidates = []
+    # ── Phase 1: decode + keyword pre-filter ─────────────────────────────────
+    candidates, skipped_dup, skipped_kw = [], 0, 0
+
     for em in emails_raw:
         uid = str(em.get("id") or em.get("_id") or em.get("uid") or "")
         if uid in existing_ids:
-            continue
-        subj = str(em.get("subject") or "")
-        body = str(em.get("text") or em.get("intro") or em.get("body") or "")
-        att  = bool(em.get("hasAttachments") or em.get("has_attachment")
-                    or em.get("attachments"))
-        if is_invoice_candidate(subj, body, att):
-            candidates.append(em)
+            skipped_dup += 1; all_uids.append(uid); continue
 
-    total   = len(candidates)
-    already = len(emails_raw) - total
-    emit(f"Получено {len(emails_raw)} писем | {already} уже есть в базе | {total} на анализ")
-
-    if total == 0:
-        emit("Новых писем не найдено — все уже в базе", "warn")
-        return []
-
-    # Emit initial progress
-    emit(f"__progress__ 0 {total} 0 0", "progress")
-
-    start_time   = time.time()
-    last_uid     = None
-    last_date    = None
-    processed_uids = []
-
-    for idx, em in enumerate(candidates):
-        uid  = str(em.get("id") or em.get("_id") or em.get("uid") or "")
-        # Decode RFC2047 encoded subjects (=?UTF-8?B?...?= and =?UTF-8?Q?...?=)
-        _raw_subj = str(em.get("subject") or "")
+        # Decode RFC2047 subject
+        raw_subj = str(em.get("subject") or "")
         try:
             import email.header as _eh
-            _parts = _eh.decode_header(_raw_subj)
+            parts = _eh.decode_header(raw_subj)
             subj = "".join(
                 (p.decode(enc or "utf-8", errors="replace") if isinstance(p, bytes) else p)
-                for p, enc in _parts
-            )
+                for p, enc in parts)
         except Exception:
-            subj = _raw_subj
-        frm  = em.get("from") or em.get("sender") or ""
-        if isinstance(frm, dict):
-            frm = frm.get("address") or frm.get("name") or ""
-        frm  = str(frm)
-        body = str(em.get("text") or em.get("intro") or em.get("body") or "")
-        att  = bool(em.get("hasAttachments") or em.get("has_attachment")
-                    or em.get("attachments"))
-        ds   = str(em.get("date") or em.get("idate") or em.get("received_at")
-                   or date.today().isoformat())[:10]
+            subj = raw_subj
 
-        # Track progress
-        current   = idx + 1
-        elapsed   = time.time() - start_time
-        speed     = current / elapsed if elapsed > 0 else 0
-        remaining = total - current
-        eta       = int(remaining / speed) if speed > 0 else 0
-
-        # Emit progress event
-        emit(f"__progress__ {current} {total} {speed:.1f} {eta}", "progress")
-        emit(f"[{current}/{total}] {subj[:50] or uid}")
-
-        # Fetch full body if needed
-        if len(body) < 100 and fetch_body:
-            try:
-                full = fetch_body(uid)
-                if full and len(full) > len(body):
-                    body = re.sub(r"<[^>]+>", " ", full) if "<" in full else full
-            except Exception:
-                pass
-
+        frm = str(em.get("from") or em.get("sender") or "")
+        if isinstance(em.get("from"), dict):
+            frm = em["from"].get("address") or em["from"].get("name") or ""
+        body = str(em.get("text") or em.get("intro") or em.get("body") or "")[:2000]
+        att  = bool(em.get("hasAttachments") or em.get("has_attachment") or em.get("attachments"))
         try:
-            # Try Claude API first
-            prompt = CLAUDE_TMPL.format(
-                subject=subj, sender=frm, date=ds,
-                has_att=att, body=body[:2000])
-            obj = extract_json(ask_claude(prompt))
+            ds = parsedate_to_datetime(str(em.get("date") or "")).strftime("%Y-%m-%d")
+        except Exception:
+            ds = date.today().isoformat()
+
+        score = is_invoice_by_keywords(subj, body, frm, att)
+        if score < 20:
+            skipped_kw += 1; all_uids.append(uid)
+            last_uid = uid; last_date = ds
+            continue
+
+        candidates.append({"uid": uid, "subj": subj, "frm": frm,
+                            "body": body, "ds": ds, "att": att, "score": score})
+
+    total = len(candidates)
+    emit(f"📬 Предфильтр: {len(emails_raw)} писем → {total} кандидатов "
+         f"(пропущено: {skipped_dup} дубл, {skipped_kw} не счёт)", "ok")
+
+    if total == 0:
+        update_scan_state(all_uids, last_uid, last_date)
+        return []
+
+    # ── Phase 2: determine workers based on available keys ────────────────────
+    gem_ok  = len([k for k in _gemini_pool.keys if k not in _gemini_pool.failed])
+    grq_ok  = len([k for k in _groq_pool.keys   if k not in _groq_pool.failed])
+    has_cl  = 1 if (API_KEY and len(API_KEY) > 20) else 0
+    n_keys  = gem_ok + grq_ok + has_cl
+    workers = max(1, min(n_keys, 6, total))
+
+    emit(f"⚡ Параллельный анализ: {workers} потоков | "
+         f"Gemini×{gem_ok} Groq×{grq_ok} Claude×{has_cl}", "info")
+
+    # ETA estimate
+    ai_rps  = workers * 0.8  # ~0.8 req/sec per worker conservatively
+    eta_sec = int(total / ai_rps) if ai_rps > 0 else total * 4
+    emit(f"⏱ Ожидаемое время: ~{eta_sec}с ({total} кандидатов × {workers} потоков)", "info")
+
+    # ── Phase 3: parallel analysis ────────────────────────────────────────────
+    done   = [0]
+    lock   = __import__("threading").Lock()
+
+    def analyze(em):
+        uid   = em["uid"]; subj = em["subj"]; frm = em["frm"]
+        body  = em["body"]; ds   = em["ds"];  att = em["att"]
+        score = em["score"]
+
+        # Fetch full body if IMAP
+        if fetch_body and uid:
+            try:
+                fb = fetch_body(uid)
+                if fb: body = fb[:3000]
+            except Exception: pass
+
+        inv = None
+        try:
+            prompt = CLAUDE_TMPL.format(subject=subj, sender=frm,
+                                        date=ds, has_att=att, body=body)
+            obj = extract_json(ask_ai(prompt))
             if obj and obj.get("is_invoice"):
                 inv = build_invoice(obj, uid, subj, frm, ds, att, source)
-                new_invs.append(inv)
-                emit(f"✓ [{_active_provider().upper()}] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
-        except Exception as ex:
-            # Claude failed (no credits/API error) → use keyword extractor
-            err_str = str(ex)
-            if "credit" in err_str.lower() or "balance" in err_str.lower() or "api" in err_str.lower():
-                emit(f"⚠ Claude недоступен — использую анализ по ключевым словам", "warn")
-            score = is_invoice_by_keywords(subj, body, frm, att)
-            if score >= 35:  # lower threshold when AI unavailable
-                amount   = extract_amount(subj + " " + body[:1000])
-                vendor   = extract_vendor(subj, frm, body)
-                due_date = extract_due_date(body + " " + subj, ds)
-                currency = extract_currency(subj + " " + body[:500])
-                category = guess_category(subj, body, frm)
+                prov = _active_provider() or "AI"
+                emit(f"✓ [{prov.upper()}] {inv['vendor']} "
+                     f"{inv['amount']} {inv['currency']}", "ok")
+        except Exception:
+            # AI unavailable → keyword-only fallback
+            if score >= 35:
                 inv = build_invoice({
-                    "is_invoice":      True,
-                    "vendor":          vendor,
-                    "amount":          amount or 0,
-                    "currency":        currency,
-                    "due_date":        due_date,
-                    "issue_date":      ds[:10],
-                    "description":     subj[:100],
-                    "category":        category,
-                    "invoice_number":  "",
+                    "is_invoice": True,
+                    "vendor":   extract_vendor(subj, frm, body),
+                    "amount":   extract_amount(subj + " " + body),
+                    "currency": extract_currency(subj + " " + body[:300]),
+                    "due_date": extract_due_date(body + " " + subj, ds),
+                    "issue_date": ds[:10],
+                    "description": subj[:100],
+                    "category": guess_category(subj, body, frm),
+                    "invoice_number": "",
                 }, uid, subj, frm, ds, att, source)
-                new_invs.append(inv)
-                emit(f"✓ [KW] {vendor} {amount} {currency} (score={score})", "ok")
-            elif score >= 25:
-                emit(f"  ~ Возможно счёт (score={score}): {subj[:50]}", "warn")
-            if score < 35:
-                pass  # silently skip non-invoice emails
+                emit(f"✓ [KW:{score}] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
 
-        processed_uids.append(uid)
-        last_uid  = uid
-        last_date = ds
+        with lock:
+            done[0] += 1
+            cur = done[0]
+            elapsed = max(0.1, _t.time() - t0)
+            spd = cur / elapsed
+            eta = int((total - cur) / spd) if spd > 0 else 0
+            emit(f"__progress__ {cur} {total} {spd:.1f} {eta}", "progress")
 
-    # Save invoices and update state
+        return uid, ds, inv
+
+    # Run threads
+    results = []
+    with _cf.ThreadPoolExecutor(max_workers=workers) as pool:
+        futs = {pool.submit(analyze, em): em for em in candidates}
+        for fut in _cf.as_completed(futs):
+            try:
+                results.append(fut.result())
+            except Exception as ex:
+                emit(f"Ошибка потока: {ex}", "err")
+
+    # ── Phase 4: collect & save ───────────────────────────────────────────────
+    for uid, ds, inv in results:
+        all_uids.append(uid)
+        if ds: last_date = max(last_date or ds, ds)
+        last_uid = uid
+        if inv: new_invs.append(inv)
+
     if new_invs:
         save_invoices(existing + new_invs)
-        emit(f"Done! Added {len(new_invs)} new invoices", "ok")
+        emit(f"✅ Добавлено {len(new_invs)} счетов!", "ok")
     else:
-        emit("Новых счетов не найдено — состояние обновлено", "ok")
+        emit("Новых счетов не найдено", "ok")
 
-    update_scan_state(processed_uids, last_uid, last_date)
-    total_time = time.time() - start_time
-    avg_speed  = len(processed_uids) / total_time if total_time > 0 else 0
-    emit(f"Scanned {len(processed_uids)} emails in {total_time:.0f}s ({avg_speed:.1f}/s)", "ok")
-    emit(f"__progress__ {total} {total} {avg_speed:.1f} 0", "progress")
+    elapsed = _t.time() - t0
+    rps = len(candidates) / elapsed if elapsed > 0 else 0
+    emit(f"⏱ Готово за {elapsed:.0f}с | {rps:.1f} писем/с | "
+         f"{workers} потоков", "ok")
+    emit(f"__progress__ {total} {total} {rps:.1f} 0", "progress")
+
+    update_scan_state(all_uids, last_uid, last_date)
     return new_invs
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
-#  AUTO-AUTH: keeps session alive without user interaction
-# ═══════════════════════════════════════════════════════════════════════════════
-import urllib.parse as urlparse
-
-
-# ── Proxy detection ───────────────────────────────────────────────────────────
-def _get_system_proxies():
-    """Read proxy settings from Windows registry / env."""
-    proxies = {}
-    try:
-        import winreg  # Windows only - skip on Linux/cloud
-        key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
-            r"Software\Microsoft\Windows\CurrentVersion\Internet Settings")
-        enabled, _ = winreg.QueryValueEx(key, "ProxyEnable")
-        if enabled:
-            proxy_server, _ = winreg.QueryValueEx(key, "ProxyServer")
-            if proxy_server:
-                if "=" in proxy_server:
-                    for part in proxy_server.split(";"):
-                        if "=" in part:
-                            k, v = part.split("=", 1)
-                            proxies[k.strip()] = "http://" + v.strip()
-                else:
-                    proxies["http"]  = "http://" + proxy_server
-                    proxies["https"] = "http://" + proxy_server
-                log.info(f"System proxy detected: {proxy_server}")
-        winreg.CloseKey(key)
-    except Exception:
-        pass
-    # On Windows, env proxy vars may conflict - only use registry
-    # Don't add env proxies automatically
-    return proxies
-
-SYSTEM_PROXIES = _get_system_proxies()
-
-def _make_session_with_proxy():
-    """Create requests session that works through corporate proxy."""
-    sess = requests.Session()
-    if SYSTEM_PROXIES:
-        sess.proxies.update(SYSTEM_PROXIES)
-        log.info(f"Using proxy: {SYSTEM_PROXIES}")
-    else:
-        # Try without proxy (direct connection)
-        sess.proxies = {"http": None, "https": None}
-    return sess
-
-BASE_WM = "https://webmail.ee"
-API_WM  = "https://api-mail-v1.webmail.ee"
-
-def _build_sess_from_config():
-    """Build requests.Session from saved cookies in config."""
-    sess = _make_session_with_proxy()
-    sess.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120",
-        "Origin":     BASE_WM,
-        "Referer":    BASE_WM + "/",
-        "Accept":     "application/json, */*",
-    })
-    if WEBMAIL_COOKIE:
-        for part in WEBMAIL_COOKIE.split(";"):
-            part = part.strip()
-            if "=" in part:
-                name, _, val = part.partition("=")
-                for dom in [BASE_WM.replace("https://",""),
-                            API_WM.replace("https://","")]:
-                    sess.cookies.set(name.strip(), val.strip(), domain=dom)
-    xsrf = WEBMAIL_XSRF or urlparse.unquote(sess.cookies.get("XSRF-TOKEN",""))
-    if xsrf:
-        sess.headers["X-XSRF-TOKEN"] = xsrf
-    tok = urlparse.unquote(sess.cookies.get("token",""))
-    if len(tok) > 20:
-        sess.headers["Authorization"] = "Bearer " + tok
-    return sess
-
-def _get_token_expiry():
-    """Return expiry datetime from token_expiry_u_0 cookie or config."""
-    if not WEBMAIL_COOKIE:
-        return None
-    for part in WEBMAIL_COOKIE.split(";"):
-        part = part.strip()
-        if part.lower().startswith("token_expiry"):
-            try:
-                val = part.split("=",1)[1]
-                # Format: 2026-04-14T08:16:23+00:00
-                from datetime import timezone
-                dt = datetime.fromisoformat(val.replace("+00:00",""))
-                return dt.replace(tzinfo=timezone.utc)
-            except Exception:
-                pass
-    return None
-
-def _try_refresh_token(sess):
-    """Use refresh_token cookie to get new session. Returns True on success."""
-    log.info("AUTH: trying token refresh...")
-    rt = sess.cookies.get("refresh_token","")
-    if not rt:
-        log.warning("AUTH: no refresh_token in cookies")
-        return False
-    try:
-        r = sess.post(BASE_WM + "/auth/refresh",
-                      timeout=15,
-                      headers={"Content-Type":"application/json",
-                               "X-Requested-With":"XMLHttpRequest"},
-                      json={"refresh_token": rt})
-        log.info(f"AUTH: /auth/refresh → {r.status_code}")
-        if r.status_code == 200:
-            try:
-                d = r.json()
-                log.info(f"AUTH: refresh response keys: {list(d.keys())}")
-                tok = d.get("token") or d.get("access_token") or d.get("ccd")
-                if tok:
-                    _save_auth_cookies(sess, tok)
-                    return True
-            except Exception:
-                pass
-        # Also try GET refresh (some implementations)
-        r2 = sess.get(BASE_WM + "/auth/refresh", timeout=10,
-                     headers={"Accept":"application/json"})
-        log.info(f"AUTH: GET /auth/refresh → {r2.status_code}")
-        if r2.status_code == 200:
-            try:
-                d2 = r2.json()
-                tok2 = d2.get("token") or d2.get("access_token")
-                if tok2:
-                    _save_auth_cookies(sess, tok2)
-                    return True
-            except Exception:
-                pass
-    except Exception as ex:
-        log.error(f"AUTH: refresh error: {ex}")
-    return False
-
-def _try_password_login(sess):
-    """Login with stored email/password. Returns True on success."""
-    if not EMAIL_ADDR or not EMAIL_PASS:
-        log.warning("AUTH: no credentials in config")
-        return False
-    log.info(f"AUTH: password login as {EMAIL_ADDR}...")
-    attempts = [
-        (BASE_WM + "/auth/accounts", {"login":    EMAIL_ADDR,              "password": EMAIL_PASS}),
-        (BASE_WM + "/auth/accounts", {"login":    EMAIL_ADDR.split("@")[0],"password": EMAIL_PASS}),
-        (BASE_WM + "/auth/accounts", {"email":    EMAIL_ADDR,              "password": EMAIL_PASS}),
-        (BASE_WM + "/login",         {"login":    EMAIL_ADDR,              "password": EMAIL_PASS}),
-        (BASE_WM + "/login",         {"email":    EMAIL_ADDR,              "password": EMAIL_PASS}),
-        (BASE_WM + "/login",         {"username": EMAIL_ADDR,              "password": EMAIL_PASS}),
-    ]
-    # First get XSRF
-    try:
-        r0 = sess.get(BASE_WM + "/", timeout=10)
-        xsrf0 = urlparse.unquote(sess.cookies.get("XSRF-TOKEN",""))
-        if xsrf0:
-            sess.headers["X-XSRF-TOKEN"] = xsrf0
-    except Exception:
-        pass
-
-    for url, payload in attempts:
-        for ct in ["json", "form"]:
-            try:
-                hdrs = {"Content-Type": "application/json" if ct=="json"
-                        else "application/x-www-form-urlencoded",
-                        "X-Requested-With": "XMLHttpRequest"}
-                kw = {"json": payload} if ct == "json" else {"data": payload}
-                ra = sess.post(url, timeout=12, headers=hdrs,
-                               allow_redirects=True, **kw)
-                log.info(f"AUTH: POST {url.replace(BASE_WM,'')} [{ct}] → {ra.status_code} | ck={list(sess.cookies.keys())}")
-                has_ck = any(n in sess.cookies for n in ["ccd","token","laravel_session"])
-                try:
-                    d = ra.json()
-                    has_tok = bool(d.get("token") or d.get("id") or d.get("success"))
-                    if d.get("error") or d.get("message"):
-                        log.warning(f"AUTH: server: {d.get('error') or d.get('message')}")
-                except Exception:
-                    has_tok = False
-                if has_ck or has_tok:
-                    new_xsrf = urlparse.unquote(sess.cookies.get("XSRF-TOKEN",""))
-                    if new_xsrf:
-                        sess.headers["X-XSRF-TOKEN"] = new_xsrf
-                    new_tok = urlparse.unquote(sess.cookies.get("token",""))
-                    if len(new_tok) > 20:
-                        sess.headers["Authorization"] = "Bearer " + new_tok
-                    _save_auth_cookies(sess)
-                    return True
-            except Exception as ex:
-                log.debug(f"AUTH: {url} [{ct}] error: {ex}")
-    return False
-
-def _save_auth_cookies(sess, extra_token=None):
-    """Save current session cookies to config.ini."""
-    parts = [f"{c.name}={c.value}" for c in sess.cookies]
-    if extra_token and not any("token=" in p for p in parts):
-        parts.append(f"token={extra_token}")
-    cookie_str = "; ".join(parts)
-    if not cookie_str:
-        return
-    xsrf = urlparse.unquote(sess.cookies.get("XSRF-TOKEN",""))
-    save_config_value("email", "webmail_cookie", cookie_str)
-    if xsrf:
-        save_config_value("email", "webmail_xsrf_token", xsrf)
-    log.info(f"AUTH: saved {len(cookie_str)} bytes of cookies")
-    _capture_state.update({"status":"done",
-                           "message":f"Auto-refreshed ({len(cookie_str)} bytes)",
-                           "success":True})
-
-def ensure_auth():
-    """
-    Main entry point: ensure we have valid session.
-    Call before each scan. Returns True if ready, False if failed.
-    """
-    global WEBMAIL_COOKIE, WEBMAIL_XSRF
-    log.debug("ensure_auth() called")
-    log.debug(f"  WEBMAIL_COOKIE len: {len(WEBMAIL_COOKIE)}")
-    log.debug(f"  EMAIL_ADDR: {EMAIL_ADDR}")
-    log.debug(f"  EMAIL_PASS set: {bool(EMAIL_PASS)}")
-
-    sess = _build_sess_from_config()
-    log.debug(f"  Session cookies: {list(sess.cookies.keys())}")
-    log.debug(f"  Session headers auth: {'Authorization' in sess.headers}")
-    expiry = _get_token_expiry()
-    log.debug(f"  Token expiry: {expiry}")
-
-    if expiry:
-        from datetime import timezone
-        now = datetime.now(timezone.utc)
-        days_left = (expiry - now).total_seconds() / 86400
-        log.info(f"AUTH: token expires in {days_left:.1f} days ({expiry.date()})")
-
-        if days_left > 1:
-            log.info("AUTH: token still valid, no refresh needed")
-            return True
-        else:
-            log.info(f"AUTH: token expires in {days_left:.1f}d — refreshing...")
-
-    # Try refresh_token first (no password needed)
-    if WEBMAIL_COOKIE and "refresh_token" in WEBMAIL_COOKIE:
-        if _try_refresh_token(sess):
-            log.info("AUTH: refreshed via refresh_token ✓")
-            return True
-
-    # Fall back to password login
-    if EMAIL_PASS:
-        if _try_password_login(sess):
-            log.info("AUTH: logged in via password ✓")
-            return True
-
-    if WEBMAIL_COOKIE:
-        log.info("AUTH: using existing cookies as-is")
-        return True
-
-    log.error("AUTH: no valid auth method available")
-    return False
-
-def auth_watchdog():
-    """
-    Background thread: auto-refresh session every 8 days.
-    Runs silently, no user interaction needed.
-    """
-    while True:
-        time.sleep(8 * 3600)  # check every 8 hours
-        try:
-            expiry = _get_token_expiry()
-            if expiry:
-                from datetime import timezone
-                days_left = (expiry - datetime.now(timezone.utc)).total_seconds() / 86400
-                if days_left < 2:
-                    log.info(f"AUTH watchdog: {days_left:.1f}d left — refreshing...")
-                    ensure_auth()
-            elif WEBMAIL_COOKIE:
-                # No expiry info but have cookies - try a test request
-                sess = _build_sess_from_config()
-                try:
-                    r = sess.get(API_WM + "/auth/accounts",
-                                timeout=8,
-                                headers={"Accept":"application/json"})
-                    if r.status_code == 401:
-                        log.info("AUTH watchdog: 401 — refreshing session...")
-                        ensure_auth()
-                except Exception:
-                    pass
-        except Exception as ex:
-            log.error(f"AUTH watchdog error: {ex}")
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PLAYWRIGHT AUTO-LOGIN
-# ═══════════════════════════════════════════════════════════════════════════════
-_PW_BROWSERS = BASE_DIR / "pw-browsers"  # local Chromium
-
-def _pw_cookies_to_str(cookies):
-    """Convert Playwright cookie list to cookie string."""
-    parts = [f"{c['name']}={c['value']}" for c in cookies
-             if c.get('value') and c.get('name')]
-    return "; ".join(parts)
-
-def cdp_login(emit=None):
-    """
-    Auto-login via Chrome DevTools Protocol (CDP).
-    Requires Chrome running via run_chrome.bat (port 9222).
-    No external downloads needed - uses websocket-client.
-    """
-    def E(msg, t="info"):
-        log.info(msg)
-        if emit: emit(msg, t)
-
-    import urllib.request as _ur
-    import json as _j
-    import time as _t
-
-    try:
-        import websocket as _ws
-    except ImportError:
-        E("websocket-client not installed!", "err")
-        return None
-
-    # Step 1: Get list of Chrome tabs
-    E("Подключение к Chrome (порт 9222)...")
-    try:
-        tabs_raw = _ur.urlopen("http://localhost:9222/json", timeout=3).read()
-        tabs = _j.loads(tabs_raw)
-    except Exception as ex:
-        E(f"Chrome не запущен на порту 9222. Используй run_chrome.bat! ({ex})", "err")
-        return None
-
-    # Find or create webmail.ee tab
-    wm_tab = None
-    for t in tabs:
-        if "webmail.ee" in t.get("url","") and t.get("type") == "page":
-            wm_tab = t
-            break
-
-    if not wm_tab:
-        # Open new tab with webmail.ee
-        E("Открываю webmail.ee...")
-        try:
-            new_tab = _j.loads(
-                _ur.urlopen(f"http://localhost:9222/json/new?https://webmail.ee", timeout=3).read()
-            )
-            _t.sleep(3)
-            # Re-fetch tabs
-            tabs = _j.loads(_ur.urlopen("http://localhost:9222/json", timeout=3).read())
-            for t in tabs:
-                if "webmail.ee" in t.get("url","") and t.get("type") == "page":
-                    wm_tab = t
-                    break
-        except Exception as ex:
-            E(f"Не могу открыть вкладку: {ex}", "err")
-            return None
-
-    if not wm_tab:
-        E("Вкладка webmail.ee не найдена!", "err")
-        return None
-
-    ws_url = wm_tab.get("webSocketDebuggerUrl","")
-    if not ws_url:
-        E("WebSocket URL недоступен", "err")
-        return None
-
-    E(f"Вкладка найдена: {wm_tab.get('url','')[:60]}", "ok")
-
-    # Step 2: Connect via WebSocket CDP
-    try:
-        ws = _ws.create_connection(
-            ws_url, timeout=10,
-            origin=f"http://localhost:9222",
-            host=f"localhost:9222",
-        )
-    except Exception as ex:
-        E(f"WebSocket ошибка: {ex}", "err")
-        return None
-
-    _msg_id = [0]
-    def cdp(method, params=None):
-        _msg_id[0] += 1
-        msg = {"id": _msg_id[0], "method": method, "params": params or {}}
-        ws.send(_j.dumps(msg))
-        # Read until we get our response
-        for _ in range(20):
-            raw = ws.recv()
-            data = _j.loads(raw)
-            if data.get("id") == _msg_id[0]:
-                return data.get("result", {})
-        return {}
-
-    try:
-        # Enable necessary domains
-        cdp("Page.enable")
-        cdp("Network.enable")
-        cdp("Runtime.enable")
-
-        # Get current URL
-        result = cdp("Runtime.evaluate", {"expression": "window.location.href"})
-        current_url = result.get("result",{}).get("value","")
-        E(f"Текущий URL: {current_url[:60]}")
-
-        if "/u/0/" in current_url:
-            E("Уже вошли в систему!", "ok")
-        else:
-            # Navigate to webmail if needed
-            if "webmail.ee" not in current_url:
-                E("Перехожу на webmail.ee...")
-                cdp("Page.navigate", {"url": "https://webmail.ee"})
-                _t.sleep(3)
-
-            E("Ввожу логин...")
-            # Fill login form
-            fill_js = f"""
-(function() {{
-    var selectors = ['[name="login"]','[name="email"]','[name="username"]','input[type="email"]'];
-    for (var s of selectors) {{
-        var el = document.querySelector(s);
-        if (el) {{ el.value = {_j.dumps(EMAIL_ADDR)}; el.dispatchEvent(new Event('input', {{bubbles:true}})); return s; }}
-    }}
-    return null;
-}})()
-"""
-            r1 = cdp("Runtime.evaluate", {"expression": fill_js.strip()})
-            E(f"Логин введён в: {r1.get('result',{}).get('value','?')}")
-
-            E("Ввожу пароль...")
-            pwd_js = f"""
-(function() {{
-    var el = document.querySelector('[name="password"], input[type="password"]');
-    if (el) {{ el.value = {_j.dumps(EMAIL_PASS)}; el.dispatchEvent(new Event('input', {{bubbles:true}})); return true; }}
-    return false;
-}})()
-"""
-            cdp("Runtime.evaluate", {"expression": pwd_js.strip()})
-
-            E("Отправляю форму...")
-            submit_js = """
-(function() {
-    var btn = document.querySelector('[type="submit"], button[class*="login"], button[class*="sign"]');
-    if (btn) { btn.click(); return true; }
-    var form = document.querySelector('form');
-    if (form) { form.submit(); return true; }
-    return false;
-})()
-"""
-            cdp("Runtime.evaluate", {"expression": submit_js.strip()})
-
-            # Wait for login
-            E("Ожидаю входа...")
-            for i in range(20):
-                _t.sleep(1)
-                r = cdp("Runtime.evaluate", {"expression": "window.location.href"})
-                url = r.get("result",{}).get("value","")
-                if "/u/0/" in url:
-                    E("Вход выполнен!", "ok")
-                    break
-                if i == 19:
-                    E(f"Таймаут входа. URL: {url}", "warn")
-
-        # Step 3: Get cookies
-        E("Получаю куки...")
-        result = cdp("Network.getAllCookies")
-        all_cookies = result.get("cookies",[])
-        wm_cookies = [c for c in all_cookies
-                      if "webmail.ee" in c.get("domain","")
-                      or c.get("domain","").endswith("webmail.ee")]
-
-        if not wm_cookies:
-            E(f"Куки webmail.ee не найдены (всего {len(all_cookies)} куков)", "warn")
-            # Try all cookies
-            wm_cookies = all_cookies
-
-        cookie_str = "; ".join(f"{c['name']}={c['value']}" for c in wm_cookies
-                                if c.get('name') and c.get('value'))
-
-        if not cookie_str:
-            E("Куки пусты!", "err")
-            ws.close()
-            return None
-
-        E(f"Получено {len(wm_cookies)} куков ({len(cookie_str)} байт)", "ok")
-
-        # Save to config
-        save_config_value("email", "webmail_cookie", cookie_str)
-        xsrf = next((c["value"] for c in wm_cookies
-                     if c["name"].upper() == "XSRF-TOKEN"), "")
-        if xsrf:
-            save_config_value("email", "webmail_xsrf_token",
-                              urlparse.unquote(xsrf))
-
-        _capture_state.update({
-            "status": "done",
-            "message": f"CDP: {len(wm_cookies)} куков сохранено",
-            "success": True,
-        })
-        E("Куки сохранены в config.ini!", "ok")
-        ws.close()
-        return cookie_str
-
-    except Exception as ex:
-        E(f"Ошибка CDP: {ex}", "err")
-        log.error("CDP login error:", exc_info=True)
-        try: ws.close()
-        except Exception: pass
-        return None
-
-
-def playwright_login(emit=None):
-    """
-    Auto-login: uses CDP websocket directly (no browser download needed).
-    Chrome must be running via run_chrome.bat.
-    """
-    return cdp_login(emit)
-
-
-def _playwright_login_old(emit=None):
-    """
-    Full auto-login using Playwright (fallback, requires install_browsers.bat).
-    """
-
-
-def _resolve_host_doh(hostname):
-    """Resolve hostname via multiple DoH providers."""
-    providers = [
-        f"https://dns.google/resolve?name={hostname}&type=A",
-        f"https://cloudflare-dns.com/dns-query?name={hostname}&type=A",
-        f"https://dns.quad9.net:5053/dns-query?name={hostname}&type=A",
-    ]
-    for url in providers:
-        try:
-            r = requests.get(url, headers={"Accept": "application/dns-json"}, timeout=4)
-            if r.status_code == 200:
-                answers = r.json().get("Answer", [])
-                ips = [a["data"] for a in answers if a.get("type") == 1]
-                if ips:
-                    log.info(f"DoH resolved {hostname} → {ips[0]}")
-                    return ips[0]
-        except Exception as ex:
-            log.debug(f"DoH {url[:30]} failed: {ex}")
-    return hostname
-
-def _try_imap_connect(hosts, port, email, password):
-    """Try connecting to multiple IMAP hostnames in order."""
-    import ssl as _ssl
-    for host in hosts:
-        ip = _resolve_host_doh(host)
-        for target in ([ip, host] if ip != host else [host]):
-            try:
-                ctx = _ssl.create_default_context()
-                if target != host:
-                    ctx.check_hostname = False
-                    ctx.verify_mode = _ssl.CERT_NONE
-                mail = imaplib.IMAP4_SSL(target, port, ssl_context=ctx)
-                mail.login(email, password)
-                log.info(f"IMAP connected: {host} via {target}")
-                return mail, host
-            except Exception as ex:
-                log.debug(f"IMAP {target}: {ex}")
-    return None, None
-
-def scan_imap(emit, from_date=None, to_date=None):
-    emit(f"Подключение к почте {IMAP_HOST}...")
-    # Try multiple hostnames - DNS might resolve differently
-    alt_hosts = list(dict.fromkeys([
-        "imap.zone.eu",   # Zone.ee official IMAP server
-        IMAP_HOST,        # config value
-        "mail.zone.ee",   # legacy
-        "pop3.zone.eu",   # POP3 fallback (same DNS)
-        f"mail.{EMAIL_ADDR.split('@')[1]}" if EMAIL_ADDR else "",
-    ]))
-    alt_hosts = [h for h in alt_hosts if h]
-    emit(f"Пробую: {', '.join(alt_hosts)}", "info")
-    mail, connected_host = _try_imap_connect(alt_hosts, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
-    if not mail:
-        emit(f"IMAP недоступен — переключаюсь на webmail", "warn")
-        return None  # caller will use webmail
-    emit(f"✓ Подключено через {connected_host}", "ok")
-
-    try:
-        mail.select(IMAP_FOLDER)
-        state    = load_state()
-        last_uid = state.get("last_uid")
-
-        # Add date range filter to IMAP search terms
-        date_terms = []
-        if from_date:
-            import email.utils as _eu
-            from datetime import datetime as _dt
-            since_dt = _dt.strptime(from_date, "%Y-%m-%d")
-            since_str = since_dt.strftime("%d-%b-%Y")
-            date_terms.append(f"SINCE {since_str}".encode())
-            emit(f"IMAP date filter: since {since_str}", "ok")
-        if to_date:
-            before_dt = _dt.strptime(to_date, "%Y-%m-%d") + __import__('datetime').timedelta(days=1)
-            before_str = before_dt.strftime("%d-%b-%Y")
-            date_terms.append(f"BEFORE {before_str}".encode())
-
-        ids = set()
-
-        # When date range given - fetch ALL emails in range (most complete)
-        if date_terms:
-            try:
-                _, data = mail.search(None, *date_terms)
-                for uid in data[0].split():
-                    ids.add(uid)
-                emit(f"Date-range search: {len(ids)} emails", "ok")
-            except Exception as ex:
-                emit(f"Date search failed: {ex}, falling back to keywords", "warn")
-
-        # Also search by subject keywords (catches emails outside date range)
-        if not date_terms or len(ids) == 0:
-            for term in IMAP_SUBJECTS:
-                try:
-                    search_args = [term] + date_terms if date_terms else [term]
-                    _, data = mail.search(None, *search_args)
-                    for uid in data[0].split():
-                        ids.add(uid)
-                except Exception:
-                    pass
-
-        # If we have a last UID, grab newer messages too
-        if last_uid and not from_date:
-            try:
-                _, data = mail.search(None, f"UID {int(last_uid)+1}:*")
-                for uid in data[0].split():
-                    ids.add(uid)
-                emit(f"Searching from UID {last_uid} onwards...", "ok")
-            except Exception:
-                pass
-
-        # Last resort: ALL emails up to limit
-        if not ids:
-            emit("No keyword matches - scanning all recent emails...", "warn")
-            _, data = mail.search(None, "ALL")
-            all_ids = data[0].split()
-            ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
-
-        # Sort by UID desc (newest first), take limit
-        try:
-            ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x, bytes) else x), reverse=True)
-        except Exception:
-            ids_sorted = list(ids)
-        ids = set(ids_sorted[:SCAN_LIMIT])
-
-        emit(f"Found {len(ids)} messages to check (limit {SCAN_LIMIT})...")
-        emails_raw = []
-        for uid in list(ids)[-SCAN_LIMIT:]:
-            try:
-                _, data = mail.fetch(uid, "(RFC822)")
-                msg = email.message_from_bytes(data[0][1])
-                subj = decode_header(msg.get("Subject",""))
-                sndr = decode_header(msg.get("From",""))
-                body = get_plain_body(msg)
-                att  = has_attachment(msg)
-                try:
-                    ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
-                except Exception:
-                    ds = date.today().isoformat()
-                uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
-                emails_raw.append({"id":uid_s,"subject":subj,"from":sndr,
-                                   "body":body,"date":ds,"has_attachment":att})
-            except Exception as ex:
-                emit(f"Fetch error {uid}: {ex}", "err")
-        mail.logout()
-        return process_emails(emails_raw, emit, source="imap")
-    except Exception as ex:
-        emit(f"IMAP error: {ex}", "err")
-        try: mail.logout()
-        except Exception: pass
-        return []
-
-# ── Webmail HTTPS ─────────────────────────────────────────────────────────────
-def make_session():
-    """Build requests.Session with cookies from config."""
-    BASE = "https://webmail.ee"
-    sess = _make_session_with_proxy()
-    sess.headers.update({
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120",
-        "Origin": BASE, "Referer": BASE+"/", "Accept": "application/json, */*",
-    })
-    # Load cookies - sanitize to prevent latin-1 encoding errors
-    if WEBMAIL_COOKIE:
-        # Detect bad cookie (JS code saved instead of real cookies)
-        if "fetch(" in WEBMAIL_COOKIE or "document.cookie" in WEBMAIL_COOKIE:
-            log.error("BAD COOKIE DETECTED: contains JS code - clearing automatically")
-            try:
-                save_config_value("email", "webmail_cookie", "")
-                reload_config()
-            except Exception:
-                pass
-        else:
-            # Strip ALL non-ASCII chars to avoid latin-1 HTTP header errors
-            safe_ck = ''.join(c for c in WEBMAIL_COOKIE if ord(c) < 128)
-            for part in safe_ck.split(";"):
-                part = part.strip()
-                if "=" in part:
-                    k, _, v = part.partition("=")
-                    k = k.strip(); v = v.strip()
-                    if k and len(k) < 100 and len(v) < 2000:
-                        try:
-                            sess.cookies.set(k, v, domain="webmail.ee")
-                            sess.cookies.set(k, v, domain="api-mail-v1.webmail.ee")
-                        except Exception:
-                            pass
-    if WEBMAIL_COOKIE:
-        for part in WEBMAIL_COOKIE.split(";"):
-            part = part.strip()
-            if "=" in part:
-                name, _, val = part.partition("=")
-                for d in ["webmail.ee","api-mail-v1.webmail.ee"]:
-                    sess.cookies.set(name.strip(), val.strip(), domain=d)
-    xsrf = WEBMAIL_XSRF or urlparse.unquote(sess.cookies.get("XSRF-TOKEN",""))
-    if xsrf:
-        sess.headers["X-XSRF-TOKEN"] = xsrf
-    tok = urlparse.unquote(sess.cookies.get("token",""))
-    if len(tok) > 20:
-        sess.headers["Authorization"] = f"Bearer {tok}"
-    return sess
-
-def webmail_login(sess, email_addr, password, emit):
-    """Login to webmail.ee, return True on success."""
-    BASE = "https://webmail.ee"
-    emit(f"Authenticating as {email_addr}...")
-    try:
-        r0 = sess.get(BASE+"/", timeout=12)
-        xsrf = urlparse.unquote(sess.cookies.get("XSRF-TOKEN",""))
-        if xsrf:
-            sess.headers["X-XSRF-TOKEN"] = xsrf
-        emit(f"  GET / → {r0.status_code}")
-    except Exception as ex:
-        emit(f"Cannot reach webmail.ee: {ex}", "err")
-        return False
-
-    attempts = [
-        (BASE+"/auth/accounts", "login",    email_addr),
-        (BASE+"/auth/accounts", "login",    email_addr.split("@")[0]),
-        (BASE+"/auth/accounts", "email",    email_addr),
-        (BASE+"/login",         "login",    email_addr),
-        (BASE+"/login",         "email",    email_addr),
-    ]
-    for url, field, val in attempts:
-        payload = {field: val, "password": password}
-        for ct in ["json","form"]:
-            try:
-                kw   = {"json":payload} if ct=="json" else {"data":payload}
-                hdrs = {"Content-Type":"application/json" if ct=="json"
-                        else "application/x-www-form-urlencoded",
-                        "X-Requested-With":"XMLHttpRequest"}
-                ra = sess.post(url, timeout=12, headers=hdrs, allow_redirects=True, **kw)
-                emit(f"  POST {url.replace(BASE,'')} [{ct},{field}] → {ra.status_code}")
-                has_ck = any(n in sess.cookies for n in ["ccd","token","laravel_session"])
-                try:
-                    d = ra.json()
-                    has_tok = bool(d.get("token") or d.get("id") or d.get("success"))
-                    if d.get("error") or d.get("message"):
-                        emit(f"  Server: {d.get('error') or d.get('message')}", "warn")
-                except Exception:
-                    has_tok = False
-                if has_ck or has_tok:
-                    new_xsrf = urlparse.unquote(sess.cookies.get("XSRF-TOKEN",""))
-                    if new_xsrf:
-                        sess.headers["X-XSRF-TOKEN"] = new_xsrf
-                    emit("Авторизация успешна!", "ok")
-                    return True
-            except Exception as ex:
-                emit(f"  {ex}", "err")
-    return False
-
-def fetch_messages(sess, user_id, mailbox_id, emit, from_date=None, to_date=None):
-    """Fetch messages from api-mail-v1.webmail.ee. Returns list or None if 401."""
-    API       = "https://api-mail-v1.webmail.ee"
-    h         = {"Accept": "application/json"}
-    state     = load_state()
-    last_date = state.get("last_date")
-    limit     = SCAN_LIMIT
-
-    # Build query params - filter by date if we have last scan date
-    date_param = ""
-    if from_date:
-        emit(f"Фильтр: с {from_date} по {to_date or '...'}", "ok")
-        date_param = f"&dateAfter={from_date}"
-        if to_date:
-            date_param += f"&dateBefore={to_date}"
-    elif last_date:
-        emit(f"Продолжаю с {last_date} — новые письма после прошлого скана", "ok")
-        date_param = f"&dateAfter={last_date}"
-
-    cands = []
-    if user_id and mailbox_id:
-        cands.append(f"/u/0/{user_id}/mailboxes/{mailbox_id}/messages?limit={limit}&order=desc{date_param}")
-    if user_id:
-        cands += [f"/u/0/{user_id}/mailboxes/INBOX/messages?limit={limit}{date_param}",
-                  f"/u/0/{user_id}/messages?limit={limit}{date_param}"]
-    cands.append("/auth/accounts")
-
-    for ep in cands:
-        try:
-            rr = sess.get(API+ep, timeout=12, headers=h)
-            emit(f"  GET {ep[:60]} → {rr.status_code}")
-            if rr.status_code == 401:
-                return None
-            if rr.status_code == 200:
-                j   = rr.json()
-                if ep == "/auth/accounts":
-                    accs = j.get("accounts") or j.get("results") or []
-                    if accs:
-                        uid2 = accs[0].get("id") or accs[0].get("_id")
-                        if uid2:
-                            rm = sess.get(f"{API}/u/0/{uid2}/mailboxes/INBOX/messages?limit={SCAN_LIMIT}",
-                                         timeout=10, headers=h)
-                            if rm.status_code == 200:
-                                lst = rm.json().get("results",[])
-                                if lst: return lst
-                    continue
-                lst = (j.get("results") or j.get("messages") or
-                       j.get("data") or (j if isinstance(j,list) else []))
-                if lst:
-                    emit(f"Got {len(lst)} messages", "ok")
-                    return lst
-        except Exception as ex:
-            emit(f"  {ex}", "err")
-    return []
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  PLAYWRIGHT AUTO-LOGIN  (headless Chromium on Railway)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def playwright_webmail_login(emit=None):
-    """Login to webmail.ee using headless Chromium. Returns cookie string or None."""
-    def say(msg, t="info"):
-        log.info(f"PW: {msg}")
-        if emit: emit(msg, t)
-
-    if not EMAIL_ADDR or not EMAIL_PASS:
-        say("❌ Нет email или пароля — зайди в '🌐 Войти в почту'", "err")
-        return None
-
-    try:
-        from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
-    except ImportError:
-        say("❌ Playwright не установлен", "err")
-        return None
-
-    say("🌐 Запускаю браузер для входа в webmail.ee...")
-    try:
-        with sync_playwright() as pw:
-            browser = pw.chromium.launch(
-                headless=True,
-                args=["--no-sandbox", "--disable-setuid-sandbox",
-                      "--disable-dev-shm-usage", "--disable-gpu",
-                      "--no-zygote", "--single-process"]
-            )
-            ctx = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120",
-                locale="et-EE",
-            )
-            page = ctx.new_page()
-
-            say("Открываю webmail.ee...")
-            page.goto("https://webmail.ee", timeout=30000)
-            page.wait_for_load_state("networkidle", timeout=15000)
-
-            # Fill login form
-            say(f"Вхожу как {EMAIL_ADDR}...")
-            
-            # Try different selectors for email field
-            for sel in ['input[name="username"]', 'input[name="email"]',
-                        'input[type="email"]', 'input[name="login"]',
-                        '#username', '#email', '#login']:
-                try:
-                    page.fill(sel, EMAIL_ADDR, timeout=2000)
-                    log.debug(f"PW: filled email with selector {sel}")
-                    break
-                except Exception:
-                    continue
-
-            # Password field
-            for sel in ['input[name="password"]', 'input[type="password"]', '#password']:
-                try:
-                    page.fill(sel, EMAIL_PASS, timeout=2000)
-                    log.debug(f"PW: filled password with selector {sel}")
-                    break
-                except Exception:
-                    continue
-
-            # Submit
-            for sel in ['button[type="submit"]', 'input[type="submit"]',
-                        'button:has-text("Logi sisse")', 'button:has-text("Login")',
-                        'button:has-text("Войти")', '.login-btn', '#login-btn']:
-                try:
-                    page.click(sel, timeout=3000)
-                    log.debug(f"PW: clicked submit {sel}")
-                    break
-                except Exception:
-                    continue
-
-            # Wait for login
-            say("Ожидаю подтверждения входа...")
-            try:
-                page.wait_for_url("**/u/**", timeout=12000)
-                say("✅ Вход выполнен!", "ok")
-            except PWTimeout:
-                # Check if we're past login page anyway
-                if "webmail.ee/u/" in page.url or "webmail.ee/mail" in page.url:
-                    say("✅ Вход выполнен (redirect)!", "ok")
-                else:
-                    # Try to extract cookies anyway
-                    log.warning(f"PW: login timeout, current URL: {page.url}")
-                    say("⚠ Вход не подтверждён — пробую получить куки...", "warn")
-
-            # Extract cookies
-            cookies = ctx.cookies()
-            if cookies:
-                ck_str = "; ".join(
-                    f"{c['name']}={c['value']}"
-                    for c in cookies
-                    if c.get('domain','') in ('webmail.ee', '.webmail.ee',
-                                              'api-mail-v1.webmail.ee')
-                    and c['value']
-                    and ord(c['value'][0]) < 128  # latin-1 safe
-                )
-                if ck_str:
-                    say(f"Получено {len(cookies)} куков ({len(ck_str)} байт)", "ok")
-                    browser.close()
-                    return ck_str
-
-            browser.close()
-            say("❌ Куки не получены после входа", "err")
-            return None
-
-    except Exception as ex:
-        say(f"❌ Ошибка браузера: {ex}", "err")
-        log.error(f"Playwright error: {ex}", exc_info=True)
-        return None
-
-def scan_webmail(emit, from_date=None, to_date=None):
-    """Scan Zone.ee webmail via HTTPS."""
-    API  = "https://api-mail-v1.webmail.ee"
-    emit("Подключение к webmail.ee (HTTPS)...")
-    log.debug(f"scan_webmail: WEBMAIL_COOKIE len={len(WEBMAIL_COOKIE)}")
-    # Auto-ensure valid session before scanning
-    ensure_auth()
-    reload_config()
-    if not WEBMAIL_COOKIE:
-        # Try Playwright auto-login first (headless Chromium)
-        if EMAIL_PASS and EMAIL_ADDR:
-            emit("🌐 Нет сессии — запускаю автовход через браузер...", "warn")
-            ck = playwright_webmail_login(emit)
-            if ck:
-                save_config_value("email", "webmail_cookie", ck)
-                reload_config()
-                emit("✅ Автовход выполнен! Куки сохранены.", "ok")
-            else:
-                # Fallback: try requests-based login
-                sess_tmp = make_session()
-                if webmail_login(sess_tmp, EMAIL_ADDR, EMAIL_PASS, emit):
-                    ck2 = "; ".join(f"{c.name}={c.value}" for c in sess_tmp.cookies
-                                    if all(ord(ch) < 128 for ch in c.value))
-                    if ck2:
-                        save_config_value("email", "webmail_cookie", ck2)
-                        reload_config()
-                        emit("✅ Вход выполнен (fallback)!", "ok")
-                    else:
-                        emit("❌ Не удалось получить куки. Войди через '🌐 Войти в почту'.", "err")
-                        return []
-                else:
-                    emit("❌ Автовход не удался. Войди вручную через '🌐 Войти в почту'.", "err")
-                    return []
-        else:
-            emit("❌ Нет пароля. Зайди в '🌐 Войти в почту' и введи email + пароль.", "err")
-            return []
-    sess = make_session()
-
-    user_id = mailbox_id = None
-    if WEBMAIL_URL and "/u/0/" in WEBMAIL_URL:
-        parts = WEBMAIL_URL.rstrip("/").split("/")
-        if len(parts) >= 7:
-            user_id, mailbox_id = parts[5], parts[6]
-            emit(f"IDs: user={user_id[:12]}...", "ok")
-
-    def fetch_body(uid):
-        mbox = mailbox_id or "INBOX"
-        rb = sess.get(f"{API}/u/0/{user_id}/mailboxes/{mbox}/messages/{uid}",
-                      timeout=10, headers={"Accept":"application/json"})
-        if rb.status_code == 200:
-            txt = rb.json().get("text") or rb.json().get("body") or ""
-            return re.sub(r"<[^>]+>"," ",txt) if "<" in txt else txt
-        return ""
-
-    # Try saved cookies first
-    if WEBMAIL_COOKIE:
-        emit("Using saved cookies...")
-        msgs = fetch_messages(sess, user_id, mailbox_id, emit, from_date=from_date, to_date=to_date)
-        if msgs:
-            return process_emails(msgs, emit, fetch_body, source="webmail")
-        if msgs is None:
-            emit("Session expired — trying password login...", "warn")
-
-    # Password login
-    if not webmail_login(sess, EMAIL_ADDR, EMAIL_PASS, emit):
-        emit("❌ Ошибка авторизации — войди в почту через кнопку '🌐 Войти в почту'", "err")
-        return []
-
-    msgs = fetch_messages(sess, user_id, mailbox_id, emit, from_date=from_date, to_date=to_date)
-    if not msgs:
-        emit("No messages found", "warn")
-        return []
-    return process_emails(msgs, emit, fetch_body, source="webmail")
 
 # ── Main scan dispatcher ──────────────────────────────────────────────────────
 def scan_email(emit=None, quick=False, from_date=None, to_date=None):
@@ -3349,6 +2377,32 @@ def api_webmail_login():
 # Start background services when imported by gunicorn too
 import threading as _bg_th
 _bg_started = False
+
+def auth_watchdog():
+    """Background thread: periodically refresh webmail session."""
+    import time as _t
+    while True:
+        _t.sleep(3600)  # every hour
+        try:
+            ensure_auth()
+        except Exception as ex:
+            log.debug(f"auth_watchdog: {ex}")
+
+
+def ensure_auth():
+    """Check and refresh webmail session if needed."""
+    reload_config()
+    if not WEBMAIL_COOKIE:
+        return
+    try:
+        sess = make_session()
+        r = sess.get("https://api-mail-v1.webmail.ee/auth/accounts", timeout=8)
+        if r.status_code == 401:
+            log.info("Session expired, attempting refresh...")
+    except Exception as ex:
+        log.debug(f"ensure_auth: {ex}")
+
+
 def _start_background():
     global _bg_started
     if _bg_started:
