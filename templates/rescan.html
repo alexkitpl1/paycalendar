@@ -1,137 +1,387 @@
 <!DOCTYPE html>
-<html><head>
+<html lang="ru">
+<head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <title>PayCalendar — Пересканировать</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:sans-serif;background:#0f1117;color:#e2e8f0;padding:20px;max-width:520px;margin:0 auto}
-h2{color:#f59e0b;margin-bottom:6px;font-size:18px}
-p{color:#6b7280;font-size:13px;margin-bottom:20px}
-.btn{width:100%;padding:14px;border-radius:10px;border:none;font-size:14px;font-weight:700;cursor:pointer;margin-bottom:8px;transition:opacity .15s}
-.btn-amber{background:linear-gradient(135deg,#f59e0b,#d97706);color:#000}
-.btn-blue{background:linear-gradient(135deg,#2563eb,#1d4ed8);color:#fff}
-.btn-green{background:linear-gradient(135deg,#059669,#047857);color:#fff}
-.btn:disabled{opacity:.4;cursor:not-allowed}
-.log{background:#111827;border-radius:10px;padding:14px;font-family:monospace;font-size:12px;line-height:1.9;margin-top:16px;max-height:420px;overflow-y:auto;min-height:60px}
-.ok{color:#34d399}.err{color:#f87171}.info{color:#9ca3af}.warn{color:#fbbf24}
-.prog{height:6px;background:#1e293b;border-radius:3px;margin:10px 0;overflow:hidden}
-.prog-fill{height:100%;width:0%;background:linear-gradient(90deg,#f59e0b,#f97316);border-radius:3px;transition:width .5s}
-.status{font-size:13px;color:#fbbf24;margin:8px 0;min-height:20px}
-a.back{display:inline-block;margin-bottom:16px;color:#60a5fa;font-size:13px;text-decoration:none}
-</style></head><body>
+body{font-family:'DM Sans',sans-serif;background:#0c0f14;color:#c8d8ec;min-height:100dvh;display:flex;flex-direction:column}
+a{color:#60a5fa;text-decoration:none}
 
-<a class="back" href="/">← PayCalendar</a>
-<h2>🔄 Пересканировать с января 2026</h2>
-<p>Полное сканирование почты за январь–апрель 2026. Нажимай кнопки по порядку.</p>
+/* Topbar */
+.topbar{display:flex;align-items:center;gap:12px;padding:14px 20px;border-bottom:1px solid #131e2d;background:#0f1520;flex-shrink:0}
+.back{color:#6b7280;font-size:13px;padding:6px 12px;border:1px solid #1e2d45;border-radius:8px;background:#111820}
+.back:hover{color:#c8d8ec}
+h1{font-size:17px;font-weight:600;color:#f0f6ff}
 
-<button class="btn btn-amber" id="btn1" onclick="step1()">Шаг 1: Исправить IMAP + проверить</button>
-<button class="btn btn-blue"  id="btn2" onclick="step2()" disabled>Шаг 2: Сбросить + очистить дубли</button>
-<button class="btn btn-green" id="btn3" onclick="step3()" disabled>Шаг 3: Запустить скан янв–апр 2026</button>
+/* Main */
+.wrap{max-width:560px;margin:0 auto;padding:24px 16px;flex:1;width:100%}
 
-<div class="prog"><div class="prog-fill" id="prog"></div></div>
-<div class="status" id="status">Нажми Шаг 1 для начала</div>
-<div class="log" id="log">Готов...</div>
+/* Steps */
+.steps{display:flex;gap:0;margin-bottom:28px;border-radius:12px;overflow:hidden;border:1px solid #1e2d45}
+.step{flex:1;padding:12px 8px;text-align:center;background:#0f1520;border-right:1px solid #1e2d45;transition:all .3s}
+.step:last-child{border-right:none}
+.step-num{font-size:18px;font-weight:800;color:#2a3a50;transition:color .3s}
+.step-label{font-size:10px;color:#2a3a50;margin-top:2px;letter-spacing:.3px;transition:color .3s}
+.step.active .step-num{color:#f59e0b}
+.step.active .step-label{color:#8aa8c8}
+.step.done .step-num{color:#4ade80}
+.step.done .step-label{color:#4ade80}
+
+/* Big progress card */
+.progress-card{background:#0f1520;border:1px solid #1e2d45;border-radius:16px;padding:24px;margin-bottom:20px}
+.progress-title{font-size:14px;font-weight:700;color:#8aa8c8;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+.progress-title .dot{width:8px;height:8px;border-radius:50%;background:#f59e0b;animation:pulse 1.2s ease infinite}
+@keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.5;transform:scale(.8)}}
+
+/* Month progress bars */
+.month-list{display:flex;flex-direction:column;gap:8px;margin-bottom:20px}
+.month-row{display:flex;align-items:center;gap:10px}
+.month-name{font-size:12px;color:#8aa8c8;width:70px;flex-shrink:0}
+.month-bar-wrap{flex:1;height:8px;background:#111820;border-radius:4px;overflow:hidden}
+.month-bar{height:100%;border-radius:4px;transition:width .4s ease;width:0%}
+.month-bar.scanning{background:linear-gradient(90deg,#f59e0b,#f97316);animation:shimmer 1.2s linear infinite;background-size:200% 100%}
+@keyframes shimmer{0%{background-position:200% 0}100%{background-position:-200% 0}}
+.month-bar.done{background:#4ade80;animation:none}
+.month-bar.pending{background:#1e2d45}
+.month-count{font-size:11px;font-family:'DM Mono',monospace;color:#5a7a9a;width:30px;text-align:right;flex-shrink:0}
+
+/* Big counter */
+.counter-row{display:flex;gap:16px;margin-bottom:20px}
+.counter{flex:1;background:#111820;border-radius:10px;padding:12px;text-align:center}
+.counter-val{font-size:28px;font-weight:800;font-family:'DM Mono',monospace;color:#f59e0b;line-height:1}
+.counter-lbl{font-size:10px;color:#5a7a9a;margin-top:4px;text-transform:uppercase;letter-spacing:.5px}
+
+/* Overall progress */
+.overall-wrap{margin-bottom:16px}
+.overall-label{display:flex;justify-content:space-between;font-size:12px;color:#8aa8c8;margin-bottom:6px}
+.overall-bar-wrap{height:10px;background:#111820;border-radius:5px;overflow:hidden}
+.overall-bar{height:100%;border-radius:5px;background:linear-gradient(90deg,#f59e0b,#f97316);transition:width .5s ease;width:0%}
+
+/* Current status */
+.current-status{font-size:12px;color:#5a7a9a;min-height:18px;margin-bottom:12px;font-family:'DM Mono',monospace}
+
+/* Log */
+.log-wrap{background:#080c12;border:1px solid #131e2d;border-radius:8px;max-height:180px;overflow-y:auto;padding:10px 12px;font-family:'DM Mono',monospace;font-size:11px;line-height:1.8}
+.log-wrap::-webkit-scrollbar{width:4px}
+.log-wrap::-webkit-scrollbar-thumb{background:#1e2d45;border-radius:2px}
+.lOk{color:#4ade80}.lErr{color:#f87171}.lWarn{color:#fbbf24}.lInfo{color:#60a5fa}.lGray{color:#3a4a60}
+
+/* Buttons */
+.btn-start{width:100%;padding:16px;border-radius:12px;border:none;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-size:15px;font-weight:800;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;gap:10px;margin-bottom:12px}
+.btn-start:hover{filter:brightness(1.1);transform:translateY(-1px)}
+.btn-start:disabled{opacity:.4;cursor:not-allowed;transform:none}
+.btn-secondary{width:100%;padding:12px;border-radius:10px;border:1px solid #1e2d45;background:#111820;color:#8aa8c8;font-size:13px;font-weight:600;cursor:pointer;margin-bottom:8px}
+.btn-secondary:hover{border-color:#2a3a50;color:#c8d8ec}
+.btn-secondary:disabled{opacity:.4;cursor:not-allowed}
+
+/* Done state */
+.done-banner{background:linear-gradient(135deg,#064e3b,#065f46);border:1px solid #059669;border-radius:12px;padding:20px;text-align:center;display:none}
+.done-banner.show{display:block}
+.done-icon{font-size:40px;margin-bottom:8px}
+.done-text{font-size:16px;font-weight:700;color:#4ade80}
+.done-sub{font-size:12px;color:#6ee7b7;margin-top:4px}
+</style>
+</head>
+<body>
+
+<div class="topbar">
+  <a href="/" class="back">← Календарь</a>
+  <h1>🔄 Пересканировать почту</h1>
+</div>
+
+<div class="wrap">
+
+  <!-- Step indicators -->
+  <div class="steps">
+    <div class="step active" id="stp1"><div class="step-num">1</div><div class="step-label">IMAP</div></div>
+    <div class="step" id="stp2"><div class="step-num">2</div><div class="step-label">Сброс</div></div>
+    <div class="step" id="stp3"><div class="step-num">3</div><div class="step-label">Скан</div></div>
+  </div>
+
+  <!-- Progress card -->
+  <div class="progress-card">
+    <div class="progress-title">
+      <div class="dot" id="statusDot" style="background:#2a3a50;animation:none"></div>
+      <span id="statusTitle">Готов к запуску</span>
+    </div>
+
+    <!-- Month bars -->
+    <div class="month-list" id="monthList">
+      <div class="month-row" id="row-jan"><span class="month-name">Январь</span><div class="month-bar-wrap"><div class="month-bar pending" id="bar-jan"></div></div><span class="month-count" id="cnt-jan">—</span></div>
+      <div class="month-row" id="row-feb"><span class="month-name">Февраль</span><div class="month-bar-wrap"><div class="month-bar pending" id="bar-feb"></div></div><span class="month-count" id="cnt-feb">—</span></div>
+      <div class="month-row" id="row-mar"><span class="month-name">Март</span><div class="month-bar-wrap"><div class="month-bar pending" id="bar-mar"></div></div><span class="month-count" id="cnt-mar">—</span></div>
+      <div class="month-row" id="row-apr"><span class="month-name">Апрель</span><div class="month-bar-wrap"><div class="month-bar pending" id="bar-apr"></div></div><span class="month-count" id="cnt-apr">—</span></div>
+    </div>
+
+    <!-- Overall bar -->
+    <div class="overall-wrap">
+      <div class="overall-label">
+        <span id="overallLbl">0 / 4 месяцев</span>
+        <span id="overallPct">0%</span>
+      </div>
+      <div class="overall-bar-wrap"><div class="overall-bar" id="overallBar"></div></div>
+    </div>
+
+    <!-- Counters -->
+    <div class="counter-row">
+      <div class="counter"><div class="counter-val" id="cntFound">0</div><div class="counter-lbl">Найдено счетов</div></div>
+      <div class="counter"><div class="counter-val" id="cntEmails" style="color:#60a5fa">—</div><div class="counter-lbl">Писем в ящике</div></div>
+      <div class="counter"><div class="counter-val" id="cntTime" style="color:#8aa8c8">0с</div><div class="counter-lbl">Прошло</div></div>
+    </div>
+
+    <!-- Current operation -->
+    <div class="current-status" id="curStatus">Нажми кнопку ниже для запуска</div>
+
+    <!-- Log -->
+    <div class="log-wrap" id="logBox">Ожидание...</div>
+  </div>
+
+  <!-- Done banner -->
+  <div class="done-banner" id="doneBanner">
+    <div class="done-icon">🎉</div>
+    <div class="done-text" id="doneText">Готово!</div>
+    <div class="done-sub" id="doneSub">Открой календарь чтобы увидеть результаты</div>
+  </div>
+
+  <!-- Action buttons -->
+  <button class="btn-start" id="btnMain" onclick="runAll()">
+    <span>🚀</span><span>Пересканировать всё с января</span>
+  </button>
+  <a href="/"><button class="btn-secondary">📅 Открыть календарь</button></a>
+</div>
 
 <script>
-function L(msg,cls){
-  var d=document.getElementById('log');
-  var ts=new Date().toLocaleTimeString('ru');
-  d.innerHTML+='<div class="'+(cls||'info')+'">['+ts+'] '+msg+'</div>';
-  d.scrollTop=d.scrollHeight;
-}
-function S(t){document.getElementById('status').textContent=t;}
-function P(n){document.getElementById('prog').style.width=n+'%';}
+var MONTHS = [
+  {key:'jan', label:'Январь', from:'2026-01-01', to:'2026-01-31'},
+  {key:'feb', label:'Февраль', from:'2026-02-01', to:'2026-02-28'},
+  {key:'mar', label:'Март',   from:'2026-03-01', to:'2026-03-31'},
+  {key:'apr', label:'Апрель', from:'2026-04-01', to:'2026-04-30'},
+];
 
-async function api(path,data){
-  var opts={headers:{'Content-Type':'application/json'},credentials:'include'};
-  if(data){opts.method='POST';opts.body=JSON.stringify(data);}
+var state = {running:false, found:0, startTime:0, timerInterval:null};
+
+function setDot(color, animated){
+  var d=document.getElementById('statusDot');
+  d.style.background=color;
+  d.style.animation=animated?'pulse 1.2s ease infinite':'none';
+}
+function setTitle(t){ document.getElementById('statusTitle').textContent=t; }
+function setCur(t){ document.getElementById('curStatus').textContent=t; }
+function setStep(n){
+  [1,2,3].forEach(function(i){
+    var el=document.getElementById('stp'+i);
+    el.className='step'+(i<n?' done':i===n?' active':'');
+  });
+}
+function setBar(key, pct, done){
+  var b=document.getElementById('bar-'+key);
+  if(!b) return;
+  b.style.width=pct+'%';
+  b.className='month-bar '+(done?'done':pct>0?'scanning':'pending');
+}
+function setCnt(key, n){ 
+  var el=document.getElementById('cnt-'+key);
+  if(el) el.textContent = n>=0 ? n : '—';
+}
+function setOverall(done, total){
+  var pct=total>0?Math.round(done/total*100):0;
+  document.getElementById('overallBar').style.width=pct+'%';
+  document.getElementById('overallLbl').textContent=done+' / '+total+' месяцев';
+  document.getElementById('overallPct').textContent=pct+'%';
+}
+function addLog(msg, cls){
+  var box=document.getElementById('logBox');
+  var ts=new Date().toLocaleTimeString('ru');
+  var div=document.createElement('div');
+  div.className='l'+(cls||'Gray');
+  div.textContent='['+ts+'] '+msg;
+  if(box.children.length===1 && box.children[0].textContent==='Ожидание...')
+    box.innerHTML='';
+  box.appendChild(div);
+  box.scrollTop=box.scrollHeight;
+}
+function startTimer(){
+  state.startTime=Date.now();
+  if(state.timerInterval) clearInterval(state.timerInterval);
+  state.timerInterval=setInterval(function(){
+    var s=Math.round((Date.now()-state.startTime)/1000);
+    var m=Math.floor(s/60);
+    document.getElementById('cntTime').textContent=m>0?m+'м '+(s%60)+'с':s+'с';
+  },1000);
+}
+function stopTimer(){ if(state.timerInterval){ clearInterval(state.timerInterval); state.timerInterval=null; } }
+
+async function api(path, data){
+  var opts={credentials:'include',headers:{'Content-Type':'application/json'}};
+  if(data!==undefined){opts.method='POST';opts.body=JSON.stringify(data);}
   var r=await fetch(path,opts);
   return r.json();
 }
 
-async function step1(){
-  document.getElementById('btn1').disabled=true;
-  L('Исправляю IMAP хост...','info'); S('Исправляю...');
+async function pollUntilDone(timeout){
+  var start=Date.now();
+  var lastLogLen=0;
+  while(Date.now()-start < timeout){
+    await new Promise(function(r){setTimeout(r,2500);});
+    try{
+      var st=await api('/api/scan-status');
+      // Show new log lines
+      if(st.log && st.log.length>lastLogLen){
+        for(var i=lastLogLen;i<st.log.length;i++){
+          var entry=st.log[i];
+          if(entry.msg && !entry.msg.startsWith('__')){
+            var cls=entry.t==='ok'?'Ok':entry.t==='err'?'Err':entry.t==='warn'?'Warn':'Info';
+            addLog(entry.msg, cls);
+            setCur(entry.msg.slice(0,70));
+          }
+        }
+        lastLogLen=st.log.length;
+      }
+      // Update found counter
+      if(st.found>0){
+        state.found+=st.found-state.lastFound;
+        state.lastFound=st.found;
+        document.getElementById('cntFound').textContent=st.found_total||state.found;
+      }
+      // Progress pct
+      if(st.pct>0){
+        // shown in month bar below
+      }
+      if(!st.running && st.started){
+        return st;
+      }
+    } catch(e){ addLog('Poll: '+e.message,'Warn'); }
+  }
+  return null;
+}
+
+async function runAll(){
+  if(state.running) return;
+  state.running=true; state.found=0; state.lastFound=0;
+  document.getElementById('btnMain').disabled=true;
+  document.getElementById('doneBanner').className='done-banner';
+  startTimer();
+
+  // ── STEP 1: Fix IMAP ────────────────────────────────────────────────────
+  setStep(1); setDot('#f59e0b',true); setTitle('Шаг 1: Проверка IMAP...');
+  addLog('Исправляю IMAP хост...','Info');
   try{
-    var r1=await api('/api/save-config',{section:'email',key:'imap_host',value:'imap.zone.eu'});
-    L('imap_host → imap.zone.eu: '+(r1.ok?'✅':'❌ '+JSON.stringify(r1)),r1.ok?'ok':'err');
-    L('Проверяю подключение (~12 сек)...','info');
+    await api('/api/setup-zone',{});
+    addLog('imap.zone.eu ✅','Ok');
     var td=await api('/api/test-scan');
     var im=td.imap||{};
-    L('IMAP: '+(im.ok?'✅ '+im.total+' писем':'❌ '+im.error),im.ok?'ok':'err');
-    L('AI: '+(td.gemini&&td.gemini.ok?'✅ Gemini':'⚠ квота — используем ключевые слова'),td.gemini&&td.gemini.ok?'ok':'warn');
-    P(33); S(im.ok?'IMAP ✅ — нажми Шаг 2':'⚠ IMAP не ответил — всё равно жми Шаг 2');
-    document.getElementById('btn2').disabled=false;
-  }catch(e){
-    L('❌ '+e.message,'err');
-    document.getElementById('btn1').disabled=false;
-  }
-}
+    if(im.ok){
+      addLog('IMAP: ✅ '+im.total+' писем','Ok');
+      document.getElementById('cntEmails').textContent=im.total;
+    } else {
+      addLog('IMAP: ⚠ '+im.error,'Warn');
+    }
+  } catch(e){ addLog('IMAP ошибка: '+e.message,'Err'); }
 
-async function step2(){
-  document.getElementById('btn2').disabled=true;
-  L('Сбрасываю состояние...','info'); S('Сброс...');
+  // ── STEP 2: Reset + Clear ───────────────────────────────────────────────
+  setStep(2); setTitle('Шаг 2: Сброс данных...');
+  addLog('Сбрасываю состояние и очищаю счета...','Info');
   try{
     var r=await api('/api/reset-scan',{clear_invoices:true});
-    L('Сброс: '+(r.ok?'✅':JSON.stringify(r)),r.ok?'ok':'warn');
-    try{
-      var cl=await api('/api/invoices/cleanup',{});
-      L('Очистка нулевых: убрано '+cl.removed,'info');
-      var fx=await api('/api/invoices/fix-offers',{});
-      L('Очистка офферов: дублей '+fx.deduped+', перемещено '+fx.moved,'info');
-    }catch(e){L('Очистка: '+e.message,'warn');}
-    P(50); S('Сброшено ✅ — нажми Шаг 3');
-    document.getElementById('btn3').disabled=false;
-  }catch(e){
-    L('❌ '+e.message,'err');
-    document.getElementById('btn2').disabled=false;
-  }
-}
+    addLog('Сброс: ✅ '+(r.cleared_invoices?'удалено '+r.cleared_invoices+' счетов':''),'Ok');
+    var cl=await api('/api/invoices/cleanup',{});
+    var fx=await api('/api/invoices/fix-offers',{});
+    if(fx.deduped||fx.moved) addLog('Очистка: дублей '+fx.deduped+', офферов '+fx.moved,'Info');
+    document.getElementById('cntFound').textContent='0';
+  } catch(e){ addLog('Сброс ошибка: '+e.message,'Err'); }
 
-async function step3(){
-  document.getElementById('btn3').disabled=true;
-  var months=[
-    {from:'2026-01-01',to:'2026-01-31',label:'Январь 2026'},
-    {from:'2026-02-01',to:'2026-02-28',label:'Февраль 2026'},
-    {from:'2026-03-01',to:'2026-03-31',label:'Март 2026'},
-    {from:'2026-04-01',to:'2026-04-30',label:'Апрель 2026'},
-  ];
-  var total=0;
-  for(var i=0;i<months.length;i++){
-    var m=months[i];
-    L('📅 '+m.label+'...','info');
-    S('Сканирую '+m.label+' ('+(i+1)+'/4)');
+  // ── STEP 3: Scan months ─────────────────────────────────────────────────
+  setStep(3); setTitle('Шаг 3: Сканирование...'); setDot('#f59e0b',true);
+  var totalFound=0;
+
+  for(var i=0;i<MONTHS.length;i++){
+    var mo=MONTHS[i];
+    setBar(mo.key,0,false); setCnt(mo.key,'…');
+    setTitle('Сканирую: '+mo.label+' ('+( i+1)+'/'+MONTHS.length+')');
+    setCur('Запускаю скан '+mo.label+'...');
+    addLog('━━━ '+mo.label+' ━━━','Gray');
+
+    var scanResult;
     try{
-      var r=await api('/api/scan-start',{from_date:m.from,to_date:m.to});
-      L('  '+(r.ok||r.running?'Запущен ▶':'❌ '+r.error),r.ok||r.running?'ok':'err');
-      if(!r.ok && !r.running) continue;
-      // Poll until done
-      var done=false,tries=0;
-      while(!done&&tries<150){
-        await new Promise(res=>setTimeout(res,3000)); tries++;
-        var st=await api('/api/scan-status');
-        // Show last log line
-        if(st.log&&st.log.length){
-          var last=st.log[st.log.length-1];
-          if(last.msg&&!last.msg.startsWith('__'))
-            document.getElementById('status').textContent=last.msg.slice(0,60);
-        }
-        P(Math.round(50+(i*12)+(st.pct||0)*0.12));
-        if(!st.running&&st.started){
-          done=true; total+=st.found||0;
-          L('✅ '+m.label+': найдено '+(st.found||0),'ok');
-        }
+      scanResult=await api('/api/scan-start',{from_date:mo.from,to_date:mo.to});
+      if(!scanResult.ok && !scanResult.running){
+        addLog('Ошибка запуска: '+(scanResult.error||'?'),'Err');
+        setBar(mo.key,100,true); setCnt(mo.key,'❌');
+        continue;
       }
-      if(!done) L('⚠ Таймаут '+m.label,'warn');
-    }catch(e){L('❌ '+m.label+': '+e.message,'err');}
-    await new Promise(res=>setTimeout(res,500));
+      addLog('Запущен ▶','Ok');
+    } catch(e){
+      addLog('Ошибка: '+e.message,'Err');
+      setBar(mo.key,100,true); setCnt(mo.key,'❌');
+      continue;
+    }
+
+    // Animate bar while scanning
+    var barAnim=0;
+    var barInterval=setInterval(function(k){ return function(){
+      barAnim=Math.min(barAnim+2,92);
+      setBar(k,barAnim,false);
+    };}(mo.key),300);
+
+    // Poll until done
+    var done=false; var tries=0; state.lastFound=0;
+    while(!done && tries<120){
+      await new Promise(function(r){setTimeout(r,3000);}); tries++;
+      try{
+        var st=await api('/api/scan-status');
+        // Show new log lines
+        if(st.log){
+          for(var j=0;j<st.log.length;j++){
+            var entry=st.log[j];
+            if(!entry._shown && entry.msg && !entry.msg.startsWith('__')){
+              entry._shown=true;
+              var lc=entry.t==='ok'?'Ok':entry.t==='err'?'Err':entry.t==='warn'?'Warn':'Info';
+              addLog(entry.msg,lc);
+              setCur(entry.msg.slice(0,70));
+            }
+          }
+        }
+        if(st.pct>0) barAnim=Math.min(Math.max(barAnim,st.pct),92);
+        var cur_found=(st.found||0)+(st.found_total||0);
+        if(cur_found>0) document.getElementById('cntFound').textContent=totalFound+(st.found||0);
+        if(!st.running && st.started){ done=true; }
+      } catch(e){ addLog('Poll: '+e.message,'Warn'); }
+    }
+
+    clearInterval(barInterval);
+    var monthFound=0;
+    try{
+      var finalSt=await api('/api/scan-status');
+      monthFound=finalSt.found||0;
+    } catch(e){}
+    totalFound+=monthFound;
+    setBar(mo.key,100,true);
+    setCnt(mo.key,monthFound);
+    setOverall(i+1,MONTHS.length);
+    document.getElementById('cntFound').textContent=totalFound;
+    addLog('✅ '+mo.label+': найдено '+monthFound+' счетов','Ok');
+    await new Promise(function(r){setTimeout(r,500);});
   }
-  P(100); S('✅ Готово! Счетов найдено: '+total);
-  L('════════════════════════','info');
-  L('✅ Итого найдено: '+total+' счетов','ok');
-  document.getElementById('btn3').textContent='🔄 Повторить';
-  document.getElementById('btn3').disabled=false;
+
+  // ── DONE ────────────────────────────────────────────────────────────────
+  stopTimer();
+  setDot('#4ade80',false); setTitle('✅ Готово!');
+  setCur('Сканирование завершено');
+  var elapsed=Math.round((Date.now()-state.startTime)/1000);
+  addLog('════════════════════════','Gray');
+  addLog('✅ Итого: '+totalFound+' счетов за '+elapsed+'с','Ok');
+
+  var banner=document.getElementById('doneBanner');
+  banner.className='done-banner show';
+  document.getElementById('doneText').textContent='Найдено '+totalFound+' счетов!';
+  document.getElementById('doneSub').textContent='За '+Math.floor(elapsed/60)+'м '+elapsed%60+'с • Открой календарь';
+
+  document.getElementById('btnMain').disabled=false;
+  document.getElementById('btnMain').innerHTML='<span>🔄</span><span>Запустить снова</span>';
+  state.running=false;
 }
 </script>
-</body></html>
+</body>
+</html>
