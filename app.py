@@ -174,8 +174,8 @@ _cfg_imap = c("email", "imap_host", "imap.zone.eu")
 IMAP_HOST  = "imap.zone.eu" if _cfg_imap in ("", "mail.zone.ee") else _cfg_imap
 IMAP_PORT      = int(c("email", "imap_port", "993"))
 IMAP_FOLDER    = c("email", "imap_folder", "INBOX")
-SCAN_LIMIT       = int(c("email", "scan_last_emails", "500"))
-QUICK_SCAN_LIMIT = int(c("email", "quick_scan_emails", "30"))
+SCAN_LIMIT       = int(c("email", "scan_last_emails", "2000"))
+QUICK_SCAN_LIMIT = int(c("email", "quick_scan_emails", "100"))
 AUTO_SCAN      = int(c("email", "auto_scan_minutes", "60"))
 API_KEY        = c("claude", "api_key")
 APP_PORT       = int(os.environ.get("PORT", c("app", "port", "5050")))
@@ -1153,7 +1153,7 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                      f"{inv['amount']} {inv['currency']}", "ok")
         except Exception:
             # AI unavailable → keyword-only fallback
-            if score >= 35:
+            if score >= 20:
                 # Include PDF text in amount extraction
                 search_text = subj + " " + body + " " + pdf_text
                 amount   = extract_amount(search_text)
@@ -1166,7 +1166,7 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                 )
                 if _is_offer_reply and amount == 0:
                     log.debug(f"KW skip (offer reply, no amount): {subj[:50]}")
-                elif amount == 0 and score < 65:
+                elif amount == 0 and score < 40:
                     log.debug(f"KW skip (no amount, score={score}): {subj[:50]}")
                 else:
                     inv = build_invoice({
@@ -1333,13 +1333,15 @@ def scan_imap(emit, from_date=None, to_date=None):
             all_ids = data[0].split()
             ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
 
-        # Sort newest first, limit
+        # Sort newest first; no limit when using date range (process everything)
         try:
             ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x,bytes) else x), reverse=True)
         except Exception:
             ids_sorted = list(ids)
-        ids = set(ids_sorted[:SCAN_LIMIT])
-        emit(f"Анализирую {len(ids)} писем (лимит {SCAN_LIMIT})...", "ok")
+        if not date_terms:
+            ids_sorted = ids_sorted[:SCAN_LIMIT]
+        emit(f"📬 {len(ids_sorted)} писем для анализа" + (f" (лимит {SCAN_LIMIT})" if not date_terms else " (все в диапазоне)"), "ok")
+        ids = set(ids_sorted)
 
         # Fetch headers
         emails_raw = []
