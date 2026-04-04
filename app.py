@@ -322,10 +322,77 @@ def save_config_value(section, key, value):
     reload_config()
 
 # ── Claude ────────────────────────────────────────────────────────────────────
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MULTI-KEY AI ROTATION SYSTEM
+#  Automatically rotates through multiple API keys when quota is hit
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class KeyPool:
+    """Pool of API keys with auto-rotation on quota/rate errors."""
+    def __init__(self, keys: list, name: str):
+        self.name   = name
+        self.keys   = [k for k in keys if k and len(k) > 10]
+        self.idx    = 0
+        self.failed = set()
+
+    def current(self):
+        """Get current working key."""
+        good = [k for k in self.keys if k not in self.failed]
+        return good[self.idx % len(good)] if good else None
+
+    def rotate(self, bad_key=None):
+        """Mark key as failed and move to next."""
+        if bad_key:
+            self.failed.add(bad_key)
+            log.warning(f"{self.name}: key exhausted ({bad_key[:12]}...), rotating")
+        good = [k for k in self.keys if k not in self.failed]
+        if not good:
+            log.error(f"{self.name}: ALL keys exhausted!")
+            self.failed.clear()  # reset to try again
+        self.idx = (self.idx + 1) % max(1, len(self.keys))
+
+    def add(self, key):
+        """Add a new key to the pool."""
+        if key and key not in self.keys:
+            self.keys.append(key)
+            self.failed.discard(key)
+            log.info(f"{self.name}: added new key ({key[:12]}...)")
+
+    def status(self):
+        return {
+            "total": len(self.keys),
+            "working": len(self.keys) - len(self.failed),
+            "exhausted": len(self.failed),
+        }
+
+
+def _load_key_pool(env_prefix, config_key, base_key):
+    """Load keys from env vars: KEY, KEY_2, KEY_3... + config."""
+    keys = []
+    if base_key and len(base_key) > 10:
+        keys.append(base_key)
+    # Check env vars: PREFIX, PREFIX_2, PREFIX_3, PREFIX_4, PREFIX_5
+    for i in range(2, 11):
+        k = os.environ.get(f"{env_prefix}_{i}", "").strip()
+        if k and k not in keys:
+            keys.append(k)
+    # Check config: key, key_2, key_3
+    for i in range(2, 6):
+        k = c("ai", f"{config_key}_{i}", "")
+        if k and k not in keys:
+            keys.append(k)
+    return keys
+
 # ── AI provider config ───────────────────────────────────────────────────────
 GEMINI_KEY  = c("ai", "gemini_key") or os.environ.get("GEMINI_API_KEY","AIzaSyDyrZ8ZkPmoNRGL7Wv9P1qs_laKClKIIAw")
 GROQ_KEY    = c("ai", "groq_key")   or os.environ.get("GROQ_API_KEY","")
 OPENAI_KEY  = c("ai", "openai_key") or os.environ.get("OPENAI_API_KEY","")
+
+# Initialize key pools after keys are loaded
+_gemini_pool = KeyPool(_load_key_pool("GEMINI_API_KEY", "gemini_key", GEMINI_KEY), "Gemini")
+_groq_pool   = KeyPool(_load_key_pool("GROQ_API_KEY",   "groq_key",   GROQ_KEY),   "Groq")
+_openai_pool = KeyPool(_load_key_pool("OPENAI_API_KEY", "openai_key", OPENAI_KEY), "OpenAI")
 
 _provider_blocked = set()  # tracks quota-exceeded providers
 
@@ -361,34 +428,39 @@ def ask_ai(prompt):
 _gemini_last_call = [0.0]
 
 def _ask_gemini(prompt):
-    """Google Gemini Flash — free tier: 15 RPM. Rate limited to 1 req/4s."""
+    """Google Gemini Flash with auto key rotation."""
     import time as _t
-    # Rate limit: wait between calls (free tier = 15 req/min = 1 per 4s)
     elapsed = _t.time() - _gemini_last_call[0]
-    if elapsed < 4.0:
-        _t.sleep(4.0 - elapsed)
+    if elapsed < 3.0:
+        _t.sleep(3.0 - elapsed)
     _gemini_last_call[0] = _t.time()
 
     model = "gemini-2.0-flash"
-    url   = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={GEMINI_KEY}"
     body  = {
         "contents": [{"parts": [{"text": CLAUDE_SYSTEM + "\n\n" + prompt}]}],
         "generationConfig": {"maxOutputTokens": 512, "temperature": 0.1},
     }
-    # Retry up to 3 times on 429
-    for attempt in range(3):
-        r = requests.post(url, json=body, timeout=30)
-        if r.status_code == 200:
-            parts = r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[])
-            return "".join(p.get("text","") for p in parts)
-        elif r.status_code == 429:
-            wait = (attempt + 1) * 10
-            log.warning(f"Gemini 429 rate limit — waiting {wait}s (attempt {attempt+1}/3)")
-            _t.sleep(wait)
-        else:
-            log.error(f"Gemini error: {r.status_code} {r.text[:200]}")
-            r.raise_for_status()
-    raise Exception("Gemini: exceeded retry limit on 429")
+    for attempt in range(_gemini_pool.status()["total"] + 1):
+        key = _gemini_pool.current()
+        if not key:
+            raise Exception("Gemini: все ключи исчерпаны")
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
+        try:
+            r = requests.post(url, json=body, timeout=30)
+            if r.status_code == 200:
+                parts = r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[])
+                return "".join(p.get("text","") for p in parts)
+            elif r.status_code in (429, 403):
+                log.warning(f"Gemini key {key[:12]}... quota hit → rotating")
+                _gemini_pool.rotate(key)
+                _t.sleep(2)
+            else:
+                r.raise_for_status()
+        except requests.HTTPError:
+            raise
+        except Exception as ex:
+            _gemini_pool.rotate(key)
+    raise Exception("Gemini: все ключи исчерпали квоту")
 
 def _ask_claude(prompt):
     """Anthropic Claude — paid."""
@@ -408,21 +480,32 @@ def _ask_claude(prompt):
     return "".join(b.get("text","") for b in r.json().get("content",[]))
 
 def _ask_groq(prompt):
-    """Groq — free tier with Llama 3."""
-    r = requests.post(
-        "https://api.groq.com/openai/v1/chat/completions",
-        headers={"Authorization": f"Bearer {GROQ_KEY}",
-                 "Content-Type": "application/json"},
-        json={"model": "llama-3.3-70b-versatile",
-              "max_tokens": 1000, "temperature": 0.1,
-              "messages": [
-                  {"role": "system", "content": CLAUDE_SYSTEM},
-                  {"role": "user",   "content": prompt},
-              ]},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    """Groq with auto key rotation."""
+    import time as _t
+    for attempt in range(max(1, _groq_pool.status()["total"])):
+        key = _groq_pool.current()
+        if not key:
+            raise Exception("Groq: нет доступных ключей")
+        try:
+            r = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json"},
+                json={"model": "llama-3.3-70b-versatile",
+                      "max_tokens": 512, "temperature": 0.1,
+                      "messages": [
+                          {"role": "system", "content": CLAUDE_SYSTEM},
+                          {"role": "user",   "content": prompt},
+                      ]},
+                timeout=30,
+            )
+            if r.status_code in (429, 413):
+                _groq_pool.rotate(key); _t.sleep(2); continue
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+        except requests.HTTPError:
+            raise
+    raise Exception("Groq: все ключи исчерпаны")
 
 def _ask_openai(prompt):
     """OpenAI GPT — paid."""
@@ -1999,7 +2082,7 @@ def _check_token():
 @app.before_request
 def require_auth():
     """Block unauthenticated API calls."""
-    skip = ("/api/auth-check", "/api/stats", "/health", "/api/test-scan", "/api/diagnose", "/api/setup-zone")
+    skip = ("/api/auth-check", "/api/stats", "/health", "/api/test-scan", "/api/diagnose", "/api/setup-zone", "/api/keys", "/api/keys/add")
     if request.path.startswith("/api/") and request.path not in skip:
         if not _check_token():
             return jsonify({"error": "unauthorized"}), 401
@@ -2011,6 +2094,11 @@ def api_auth_check():
         return jsonify({"ok": True})
     key = (request.json or {}).get("key", "")
     return jsonify({"ok": key == access_key})
+
+
+@app.route("/keys")
+def keys_page():
+    return send_from_directory(TMPL_DIR, "keys.html")
 
 @app.route("/setup")
 def setup():
@@ -2273,6 +2361,38 @@ def api_test_scan():
     return jsonify(r)
 
 
+
+
+@app.route("/api/keys", methods=["GET"])
+def api_keys_status():
+    """Show key pool status."""
+    return jsonify({
+        "gemini": _gemini_pool.status(),
+        "groq":   _groq_pool.status(),
+        "openai": _openai_pool.status(),
+        "active_provider": _active_provider() or "keyword",
+    })
+
+@app.route("/api/keys/add", methods=["POST"])
+def api_keys_add():
+    """Add a new API key to the pool."""
+    data     = request.json or {}
+    provider = data.get("provider", "").lower()
+    key      = data.get("key", "").strip()
+    if not key or len(key) < 10:
+        return jsonify({"ok": False, "error": "Key too short"})
+    if provider == "gemini":
+        _gemini_pool.add(key)
+        # Save to config
+        n = len(_gemini_pool.keys)
+        save_config_value("ai", f"gemini_key_{n}" if n > 1 else "gemini_key", key)
+        return jsonify({"ok": True, "pool": _gemini_pool.status()})
+    elif provider == "groq":
+        _groq_pool.add(key)
+        n = len(_groq_pool.keys)
+        save_config_value("ai", f"groq_key_{n}" if n > 1 else "groq_key", key)
+        return jsonify({"ok": True, "pool": _groq_pool.status()})
+    return jsonify({"ok": False, "error": f"Unknown provider: {provider}"})
 
 @app.route("/api/diagnose")
 def api_diagnose():

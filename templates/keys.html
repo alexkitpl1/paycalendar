@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>PayCalendar — API Keys</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;
+  background:#0f1117;color:#e2e8f0;padding:20px;max-width:500px;margin:0 auto}
+h1{font-size:18px;color:#f59e0b;margin-bottom:4px}
+.sub{color:#6b89a5;font-size:13px;margin-bottom:24px}
+.card{background:#1a1f2e;border:1px solid #2d3748;border-radius:14px;
+  padding:16px;margin-bottom:14px}
+.card-title{font-size:12px;font-weight:700;text-transform:uppercase;
+  letter-spacing:.5px;color:#6b89a5;margin-bottom:10px}
+.status-row{display:flex;align-items:center;justify-content:space-between;
+  margin-bottom:8px}
+.badge{padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600}
+.ok{background:#064e3b;color:#34d399}
+.warn{background:#451a03;color:#fbbf24}
+.err{background:#2d0b0b;color:#f87171}
+input{width:100%;padding:10px 14px;border-radius:9px;border:1px solid #2d3748;
+  background:#111827;color:#e2e8f0;font-size:13px;outline:none;margin:8px 0;
+  font-family:monospace}
+input:focus{border-color:#f59e0b}
+.btn{display:block;width:100%;padding:12px;border-radius:9px;border:none;
+  background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;
+  font-size:14px;font-weight:700;cursor:pointer;margin-top:6px}
+.btn2{background:linear-gradient(135deg,#2563eb,#1d4ed8)}
+.btn:disabled{opacity:.5;cursor:not-allowed}
+.log{font-family:monospace;font-size:11px;background:#111827;border-radius:8px;
+  padding:10px;margin-top:10px;line-height:1.8;display:none}
+.log-ok{color:#34d399} .log-err{color:#f87171} .log-info{color:#9ca3af}
+a{color:#60a5fa;font-size:12px;text-decoration:none}
+.provider-tabs{display:flex;gap:6px;margin-bottom:10px}
+.ptab{padding:6px 14px;border-radius:7px;border:1px solid #2d3748;
+  background:transparent;color:#6b89a5;font-size:12px;cursor:pointer}
+.ptab.active{background:#f59e0b;border-color:#f59e0b;color:#0f1117;font-weight:700}
+.hint{font-size:11px;color:#6b89a5;margin-top:6px;line-height:1.5}
+a.hint-link{color:#60a5fa}
+</style></head><body>
+
+<h1>🔑 API Keys Manager</h1>
+<p class="sub">Добавь несколько ключей — автоматически ротируются при исчерпании</p>
+
+<!-- Status -->
+<div class="card" id="statusCard">
+  <div class="card-title">Статус пулов</div>
+  <div id="statusContent"><span style="color:#6b89a5">Загрузка...</span></div>
+</div>
+
+<!-- Add key -->
+<div class="card">
+  <div class="card-title">Добавить ключ</div>
+  <div class="provider-tabs">
+    <button class="ptab active" onclick="selectProvider('gemini',this)">Gemini</button>
+    <button class="ptab" onclick="selectProvider('groq',this)">Groq</button>
+    <button class="ptab" onclick="selectProvider('openai',this)">OpenAI</button>
+  </div>
+  <div id="provHint" class="hint">
+    Бесплатно: <a href="https://aistudio.google.com" target="_blank" class="hint-link">aistudio.google.com</a> → Get API Key → Create
+  </div>
+  <input type="text" id="newKey" placeholder="AIzaSy... (вставь новый ключ)">
+  <button class="btn" onclick="addKey()">+ Добавить ключ</button>
+  <div class="log" id="addLog"></div>
+</div>
+
+<!-- Fix IMAP -->
+<div class="card">
+  <div class="card-title">Исправить IMAP (Zone.ee)</div>
+  <button class="btn btn2" onclick="fixImap()">🔧 Установить imap.zone.eu</button>
+  <div class="log" id="imapLog"></div>
+</div>
+
+<!-- Test -->
+<div class="card">
+  <div class="card-title">Диагностика</div>
+  <button class="btn btn2" onclick="runTest()">▶ Запустить тест (~15 сек)</button>
+  <div class="log" id="testLog"></div>
+</div>
+
+<script>
+const BASE  = 'https://paycalendar-production.up.railway.app';
+const TOKEN = 'pay123';
+let provider = 'gemini';
+
+const HINTS = {
+  gemini: 'Бесплатно: <a href="https://aistudio.google.com" target="_blank" class="hint-link">aistudio.google.com</a> → Get API Key → Create API key',
+  groq:   'Бесплатно: <a href="https://console.groq.com" target="_blank" class="hint-link">console.groq.com</a> → API Keys → Create API Key',
+  openai: 'Платно: <a href="https://platform.openai.com/api-keys" target="_blank" class="hint-link">platform.openai.com</a> → API Keys',
+};
+const PLACEHOLDERS = {
+  gemini: 'AIzaSy...',
+  groq:   'gsk_...',
+  openai: 'sk-...',
+};
+
+function selectProvider(p, el) {
+  provider = p;
+  document.querySelectorAll('.ptab').forEach(b=>b.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('provHint').innerHTML = HINTS[p];
+  document.getElementById('newKey').placeholder = PLACEHOLDERS[p];
+}
+
+async function api(path, data) {
+  var opts = {headers:{'Content-Type':'application/json','X-PC-Token':TOKEN}};
+  if(data){opts.method='POST';opts.body=JSON.stringify(data);}
+  var r = await fetch(BASE+path, opts);
+  return r.json();
+}
+
+function addLog(id, msg, cls) {
+  var el = document.getElementById(id);
+  el.style.display = 'block';
+  el.innerHTML += '<div class="log-'+(cls||'info')+'">'+msg+'</div>';
+}
+
+async function loadStatus() {
+  try {
+    var d = await api('/api/keys');
+    var html = '';
+    for(var [name,pool] of [['Gemini',d.gemini],['Groq',d.groq],['OpenAI',d.openai]]) {
+      if(!pool || !pool.total) continue;
+      var cls = pool.working > 0 ? 'ok' : 'err';
+      html += '<div class="status-row"><span>'+name+'</span>'
+        +'<span class="badge '+cls+'">'+pool.working+'/'+pool.total+' работает</span></div>';
+    }
+    html += '<div class="status-row"><span>Активный</span>'
+      +'<span class="badge ok">'+d.active_provider+'</span></div>';
+    document.getElementById('statusContent').innerHTML = html || '<span style="color:#6b89a5">Нет ключей</span>';
+  } catch(e) {
+    document.getElementById('statusContent').innerHTML = '<span class="log-err">'+e.message+'</span>';
+  }
+}
+
+async function addKey() {
+  var key = document.getElementById('newKey').value.trim();
+  if(!key){alert('Вставь ключ');return;}
+  document.getElementById('addLog').innerHTML = '';
+  addLog('addLog', 'Добавляю ключ '+provider+'...', 'info');
+  try {
+    var r = await api('/api/keys/add', {provider, key});
+    if(r.ok) {
+      addLog('addLog', '✅ Ключ добавлен! Пул: '+JSON.stringify(r.pool), 'ok');
+      document.getElementById('newKey').value = '';
+      loadStatus();
+    } else {
+      addLog('addLog', '❌ '+r.error, 'err');
+    }
+  } catch(e) {
+    addLog('addLog', '❌ '+e.message, 'err');
+  }
+}
+
+async function fixImap() {
+  document.getElementById('imapLog').innerHTML = '';
+  addLog('imapLog', 'Исправляю IMAP...', 'info');
+  try {
+    var r1 = await api('/api/save-config', {section:'email',key:'imap_host',value:'imap.zone.eu'});
+    addLog('imapLog', 'imap_host → imap.zone.eu: '+(r1.ok?'✅':'❌ '+JSON.stringify(r1)), r1.ok?'ok':'err');
+  } catch(e) {
+    addLog('imapLog', '❌ '+e.message, 'err');
+  }
+}
+
+async function runTest() {
+  var log = document.getElementById('testLog');
+  log.innerHTML = '';
+  log.style.display = 'block';
+  addLog('testLog', 'Тест запущен (~15 сек)...', 'info');
+  try {
+    var r = await fetch(BASE+'/api/test-scan', {headers:{'X-PC-Token':TOKEN}});
+    var d = await r.json();
+    var imap = d.imap||{}, gem = d.gemini||{};
+    addLog('testLog', 'IMAP: '+(imap.ok?'✅ '+imap.total+' писем':'❌ '+imap.error), imap.ok?'ok':'err');
+    addLog('testLog', 'AI: '+(gem.ok?'✅':'❌ '+gem.status), gem.ok?'ok':'err');
+    addLog('testLog', 'Счетов: '+(d.summary||{}).invoices_found, 'info');
+    (d.emails||[]).slice(0,5).forEach(function(e){
+      addLog('testLog', (e.invoice?'💰':'  ')+' '+e.subject.slice(0,50), e.invoice?'ok':'info');
+    });
+  } catch(e) {
+    addLog('testLog', '❌ '+e.message, 'err');
+  }
+}
+
+loadStatus();
+</script>
+</body></html>
