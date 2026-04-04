@@ -164,7 +164,9 @@ def c(sec, key, fb=""):
 
 EMAIL_ADDR     = c("email", "address")
 EMAIL_PASS     = c("email", "password")
-IMAP_HOST      = c("email", "imap_host", "imap.zone.eu")
+# Zone.ee official IMAP server (mail.zone.ee doesn't work from cloud)
+_cfg_imap = c("email", "imap_host", "imap.zone.eu")
+IMAP_HOST  = "imap.zone.eu" if _cfg_imap in ("", "mail.zone.ee") else _cfg_imap
 IMAP_PORT      = int(c("email", "imap_port", "993"))
 IMAP_FOLDER    = c("email", "imap_folder", "INBOX")
 WEBMAIL_URL    = c("email", "webmail_session_url", "")
