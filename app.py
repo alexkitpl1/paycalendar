@@ -1474,758 +1474,257 @@ def _try_imap_connect(hosts, port, email, password):
 
 
 def scan_imap(emit, from_date=None, to_date=None):
-    """Scan inbox via IMAP. Returns list of invoices or None on failure."""
-    emit(f"IMAP подключение к {IMAP_HOST}:{IMAP_PORT}...")
-    
+    """Scan primary account IMAP. Returns list of invoices or None on failure."""
+    emit(f"IMAP {IMAP_HOST}:{IMAP_PORT}...")
     alt_hosts = list(dict.fromkeys(["imap.zone.eu", IMAP_HOST, "mail.zone.ee"]))
-    alt_hosts = [h for h in alt_hosts if h]
-    
-    mail, connected_host = _try_imap_connect(alt_hosts, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
+    mail, connected_host = _try_imap_connect([h for h in alt_hosts if h], IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
     if not mail:
-        emit("IMAP недоступен — переключаюсь на webmail", "warn")
-        return None  # caller falls back to webmail
+        emit("IMAP недоступен", "warn")
+        return None
 
-    emit(f"✓ IMAP подключён через {connected_host}", "ok")
-
+    emit(f"✓ {connected_host}", "ok")
     try:
-        mail.select(IMAP_FOLDER)
-        state    = load_state()
-        last_uid = state.get("last_uid")
-
-        # Build date filter
-        date_terms = []
-        if from_date:
-            from datetime import datetime as _dt
-            since_str = _dt.strptime(from_date, "%Y-%m-%d").strftime("%d-%b-%Y")
-            date_terms.append(f"SINCE {since_str}".encode())
-            emit(f"Фильтр: с {since_str}", "ok")
-        if to_date:
-            from datetime import datetime as _dt2, timedelta
-            before_dt = _dt2.strptime(to_date, "%Y-%m-%d") + timedelta(days=1)
-            date_terms.append(f"BEFORE {before_dt.strftime('%d-%b-%Y')}".encode())
-
-        ids = set()
-
-        # When date range given, fetch ALL emails in range
-        if date_terms:
-            try:
-                _, data = mail.search(None, *date_terms)
-                for uid in data[0].split():
-                    ids.add(uid)
-                emit(f"Дата-фильтр: {len(ids)} писем", "ok")
-            except Exception as ex:
-                emit(f"Дата-поиск ошибка: {ex}", "warn")
-
-        # Subject keyword search
-        if not date_terms or not ids:
-            for term in IMAP_SUBJECTS:
-                try:
-                    args = [term] + date_terms if date_terms else [term]
-                    _, data = mail.search(None, *args)
-                    for uid in data[0].split():
-                        ids.add(uid)
-                except Exception:
-                    pass
-
-        # New since last scan
-        if last_uid and not from_date:
-            try:
-                _, data = mail.search(None, f"UID {int(last_uid)+1}:*")
-                for uid in data[0].split():
-                    ids.add(uid)
-                emit(f"Новые с UID {last_uid}...", "ok")
-            except Exception:
-                pass
-
-        # ALL emails with PDF attachments (catch invoices with unusual subjects)
-        try:
-            for att_term in [b"HAS ATTACHMENT", b"HASATTACHMENT"]:
-                try:
-                    search_args = [att_term] + date_terms if date_terms else [att_term]
-                    _, att_data = mail.search(None, *search_args)
-                    if att_data and att_data[0]:
-                        att_uids = set(att_data[0].split())
-                        new_att = att_uids - ids
-                        if new_att:
-                            ids.update(new_att)
-                            emit(f"📎 +{len(new_att)} писем с вложениями", "ok")
-                    break
-                except Exception:
-                    continue
-        except Exception as ex:
-            log.debug(f"Attachment search: {ex}")
-
-        # Fallback: last N emails
-        if not ids:
-            emit("Нет совпадений — беру последние письма", "warn")
-            _, data = mail.search(None, "ALL")
-            all_ids = data[0].split()
-            ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
-
-        # Sort newest first; no limit when using date range (process everything)
-        try:
-            ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x,bytes) else x), reverse=True)
-        except Exception:
-            ids_sorted = list(ids)
-        if not date_terms:
-            ids_sorted = ids_sorted[:SCAN_LIMIT]
-        emit(f"📬 {len(ids_sorted)} писем для анализа" + (f" (лимит {SCAN_LIMIT})" if not date_terms else " (все в диапазоне)"), "ok")
-        ids = set(ids_sorted)
-
-        # Fetch headers
-        emails_raw = []
-        for uid in list(ids):
-            try:
-                _, data = mail.fetch(uid, "(RFC822.HEADER)")
-                if not data or not data[0]: continue
-                msg = email.message_from_bytes(data[0][1])
-                subj = decode_header(msg.get("Subject",""))
-                sndr = decode_header(msg.get("From",""))
-                att  = False  # will check separately
-                try:
-                    ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
-                except Exception:
-                    ds = date.today().isoformat()
-                uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
-                emails_raw.append({
-                    "id": uid_s, "subject": subj, "from": sndr,
-                    "body": "", "date": ds, "has_attachment": False,
-                })
-            except Exception as ex:
-                emit(f"Ошибка заголовка {uid}: {ex}", "err")
-
-        # Hook for PDF fetching - pass mail connection
-        _pending_pdfs = {}  # uid_str -> {filename, bytes, parsed}
-
-        def _fetch_pdf_and_body(uid_str):
-            """Fetch full message: body text + extract ALL PDFs, parse invoice data."""
-            try:
-                uid_b = uid_str.encode() if isinstance(uid_str, str) else uid_str
-                _, data = mail.fetch(uid_b, "(RFC822)")
-                if not data or not data[0]: return ""
-                raw_msg = email.message_from_bytes(data[0][1])
-                body_text = get_plain_body(raw_msg)
-                pdf_texts = []
-                best_parsed = {}
-
-                for part in raw_msg.walk():
-                    ct = part.get_content_type() or ""
-                    fn = part.get_filename() or ""
-                    is_pdf = "pdf" in ct.lower() or (fn and fn.lower().endswith(".pdf"))
-                    if not is_pdf: continue
-                    try:
-                        pdf_bytes = part.get_payload(decode=True)
-                        if not pdf_bytes: continue
-                        
-                        # Extract text
-                        pt = extract_pdf_text(pdf_bytes, max_chars=4000)
-                        if pt:
-                            pdf_texts.append(f"[PDF: {fn}]\n{pt}")
-                            
-                            # Parse invoice fields from PDF
-                            parsed = parse_pdf_invoice(pt, fn)
-                            if parsed.get("is_invoice"):
-                                # Keep best parsed (highest signal count)
-                                if parsed.get("signal_count", 0) > best_parsed.get("signal_count", 0):
-                                    best_parsed = parsed
-                        
-                        # Store PDF bytes for saving
-                        _pending_pdfs[uid_str] = {
-                            "filename": fn, "bytes": pdf_bytes,
-                            "parsed": best_parsed, "text": pt
-                        }
-                        emit(f"  📄 {fn} ({len(pdf_bytes)//1024}КБ)" +
-                             (f" → invoice detected!" if best_parsed.get("is_invoice") else ""), "ok")
-                    except Exception as pe:
-                        log.debug(f"PDF {fn}: {pe}")
-
-                result = body_text
-                if pdf_texts:
-                    result += "\n\n--- PDF СОДЕРЖИМОЕ ---\n" + "\n".join(pdf_texts)
-                return result
-            except Exception as ex:
-                log.debug(f"fetch full {uid_str}: {ex}")
-                return ""
-
-        result = process_emails(emails_raw, emit,
-                                fetch_body=_fetch_pdf_and_body, source="imap")
-
-        # Save PDFs and enrich invoices with PDF-parsed data
-        if _pending_pdfs and isinstance(result, list):
-            for inv in result:
-                uid = inv.get("email_uid","")
-                if uid in _pending_pdfs:
-                    pdf_info = _pending_pdfs[uid]
-                    try:
-                        save_pdf(inv["id"], pdf_info["bytes"], pdf_info["filename"])
-                        inv["has_pdf"]      = True
-                        inv["pdf_filename"] = pdf_info["filename"]
-                        
-                        # Enrich invoice with PDF-extracted data if missing
-                        parsed = pdf_info.get("parsed", {})
-                        if parsed.get("is_invoice"):
-                            if not inv.get("amount") or float(inv.get("amount",0)) == 0:
-                                if parsed.get("amount"):
-                                    inv["amount"] = parsed["amount"]
-                                    log.info(f"PDF amount: {parsed['amount']} for {inv['id']}")
-                            if not inv.get("due_date") and parsed.get("due_date"):
-                                inv["due_date"] = parsed["due_date"]
-                            if not inv.get("invoice_number") and parsed.get("invoice_number"):
-                                inv["invoice_number"] = parsed["invoice_number"]
-                            if parsed.get("vendor") and not inv.get("vendor"):
-                                inv["vendor"] = parsed["vendor"]
-                    except Exception as pe:
-                        log.error(f"PDF save error: {pe}")
-            
-            # Also add invoices detected ONLY in PDF (not caught by email keywords)
-            result_uids = {i.get("email_uid","") for i in result}
-            for uid_str, pdf_info in _pending_pdfs.items():
-                if uid_str in result_uids: continue  # already processed
-                parsed = pdf_info.get("parsed", {})
-                if not parsed.get("is_invoice"): continue
-                if not parsed.get("amount") and parsed.get("signal_count",0) < 3: continue
-                
-                # Find email metadata for this UID
-                em_meta = next((e for e in emails_raw if str(e.get("id","")) == uid_str), {})
-                subj = em_meta.get("subject","PDF Invoice")
-                frm  = em_meta.get("from","")
-                ds   = em_meta.get("date", date.today().isoformat())[:10]
-                
-                inv = build_invoice({
-                    "is_invoice":     True,
-                    "vendor":         parsed.get("vendor") or extract_vendor(subj, frm, ""),
-                    "amount":         parsed.get("amount", 0),
-                    "currency":       parsed.get("currency", "EUR"),
-                    "due_date":       parsed.get("due_date"),
-                    "issue_date":     parsed.get("issue_date") or ds,
-                    "invoice_number": parsed.get("invoice_number",""),
-                    "description":    subj[:100],
-                    "category":       "services",
-                    "status":         "pending",
-                }, uid_str, subj, frm, ds, True, "imap:pdf")
-                inv["has_pdf"]      = True
-                inv["pdf_filename"] = pdf_info["filename"]
-                try:
-                    save_pdf(inv["id"], pdf_info["bytes"], pdf_info["filename"])
-                except Exception: pass
-                result.append(inv)
-                emit(f"  📄 PDF invoice: {inv['vendor']} {inv['amount']}€", "ok")
-            
-            # Save all with has_pdf flags
-            if any(i.get("has_pdf") for i in result):
-                all_invs = load_invoices()
-                inv_map  = {i["id"]: i for i in result}
-                for i, inv_item in enumerate(all_invs):
-                    if inv_item["id"] in inv_map:
-                        all_invs[i] = inv_map[inv_item["id"]]
-                save_invoices(all_invs)
-
-        try: mail.logout()
-        except Exception: pass
-        return result
-
+        return _do_imap_scan(mail, connected_host, emit, from_date, to_date,
+                             EMAIL_ADDR, source="imap")
     except Exception as ex:
         emit(f"IMAP ошибка: {ex}", "err")
         try: mail.logout()
-        except Exception: pass
+        except: pass
         return []
 
 
-def scan_email(emit=None, quick=False, from_date=None, to_date=None):
-    """
-    Scan inbox for invoices.
-    quick=True  → last 30 emails (fast, for auto-scan & refresh button)
-    quick=False → last 500 emails (full scan)
-    """
-    def emitter(msg, t="info"):
-        log.info(msg)
-        if emit: emit(msg, t)
+def _do_imap_scan(mail, connected_host, emit, from_date, to_date, acct_email, source="imap"):
+    """Core IMAP scanning logic. Used by both scan_imap and scan_account."""
+    from datetime import datetime as _dt2, timedelta as _td
 
-    if not scan_lock.acquire(blocking=False):
-        emitter("Scan already running", "warn")
-        return []
-    # Temporarily override scan limit for quick scan
-    global SCAN_LIMIT
-    orig_limit = SCAN_LIMIT
-    if quick:
-        SCAN_LIMIT = QUICK_SCAN_LIMIT
-        emitter(f"Quick scan: last {QUICK_SCAN_LIMIT} emails")
-    try:
-        accounts = load_email_accounts()
-        all_results = []
+    mail.select(IMAP_FOLDER)
+    ids = set()
 
-        if len(accounts) > 1:
-            emitter(f"Сканирую {len(accounts)} почтовых аккаунта...", "ok")
-            for acc in accounts:
-                try:
-                    res = scan_account(acc, emitter, from_date=from_date, to_date=to_date)
-                    all_results.extend(res or [])
-                except Exception as ex:
-                    emitter(f"Аккаунт {acc['email']}: {ex}", "warn")
-            return all_results
-
-        # Single account - original logic
-        emitter(f"Checking IMAP {IMAP_HOST}:{IMAP_PORT}...")
+    # ── Strategy 1: Date range (most accurate) ────────────────────────
+    if from_date or to_date:
+        date_args = []
+        if from_date:
+            since_str = _dt2.strptime(from_date, "%Y-%m-%d").strftime("%d-%b-%Y")
+            date_args.append(f"SINCE {since_str}".encode())
+        if to_date:
+            before_dt  = _dt2.strptime(to_date, "%Y-%m-%d") + _td(days=1)
+            date_args.append(f"BEFORE {before_dt.strftime('%d-%b-%Y')}".encode())
         try:
-            with socket.create_connection((IMAP_HOST, IMAP_PORT), timeout=5):
-                emitter("IMAP reachable", "ok")
-                result = scan_imap(emitter, from_date=from_date, to_date=to_date)
-                if result is not None:
-                    return result
-                # scan_imap returned None → fall through to webmail
+            _, data = mail.search(None, *date_args)
+            date_ids = set(data[0].split()) if data[0] else set()
+            emit(f"📅 Дата [{from_date}→{to_date}]: {len(date_ids)} писем", "ok")
+            ids.update(date_ids)
         except Exception as ex:
-            emitter(f"IMAP blocked ({type(ex).__name__}) — пробуем другие серверы", "warn")
-            return []
-    finally:
-        SCAN_LIMIT = orig_limit  # always restore, even on exception
-        scan_lock.release()
+            emit(f"⚠ Дата-поиск не поддерживается: {ex}", "warn")
 
-def check_notifications():
-    today = date.today()
-    for inv in load_invoices():
-        if inv.get("status") == "paid" or not inv.get("due_date"):
-            continue
+    # ── Strategy 2: Subject keyword search ───────────────────────────
+    kw_ids = set()
+    for term in IMAP_SUBJECTS:
         try:
-            days = (date.fromisoformat(inv["due_date"]) - today).days
-            amt  = f"{inv.get('amount',0)} {inv.get('currency','EUR')}"
-            v    = inv.get("vendor","?")
-            if days < 0:
-                win_notify("⚠ Overdue", f"{v} — {amt} ({abs(days)}d overdue)")
-            elif days <= WARN_DAYS:
-                win_notify(f"💳 Due in {days}d", f"{v} — {amt}")
+            _, data = mail.search(None, term)
+            if data[0]:
+                kw_ids.update(data[0].split())
         except Exception:
             pass
+    if kw_ids:
+        emit(f"🔍 Ключевые слова: {len(kw_ids)} писем", "ok")
+        ids.update(kw_ids)
 
-def _bg_emit(msg, t="info"):
-    """Thread-safe emit that stores to live state + log file."""
-    log.info(f"[scan] {msg}")
-    with _scan_state_lock:
-        # Progress event from parallel worker
-        if t == "progress" and msg.startswith("__progress__"):
+    # ── Strategy 3: Emails with attachments (PDFs = invoices) ────────
+    for att_term in [b"HAS ATTACHMENT", b"HASATTACHMENT"]:
+        try:
+            _, data = mail.search(None, att_term)
+            if data[0]:
+                att_ids = set(data[0].split())
+                emit(f"📎 С вложениями: {len(att_ids)} писем", "ok")
+                ids.update(att_ids)
+            break
+        except Exception:
+            continue
+
+    # ── Strategy 4: New since last scan ──────────────────────────────
+    if not from_date:
+        state = load_state()
+        last_uid = state.get("last_uid")
+        if last_uid:
             try:
-                parts = msg.split()
-                cur = int(parts[1]); tot = int(parts[2])
-                spd = float(parts[3]); eta = int(parts[4])
-                _scan_state_live["done"]  = cur
-                _scan_state_live["total"] = tot
-                _scan_state_live["speed"] = spd
-                _scan_state_live["eta"]   = eta
-                _scan_state_live["pct"]   = int(cur/tot*100) if tot > 0 else 0
+                _, data = mail.search(None, f"UID {int(last_uid)+1}:*".encode())
+                if data[0]:
+                    new_ids = set(data[0].split())
+                    emit(f"🆕 Новых с UID {last_uid}: {len(new_ids)}", "ok")
+                    ids.update(new_ids)
             except Exception:
                 pass
-            return
-        # Count found invoices
-        if msg.startswith("✓") or msg.startswith("✅"):
-            if "счет" in msg.lower() or any(c in msg for c in ["€","EUR","$"]):
-                _scan_state_live["found"] = _scan_state_live.get("found", 0) + 1
-        # Add to log
-        entry = {"ts": datetime.now().strftime("%H:%M:%S"), "msg": msg, "t": t}
-        _scan_state_live["log"].append(entry)
-        if len(_scan_state_live["log"]) > _MAX_LOG:
-            _scan_state_live["log"] = _scan_state_live["log"][-_MAX_LOG:]
-    # Also persist to file so it survives gunicorn worker restarts
+
+    # ── Fallback: last N all emails ───────────────────────────────────
+    if not ids:
+        emit("⚠ Нет совпадений — беру последние письма", "warn")
+        _, data = mail.search(None, "ALL")
+        all_ids = data[0].split() if data[0] else []
+        ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
+
+    # ── Sort newest first, apply limit only if no date filter ─────────
     try:
-        progress_file = _DATA_DIR / "scan_progress.json"
-        with open(progress_file, "w", encoding="utf-8") as f:
-            json.dump(_scan_state_live, f, ensure_ascii=False, default=str)
+        ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x, bytes) else x), reverse=True)
     except Exception:
-        pass
+        ids_sorted = list(ids)
+    if not (from_date or to_date):
+        ids_sorted = ids_sorted[:SCAN_LIMIT]
+    emit(f"📬 {len(ids_sorted)} писем для анализа", "ok")
+    ids = set(ids_sorted)
 
-def _run_bg_scan(task_id, from_date=None, to_date=None, quick=False):
-    """Background scan - runs independently of HTTP connections."""
-    import time as _t
-    with _scan_state_lock:
-        _scan_state_live.update({
-            "running": True, "queued": False, "task_id": task_id,
-            "total": 0, "done": 0, "found": 0, "speed": 0, "eta": 0, "pct": 0,
-            "log": [], "from_date": from_date, "to_date": to_date,
-            "started": datetime.now().isoformat(), "finished": None, "error": None,
-        })
-
-    try:
-        if not scan_lock.acquire(blocking=False):
-            _bg_emit("Скан уже выполняется", "warn")
-            return
-        global SCAN_LIMIT
-        orig_limit = SCAN_LIMIT
-        if quick:
-            SCAN_LIMIT = QUICK_SCAN_LIMIT
+    # ── Fetch headers ─────────────────────────────────────────────────
+    emails_raw = []
+    for uid in list(ids):
         try:
-            _bg_emit(f"Фоновый скан запущен (task={task_id[:8]}...)", "ok")
-            result = scan_email(_bg_emit, from_date=from_date, to_date=to_date, quick=quick)
-            found = len(result) if isinstance(result, list) else 0
-            with _scan_state_lock:
-                _scan_state_live["found"] = found
-            _bg_emit(f"✅ Скан завершён: {found} новых счетов", "ok")
-        finally:
-            SCAN_LIMIT = orig_limit
-            scan_lock.release()
-    except Exception as ex:
-        _bg_emit(f"❌ Ошибка: {ex}", "err")
-        with _scan_state_lock:
-            _scan_state_live["error"] = str(ex)
-    finally:
-        with _scan_state_lock:
-            _scan_state_live["running"]  = False
-            _scan_state_live["finished"] = datetime.now().isoformat()
-            _scan_state_live["pct"]      = 100
-        _bg_emit("Фоновый скан завершён", "ok")
-
-def start_bg_scan(from_date=None, to_date=None, quick=False):
-    """Start scan in background thread. Returns task_id."""
-    import uuid
-    task_id = str(uuid.uuid4())
-    with _scan_state_lock:
-        if _scan_state_live["running"]:
-            return None  # already running
-        _scan_state_live["queued"] = True
-    t = threading.Thread(
-        target=_run_bg_scan,
-        args=(task_id, from_date, to_date, quick),
-        daemon=True, name=f"scan-{task_id[:8]}"
-    )
-    t.start()
-    log.info(f"Background scan started: task={task_id[:8]}")
-    return task_id
-
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  BITRIX24 CRM INTEGRATION
-# ═══════════════════════════════════════════════════════════════════════════════
-
-BITRIX_WEBHOOK = c("bitrix", "webhook_url") or os.environ.get("BITRIX_WEBHOOK", "")
-
-def bitrix_call(method: str, params: dict = None) -> dict:
-    """Call Bitrix24 REST API via webhook."""
-    if not BITRIX_WEBHOOK:
-        raise ValueError("Bitrix24 webhook не настроен")
-    url = BITRIX_WEBHOOK.rstrip("/") + f"/{method}.json"
-    try:
-        r = requests.post(url, json=params or {}, timeout=15)
-        r.raise_for_status()
-        data = r.json()
-        if "error" in data:
-            raise Exception(f"Bitrix error: {data.get('error_description', data['error'])}")
-        return data.get("result", data)
-    except Exception as ex:
-        log.error(f"Bitrix24 {method}: {ex}")
-        raise
-
-
-def sync_bitrix_invoices(emit=None) -> list:
-    """
-    Fetch invoices and deals from Bitrix24, convert to PayCalendar format.
-    Returns list of new invoices added.
-    """
-    def say(msg, t="info"):
-        log.info(f"Bitrix: {msg}")
-        if emit: emit(f"[Bitrix] {msg}", t)
-
-    if not BITRIX_WEBHOOK:
-        say("Webhook не настроен — открой /keys", "warn")
-        return []
-
-    say("Подключение к Bitrix24...")
-    existing     = load_invoices()
-    existing_ids = {i.get("bitrix_id") for i in existing if i.get("bitrix_id")}
-    new_invs     = []
-
-    # ── Fetch smart-process invoices (modern Bitrix) ──────────────────────────
-    try:
-        say("Загружаю счета (crm.invoice)...")
-        start = 0
-        while True:
-            res = bitrix_call("crm.invoice.list", {
-                "select": ["ID","ACCOUNT_NUMBER","UF_DEAL_ID","UF_COMPANY_ID",
-                           "PRICE","CURRENCY","DATE_INSERT","DATE_PAY_BEFORE",
-                           "STATUS_ID","ORDER_TOPIC","UF_CONTACT_ID"],
-                "order":  {"DATE_INSERT": "DESC"},
-                "start":  start,
+            _, data = mail.fetch(uid, "(RFC822.HEADER)")
+            if not data or not data[0]: continue
+            msg  = email.message_from_bytes(data[0][1])
+            subj = decode_header(msg.get("Subject",""))
+            sndr = decode_header(msg.get("From",""))
+            try:
+                ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
+            except Exception:
+                ds = date.today().isoformat()
+            uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
+            emails_raw.append({
+                "id": uid_s, "subject": subj, "from": sndr,
+                "body": "", "date": ds, "has_attachment": False,
+                "account": acct_email,
             })
-            items = res if isinstance(res, list) else res.get("invoices", [])
-            if not items:
-                break
-            for inv in items:
-                bid = f"bx_inv_{inv.get('ID','')}"
-                if bid in existing_ids:
-                    continue
-                # Map Bitrix status to PayCalendar status
-                bstatus = str(inv.get("STATUS_ID", ""))
-                status = "paid" if bstatus in ("P", "PAID", "5") else "pending"
-                amount = float(inv.get("PRICE") or 0)
-                vendor = inv.get("ORDER_TOPIC") or f"Клиент #{inv.get('UF_COMPANY_ID','?')}"
-                due    = (inv.get("DATE_PAY_BEFORE") or "")[:10] or None
-                issued = (inv.get("DATE_INSERT") or "")[:10] or date.today().isoformat()
-                new_invs.append(build_invoice({
-                    "is_invoice":   True,
-                    "vendor":       vendor,
-                    "amount":       amount,
-                    "currency":     inv.get("CURRENCY", "EUR"),
-                    "due_date":     due,
-                    "issue_date":   issued,
-                    "invoice_number": str(inv.get("ACCOUNT_NUMBER", "")),
-                    "description":  inv.get("ORDER_TOPIC", ""),
-                    "category":     "services",
-                    "status":       status,
-                }, bid, inv.get("ORDER_TOPIC","Bitrix счёт"),
-                   "", issued, False, "bitrix"))
-                new_invs[-1]["bitrix_id"] = bid
-                new_invs[-1]["bitrix_raw_id"] = inv.get("ID")
-            say(f"  Загружено: {len(items)} счетов (start={start})")
-            if len(items) < 50:
-                break
-            start += 50
-        say(f"✓ Счета: {len(new_invs)} новых", "ok")
-    except Exception as ex:
-        say(f"crm.invoice.list: {ex} — пробую crm.deal...", "warn")
+        except Exception as ex:
+            log.debug(f"Header {uid}: {ex}")
 
-    # ── Fetch deals as fallback (older Bitrix or deals-as-invoices) ───────────
-    try:
-        say("Загружаю сделки (crm.deal)...")
-        deals_added = 0
-        start = 0
-        while True:
-            res = bitrix_call("crm.deal.list", {
-                "select": ["ID","TITLE","OPPORTUNITY","CURRENCY_ID",
-                           "CLOSEDATE","DATE_CREATE","STAGE_ID",
-                           "COMPANY_ID","CONTACT_ID","COMMENTS"],
-                "filter": {"!STAGE_ID": ["LOSE", "FINAL_INVOICE"]},
-                "order":  {"DATE_CREATE": "DESC"},
-                "start":  start,
-            })
-            items = res if isinstance(res, list) else []
-            if not items:
-                break
-            for deal in items:
-                bid = f"bx_deal_{deal.get('ID','')}"
-                if bid in existing_ids:
-                    continue
-                stage = str(deal.get("STAGE_ID", ""))
-                status = "paid" if stage in ("WON","C7:WON") else "pending"
-                amount = float(deal.get("OPPORTUNITY") or 0)
-                if amount == 0:
-                    continue  # skip zero deals
-                vendor = deal.get("TITLE", "Сделка Bitrix")
-                due    = (deal.get("CLOSEDATE") or "")[:10] or None
-                issued = (deal.get("DATE_CREATE") or "")[:10] or date.today().isoformat()
-                inv_obj = build_invoice({
-                    "is_invoice":   True,
-                    "vendor":       vendor,
-                    "amount":       amount,
-                    "currency":     deal.get("CURRENCY_ID", "EUR"),
-                    "due_date":     due,
-                    "issue_date":   issued,
-                    "invoice_number": f"D-{deal.get('ID','')}",
-                    "description":  deal.get("COMMENTS", "")[:100],
-                    "category":     "services",
-                    "status":       status,
-                }, bid, vendor, "", issued, False, "bitrix_deal")
-                inv_obj["bitrix_id"]     = bid
-                inv_obj["bitrix_raw_id"] = deal.get("ID")
-                inv_obj["source_type"]   = "deal"
-                new_invs.append(inv_obj)
-                deals_added += 1
-            if len(items) < 50: break
-            start += 50
-        say(f"✓ Сделки: {deals_added} новых", "ok")
-    except Exception as ex:
-        say(f"crm.deal.list: {ex}", "warn")
+    emit(f"📧 Загружено заголовков: {len(emails_raw)}", "ok")
 
-    if new_invs:
-        save_invoices(existing + new_invs)
-        say(f"✅ Добавлено из Bitrix24: {len(new_invs)}", "ok")
-    else:
-        say("Новых записей не найдено", "info")
-    return new_invs
+    # ── PDF fetch function ────────────────────────────────────────────
+    _pending_pdfs = {}
 
+    def _fetch_full(uid_str):
+        try:
+            uid_b = uid_str.encode() if isinstance(uid_str, str) else uid_str
+            _, data = mail.fetch(uid_b, "(RFC822)")
+            if not data or not data[0]: return ""
+            raw_msg = email.message_from_bytes(data[0][1])
+            body_text = get_plain_body(raw_msg)
+            pdf_texts = []
+            for part in raw_msg.walk():
+                ct = (part.get_content_type() or "").lower()
+                fn = (part.get_filename() or "").lower()
+                if "pdf" in ct or fn.endswith(".pdf"):
+                    try:
+                        pdf_bytes = part.get_payload(decode=True)
+                        if pdf_bytes:
+                            pt = extract_pdf_text(pdf_bytes, max_chars=4000)
+                            if pt:
+                                pdf_texts.append(pt)
+                            parsed = parse_pdf_invoice(pt or "", fn)
+                            if parsed.get("is_invoice"):
+                                old = _pending_pdfs.get(uid_str, {})
+                                if parsed.get("signal_count",0) > old.get("parsed",{}).get("signal_count",0):
+                                    _pending_pdfs[uid_str] = {"filename": fn, "bytes": pdf_bytes, "parsed": parsed}
+                            else:
+                                if uid_str not in _pending_pdfs:
+                                    _pending_pdfs[uid_str] = {"filename": fn, "bytes": pdf_bytes, "parsed": {}}
+                    except Exception as pe:
+                        log.debug(f"PDF {fn}: {pe}")
+            result = body_text
+            if pdf_texts:
+                result += "\n\n--- PDF ---\n" + "\n".join(pdf_texts)
+            return result
+        except Exception as ex:
+            log.debug(f"fetch {uid_str}: {ex}")
+            return ""
 
-def create_bitrix_invoice(inv: dict) -> dict:
-    """Push a PayCalendar invoice back to Bitrix24 as invoice."""
-    if not BITRIX_WEBHOOK:
-        raise ValueError("Webhook не настроен")
-    result = bitrix_call("crm.invoice.add", {"fields": {
-        "ORDER_TOPIC":      inv.get("vendor", "Invoice"),
-        "PRICE":            inv.get("amount", 0),
-        "CURRENCY":         inv.get("currency", "EUR"),
-        "DATE_PAY_BEFORE":  inv.get("due_date", ""),
-        "DATE_INSERT":      inv.get("issue_date", date.today().isoformat()),
-        "STATUS_ID":        "P" if inv.get("status") == "paid" else "N",
-        "COMMENTS":         inv.get("description", ""),
-    }})
-    log.info(f"Bitrix invoice created: {result}")
+    # ── Process emails ────────────────────────────────────────────────
+    result = process_emails(emails_raw, emit, fetch_body=_fetch_full, source=source)
+
+    # ── Link PDFs to invoices ─────────────────────────────────────────
+    if _pending_pdfs and isinstance(result, list):
+        for inv in result:
+            uid = inv.get("email_uid","")
+            if uid in _pending_pdfs:
+                pinfo = _pending_pdfs[uid]
+                try:
+                    save_pdf(inv["id"], pinfo["bytes"], pinfo.get("filename","invoice.pdf"))
+                    inv["has_pdf"]      = True
+                    inv["pdf_filename"] = pinfo.get("filename","")
+                    parsed = pinfo.get("parsed",{})
+                    if parsed.get("is_invoice"):
+                        if not inv.get("amount") or float(inv.get("amount",0))==0:
+                            if parsed.get("amount"): inv["amount"] = parsed["amount"]
+                        if not inv.get("due_date") and parsed.get("due_date"):
+                            inv["due_date"] = parsed["due_date"]
+                        if not inv.get("invoice_number") and parsed.get("invoice_number"):
+                            inv["invoice_number"] = parsed["invoice_number"]
+                except Exception as pe:
+                    log.error(f"PDF save: {pe}")
+
+        # PDF-only invoices (caught only by PDF parser)
+        result_uids = {i.get("email_uid","") for i in result}
+        for uid_str, pinfo in _pending_pdfs.items():
+            parsed = pinfo.get("parsed",{})
+            if uid_str in result_uids or not parsed.get("is_invoice"): continue
+            if not parsed.get("amount") and parsed.get("signal_count",0) < 3: continue
+            em_meta = next((e for e in emails_raw if str(e.get("id",""))==uid_str), {})
+            subj = em_meta.get("subject","PDF Invoice")
+            frm  = em_meta.get("from","")
+            ds   = em_meta.get("date", date.today().isoformat())[:10]
+            inv  = build_invoice({
+                "is_invoice": True,
+                "vendor":   parsed.get("vendor") or extract_vendor(subj, frm, ""),
+                "amount":   parsed.get("amount", 0),
+                "currency": parsed.get("currency","EUR"),
+                "due_date": parsed.get("due_date"),
+                "issue_date": parsed.get("issue_date") or ds,
+                "invoice_number": parsed.get("invoice_number",""),
+                "description": subj[:100], "category":"services","status":"pending",
+            }, uid_str, subj, frm, ds, True, source+":pdf")
+            inv["has_pdf"]      = True
+            inv["pdf_filename"] = pinfo.get("filename","")
+            try: save_pdf(inv["id"], pinfo["bytes"], inv["pdf_filename"])
+            except Exception: pass
+            result.append(inv)
+            emit(f"  📄 PDF invoice: {inv['vendor']} {inv.get('amount',0)}€","ok")
+
+        if any(i.get("has_pdf") for i in result):
+            all_invs = load_invoices()
+            inv_map  = {i["id"]: i for i in result}
+            for i, inv in enumerate(all_invs):
+                if inv["id"] in inv_map:
+                    all_invs[i] = inv_map[inv["id"]]
+            save_invoices(all_invs)
+
+    try: mail.logout()
+    except Exception: pass
     return result
 
 
-
-# ═══════════════════════════════════════════════════════════════════════════════
-#  MULTI-ACCOUNT EMAIL SUPPORT
-#  Scan multiple email accounts for invoices
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def load_email_accounts() -> list:
-    """Load all configured email accounts from config + env vars."""
-    accounts = []
-    
-    # Primary account (always first)
-    if EMAIL_ADDR and EMAIL_PASS:
-        accounts.append({
-            "id":    "primary",
-            "email": EMAIL_ADDR,
-            "password": EMAIL_PASS,
-            "imap":  IMAP_HOST,
-            "port":  IMAP_PORT,
-            "label": EMAIL_ADDR.split("@")[0],
-        })
-    
-    # Additional accounts from config: [email_2], [email_3], ...
-    for i in range(2, 11):
-        addr = c("email", f"address_{i}", "") or os.environ.get(f"PC_EMAIL_ADDRESS_{i}", "")
-        pwd  = c("email", f"password_{i}", "") or os.environ.get(f"PC_EMAIL_PASSWORD_{i}", "")
-        if addr and pwd:
-            host = c("email", f"imap_host_{i}", "imap.zone.eu") or os.environ.get(f"PC_EMAIL_IMAP_HOST_{i}", "imap.zone.eu")
-            accounts.append({
-                "id":    f"account_{i}",
-                "email": addr,
-                "password": pwd,
-                "imap":  host,
-                "port":  993,
-                "label": addr.split("@")[0],
-            })
-    
-    return accounts
-
-
-def save_email_account(idx: int, email: str, password: str, imap_host: str = "imap.zone.eu"):
-    """Save an additional email account to config."""
-    if idx < 2 or idx > 10:
-        raise ValueError("Account index must be 2-10")
-    save_config_value("email", f"address_{idx}",  email)
-    save_config_value("email", f"password_{idx}", password)
-    save_config_value("email", f"imap_host_{idx}", imap_host or "imap.zone.eu")
-    log.info(f"Saved email account #{idx}: {email}")
-
-
-def delete_email_account(idx: int):
-    """Remove an additional email account."""
-    for key in [f"address_{idx}", f"password_{idx}", f"imap_host_{idx}"]:
-        save_config_value("email", key, "")
-    log.info(f"Deleted email account #{idx}")
-
-
 def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
-    """Scan a single email account. Returns new invoices."""
+    """Scan any email account using shared IMAP logic."""
     label = account["email"]
     emit(f"📧 Аккаунт: {label}", "info")
 
-    # Temporarily override globals for this account
-    orig_addr = os.environ.get("_scan_addr", EMAIL_ADDR)
-    orig_pass = os.environ.get("_scan_pass", EMAIL_PASS)
-    orig_host = os.environ.get("_scan_host", IMAP_HOST)
-
-    # Use a custom scan_imap that uses account credentials
     alt_hosts = list(dict.fromkeys([
-        account["imap"],
-        "imap.zone.eu",
-        f"imap.{account['email'].split('@')[1]}" if '@' in account['email'] else "",
+        account["imap"], "imap.zone.eu",
+        f"imap.{label.split('@')[1]}" if '@' in label else "",
     ]))
     alt_hosts = [h for h in alt_hosts if h]
 
-    mail, connected_host = _try_imap_connect(
-        alt_hosts, account["port"],
-        account["email"], account["password"]
-    )
+    mail, connected_host = _try_imap_connect(alt_hosts, account["port"],
+                                              account["email"], account["password"])
     if not mail:
-        emit(f"  ✗ Не удалось подключиться к {label}", "err")
+        emit(f"  ✗ {label}: подключение не удалось", "err")
         return []
 
-    emit(f"  ✓ Подключён к {connected_host}", "ok")
-
+    emit(f"  ✓ {connected_host}", "ok")
     try:
-        mail.select(IMAP_FOLDER)
-        date_terms = []
-        if from_date:
-            from datetime import datetime as _dt
-            since_str = _dt.strptime(from_date, "%Y-%m-%d").strftime("%d-%b-%Y")
-            date_terms.append(f"SINCE {since_str}".encode())
-        if to_date:
-            from datetime import datetime as _dt2, timedelta
-            before_dt = _dt2.strptime(to_date, "%Y-%m-%d") + timedelta(days=1)
-            date_terms.append(f"BEFORE {before_dt.strftime('%d-%b-%Y')}".encode())
-
-        ids = set()
-        if date_terms:
-            _, data = mail.search(None, *date_terms)
-            for uid in data[0].split(): ids.add(uid)
-        else:
-            for term in IMAP_SUBJECTS:
-                try:
-                    _, data = mail.search(None, term)
-                    for uid in data[0].split(): ids.add(uid)
-                except Exception: pass
-            if not ids:
-                _, data = mail.search(None, "ALL")
-                all_ids = data[0].split()
-                ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
-
-        ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x,bytes) else x), reverse=True)
-        ids = set(ids_sorted[:SCAN_LIMIT])
-        emit(f"  Писем для анализа: {len(ids)}", "info")
-
-        emails_raw = []
-        for uid in list(ids):
-            try:
-                _, data = mail.fetch(uid, "(RFC822.HEADER)")
-                if not data or not data[0]: continue
-                msg = email.message_from_bytes(data[0][1])
-                subj = decode_header(msg.get("Subject",""))
-                sndr = decode_header(msg.get("From",""))
-                try:
-                    ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
-                except Exception:
-                    ds = date.today().isoformat()
-                uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
-                emails_raw.append({
-                    "id": f"{account['id']}_{uid_s}",
-                    "subject": subj, "from": sndr,
-                    "body": "", "date": ds, "has_attachment": False,
-                    "account": account["email"],
-                })
-            except Exception as ex:
-                emit(f"  Header error {uid}: {ex}", "err")
-
-        def _fetch_pdf(uid_str):
-            try:
-                real_uid = uid_str.split("_")[-1].encode()
-                _, data = mail.fetch(real_uid, "(RFC822)")
-                if not data or not data[0]: return ""
-                raw_msg = email.message_from_bytes(data[0][1])
-                body_text = get_plain_body(raw_msg)
-                pdf_texts = []
-                for part in raw_msg.walk():
-                    ct = part.get_content_type() or ""
-                    fn = part.get_filename() or ""
-                    if "pdf" in ct.lower() or fn.lower().endswith(".pdf"):
-                        try:
-                            pdf_bytes = part.get_payload(decode=True)
-                            if pdf_bytes:
-                                pt = extract_pdf_text(pdf_bytes)
-                                if pt: pdf_texts.append(pt)
-                        except Exception: pass
-                result = body_text
-                if pdf_texts: result += "\n--- PDF ---\n" + "\n".join(pdf_texts)
-                return result
-            except Exception: return ""
-
-        result = process_emails(emails_raw, emit, fetch_body=_fetch_pdf, source=f"imap:{account['email']}")
-        try: mail.logout()
-        except Exception: pass
-        return result if isinstance(result, list) else []
-
+        return _do_imap_scan(mail, connected_host, emit, from_date, to_date,
+                             label, source=f"imap:{label}") or []
     except Exception as ex:
         emit(f"  ✗ {label}: {ex}", "err")
         try: mail.logout()
-        except Exception: pass
+        except: pass
         return []
 
 
