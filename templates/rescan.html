@@ -296,74 +296,63 @@ async function runAll(){
   setStep(3); setTitle('Шаг 3: Сканирование...'); setDot('#f59e0b',true);
   var totalFound=0;
 
-  for(var i=0;i<MONTHS.length;i++){
-    var mo=MONTHS[i];
-    setBar(mo.key,0,false); setCnt(mo.key,'…');
-    setTitle('Сканирую: '+mo.label+' ('+( i+1)+'/'+MONTHS.length+')');
-    setCur('Запускаю скан '+mo.label+'...');
-    addLog('━━━ '+mo.label+' ━━━','Gray');
+  // ONE scan for the full date range (no lock issues)
+  addLog('━━━ Полный скан всех писем ━━━','Gray');
+  setCur('Запускаю единый скан...');
 
-    var scanResult;
-    try{
-      scanResult=await api('/api/scan-start',{from_date:mo.from,to_date:mo.to});
-      if(!scanResult.ok && !scanResult.running){
-        addLog('Ошибка запуска: '+(scanResult.error||'?'),'Err');
-        setBar(mo.key,100,true); setCnt(mo.key,'❌');
-        continue;
-      }
-      addLog('Запущен ▶','Ok');
-    } catch(e){
-      addLog('Ошибка: '+e.message,'Err');
-      setBar(mo.key,100,true); setCnt(mo.key,'❌');
-      continue;
+  // Animate all bars
+  var barAnim=0;
+  var barInterval=setInterval(function(){
+    barAnim=Math.min(barAnim+1,88);
+    MONTHS.forEach(function(mo){ setBar(mo.key,barAnim,false); });
+    setOverall(Math.floor(barAnim/25),4);
+  },400);
+
+  var scanOk=false;
+  try{
+    var scanResult=await api('/api/scan-start',{});
+    if(scanResult.ok||scanResult.running){
+      addLog('Скан запущен ▶ (по ключевым словам: arve, invoice, счёт...)','Ok');
+      scanOk=true;
+    } else {
+      addLog('❌ '+( scanResult.error||'Ошибка запуска'),'Err');
     }
+  } catch(e){ addLog('❌ '+e.message,'Err'); }
 
-    // Animate bar while scanning
-    var barAnim=0;
-    var barInterval=setInterval(function(k){ return function(){
-      barAnim=Math.min(barAnim+2,92);
-      setBar(k,barAnim,false);
-    };}(mo.key),300);
-
+  if(scanOk){
     // Poll until done
-    var done=false; var tries=0; state.lastFound=0;
-    while(!done && tries<120){
+    var done=false; var tries=0; var lastLogLen=0;
+    while(!done && tries<300){
       await new Promise(function(r){setTimeout(r,3000);}); tries++;
       try{
         var st=await api('/api/scan-status');
-        // Show new log lines
         if(st.log){
-          for(var j=0;j<st.log.length;j++){
+          for(var j=lastLogLen;j<st.log.length;j++){
             var entry=st.log[j];
-            if(!entry._shown && entry.msg && !entry.msg.startsWith('__')){
-              entry._shown=true;
+            if(entry.msg && !entry.msg.startsWith('__')){
               var lc=entry.t==='ok'?'Ok':entry.t==='err'?'Err':entry.t==='warn'?'Warn':'Info';
               addLog(entry.msg,lc);
               setCur(entry.msg.slice(0,70));
             }
           }
+          lastLogLen=st.log.length;
         }
-        if(st.pct>0) barAnim=Math.min(Math.max(barAnim,st.pct),92);
-        var cur_found=(st.found||0)+(st.found_total||0);
-        if(cur_found>0) document.getElementById('cntFound').textContent=totalFound+(st.found||0);
+        if(st.pct>0){
+          barAnim=Math.min(Math.max(barAnim,st.pct),95);
+          MONTHS.forEach(function(mo){ setBar(mo.key,barAnim,false); });
+        }
+        totalFound=st.found||0;
+        document.getElementById('cntFound').textContent=totalFound;
         if(!st.running && st.started){ done=true; }
       } catch(e){ addLog('Poll: '+e.message,'Warn'); }
     }
-
-    clearInterval(barInterval);
-    var monthFound=0;
-    try{
-      var finalSt=await api('/api/scan-status');
-      monthFound=finalSt.found||0;
-    } catch(e){}
-    totalFound+=monthFound;
-    setBar(mo.key,100,true);
-    setCnt(mo.key,monthFound);
-    setOverall(i+1,MONTHS.length);
-    document.getElementById('cntFound').textContent=totalFound;
-    addLog('✅ '+mo.label+': найдено '+monthFound+' счетов','Ok');
-    await new Promise(function(r){setTimeout(r,500);});
   }
+
+  clearInterval(barInterval);
+  // Mark all months done with total count
+  MONTHS.forEach(function(mo){ setBar(mo.key,100,true); });
+  MONTHS.forEach(function(mo){ setCnt(mo.key,'✓'); });
+  setOverall(4,4);
 
   // ── DONE ────────────────────────────────────────────────────────────────
   stopTimer();

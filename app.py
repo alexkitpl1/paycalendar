@@ -1516,16 +1516,19 @@ def scan_imap(emit, from_date=None, to_date=None):
             except Exception as ex:
                 emit(f"Дата-поиск ошибка: {ex}", "warn")
 
-        # Subject keyword search (ALWAYS run, regardless of date results)
-        kw_ids = set()
+        # Subject keyword search — WITHOUT date filter (get ALL matching emails)
+        # This catches invoices outside the date range too
+        kw_before = len(ids)
         for term in IMAP_SUBJECTS:
-                try:
-                    args = [term] + date_terms if date_terms else [term]
-                    _, data = mail.search(None, *args)
+            try:
+                _, data = mail.search(None, term)
+                if data[0]:
                     for uid in data[0].split():
                         ids.add(uid)
-                except Exception:
-                    pass
+            except Exception:
+                pass
+        kw_added = len(ids) - kw_before
+        emit(f"🔍 По ключевым словам: {kw_added} новых (итого: {len(ids)})", "ok")
 
         # New since last scan
         if last_uid and not from_date:
@@ -1562,14 +1565,13 @@ def scan_imap(emit, from_date=None, to_date=None):
             all_ids = data[0].split()
             ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
 
-        # Sort newest first; no limit when using date range (process everything)
+                # Sort newest first, limit to SCAN_LIMIT
         try:
             ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x,bytes) else x), reverse=True)
         except Exception:
             ids_sorted = list(ids)
-        if not date_terms:
-            ids_sorted = ids_sorted[:SCAN_LIMIT]
-        emit(f"📬 {len(ids_sorted)} писем для анализа" + (f" (лимит {SCAN_LIMIT})" if not date_terms else " (все в диапазоне)"), "ok")
+        ids_sorted = ids_sorted[:SCAN_LIMIT]
+        emit(f"📬 {len(ids_sorted)} писем для анализа (из {len(ids)} найденных)", "ok")
         ids = set(ids_sorted)
 
         # Fetch headers
