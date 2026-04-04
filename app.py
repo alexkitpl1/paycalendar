@@ -1227,6 +1227,48 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
 
 
 # ── Main scan dispatcher ──────────────────────────────────────────────────────
+
+def _resolve_host_doh(hostname):
+    """Resolve hostname via multiple DoH providers (bypasses Railway DNS for .ee domains)."""
+    providers = [
+        f"https://dns.google/resolve?name={hostname}&type=A",
+        f"https://cloudflare-dns.com/dns-query?name={hostname}&type=A",
+    ]
+    for url in providers:
+        try:
+            r = requests.get(url, headers={"Accept":"application/dns-json"}, timeout=4)
+            if r.status_code == 200:
+                answers = r.json().get("Answer",[])
+                ips = [a["data"] for a in answers if a.get("type")==1]
+                if ips:
+                    log.info(f"DoH {hostname} → {ips[0]}")
+                    return ips[0]
+        except Exception as ex:
+            log.debug(f"DoH failed {hostname}: {ex}")
+    return hostname
+
+
+def _try_imap_connect(hosts, port, email, password):
+    """Try connecting to multiple IMAP hostnames. Returns (mail, host) or (None, None)."""
+    import ssl as _ssl
+    for host in hosts:
+        if not host: continue
+        ip = _resolve_host_doh(host)
+        for target in ([ip, host] if ip != host else [host]):
+            try:
+                ctx = _ssl.create_default_context()
+                if target != host:
+                    ctx.check_hostname = False
+                    ctx.verify_mode = _ssl.CERT_NONE
+                mail = imaplib.IMAP4_SSL(target, port, ssl_context=ctx)
+                mail.login(email, password)
+                log.info(f"IMAP connected: {host} via {target}")
+                return mail, host
+            except Exception as ex:
+                log.debug(f"IMAP {target}: {ex}")
+    return None, None
+
+
 def scan_imap(emit, from_date=None, to_date=None):
     """Scan inbox via IMAP. Returns list of invoices or None on failure."""
     emit(f"IMAP подключение к {IMAP_HOST}:{IMAP_PORT}...")
