@@ -1535,12 +1535,24 @@ def background_scanner():
 # ═══════════════════════════════════════════════════════════════════════════════
 #  ROUTES
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/manifest.json")
+def serve_manifest():
+    return send_from_directory(BASE_DIR, "manifest.json",
+                               mimetype="application/manifest+json")
+
+@app.route("/icon-<size>.png")
+def serve_icon(size):
+    filename = f"icon-{size}.png"
+    return send_from_directory(BASE_DIR, filename, mimetype="image/png")
+
 @app.route("/")
 def index():
-    # Simple auth for cloud deployment
     access_key = os.environ.get("ACCESS_KEY", "")
     if access_key:
-        token = request.cookies.get("pc_token", "")
+        token = (request.cookies.get("pc_token","") or
+                 request.headers.get("X-PC-Token","") or
+                 request.args.get("_token",""))
         if token != access_key:
             return redirect("/login-page")
     return send_from_directory(TMPL_DIR, "index.html")
@@ -1576,6 +1588,22 @@ function login(){
   });
 }
 </script></body></html>"""
+
+def _check_token():
+    """Return True if request is authenticated."""
+    access_key = os.environ.get("ACCESS_KEY", "")
+    if not access_key:
+        return True
+    return (request.cookies.get("pc_token","") == access_key or
+            request.headers.get("X-PC-Token","") == access_key or
+            request.args.get("_token","") == access_key)
+
+@app.before_request
+def require_auth():
+    """Block unauthenticated API calls."""
+    if request.path.startswith("/api/") and request.path not in ("/api/auth-check",):
+        if not _check_token():
+            return jsonify({"error": "unauthorized"}), 401
 
 @app.route("/api/auth-check", methods=["POST"])
 def api_auth_check():

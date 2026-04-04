@@ -2,7 +2,14 @@
 <html lang="ru">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#0c0f14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="PayCalendar">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="manifest" href="/manifest.json">
+<link rel="apple-touch-icon" href="/icon-192.png">
 <title>PayCalendar</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Mono:wght@300;400;500&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
@@ -195,6 +202,42 @@ input,select{font-family:'DM Sans',sans-serif}
 .pulse{animation:pulse 1.4s ease-in-out infinite}
 @keyframes pulse{0%,100%{opacity:1}50%{opacity:.45}}
 @keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── iPhone / iOS fixes ─────────────────────────────────────────────────── */
+@supports(padding: max(0px)){
+  body { padding-bottom: env(safe-area-inset-bottom); }
+  .scan-panel-fixed { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+}
+/* Prevent tap highlight */
+* { -webkit-tap-highlight-color: transparent; }
+/* Min touch target 44px */
+button, .btn, .nav-btn { min-height: 44px; min-width: 44px; }
+.chip { min-height: 28px; }
+/* Fix position:fixed on iOS (Safari scroll bug) */
+#scan-panel { position: sticky; bottom: 0; position: -webkit-sticky; }
+/* Better scroll on iOS */
+.cal-wrap { -webkit-overflow-scrolling: touch; }
+/* Prevent zoom on input focus */
+input, select, textarea { font-size: 16px !important; }
+/* Mobile header wrap */
+@media (max-width: 600px) {
+  .topbar { flex-wrap: wrap; gap: 4px; padding: 8px; }
+  .scan-btn-group { flex-wrap: wrap; gap: 4px; }
+  .scan-btn-group button { font-size: 12px; padding: 8px 10px; }
+  .day { min-height: 60px; }
+  .chip { font-size: 9px; }
+  .chip-a { font-size: 9px; }
+  .stat-pill { font-size: 11px; padding: 4px 8px; }
+  .modal { max-width: 95vw !important; }
+  .modal-inner { padding: 16px !important; }
+}
+/* Swipe-friendly larger day cells on mobile */
+@media (max-width: 480px) {
+  #m-grid { gap: 1px; }
+  .day { min-height: 52px; padding: 3px; }
+  .dn { font-size: 12px; }
+  .dow-h { font-size: 10px; padding: 3px 0; }
+}
 </style>
 </head>
 <body>
@@ -1167,10 +1210,61 @@ async function saveForm(existId){
   closeModal();render();
 }
 
+/* ─── PWA Install prompt ──────────────────────────────────────────────────── */
+let _deferredPrompt = null;
+window.addEventListener('beforeinstallprompt', e => {
+  e.preventDefault();
+  _deferredPrompt = e;
+  // Show install banner
+  const banner = document.getElementById('install-banner');
+  if(banner) banner.style.display = 'flex';
+});
+window.addEventListener('appinstalled', () => {
+  const banner = document.getElementById('install-banner');
+  if(banner) banner.style.display = 'none';
+});
+function installApp(){
+  if(_deferredPrompt){
+    _deferredPrompt.prompt();
+    _deferredPrompt.userChoice.then(()=>{ _deferredPrompt=null; });
+  }
+}
+// iOS: show "Add to Home Screen" hint
+function isIOS(){ return /iphone|ipad|ipod/i.test(navigator.userAgent); }
+function isStandalone(){ return window.navigator.standalone === true; }
+window.addEventListener('load', ()=>{
+  if(isIOS() && !isStandalone()){
+    const b = document.getElementById('ios-hint');
+    if(b) b.style.display = 'flex';
+  }
+});
+
 /* ─── Init ──────────────────────────────────────────────────────────────── */
 loadAll();
 setInterval(()=>loadAll(),5*60*1000); // refresh every 5 min
 startAutoTimer(60); // auto-scan countdown
 </script>
+
+<!-- PWA install banner (Android) -->
+<div id="install-banner" style="display:none;position:fixed;bottom:0;left:0;right:0;
+  background:#0f1520;border-top:1px solid #2563eb;padding:10px 16px;
+  align-items:center;justify-content:space-between;z-index:98;font-size:13px">
+  <span>📲 Добавь на главный экран</span>
+  <div style="display:flex;gap:8px">
+    <button onclick="installApp()" style="padding:6px 12px;border-radius:7px;
+      background:#2563eb;color:#fff;border:none;cursor:pointer;font-size:12px">Добавить</button>
+    <button onclick="this.parentElement.parentElement.style.display='none'"
+      style="padding:6px;background:transparent;border:none;color:#6b89a5;cursor:pointer">✕</button>
+  </div>
+</div>
+
+<!-- iOS hint -->
+<div id="ios-hint" style="display:none;position:fixed;bottom:0;left:0;right:0;
+  background:#0f1520;border-top:1px solid #2563eb;padding:12px 16px;
+  align-items:center;gap:10px;z-index:98;font-size:13px;flex-wrap:wrap">
+  <span>📲 Нажми <strong>Поделиться</strong> → <strong>На экран «Домой»</strong> для установки</span>
+  <button onclick="this.parentElement.style.display='none'"
+    style="padding:6px;background:transparent;border:none;color:#6b89a5;cursor:pointer;margin-left:auto">✕</button>
+</div>
 </body>
 </html>
