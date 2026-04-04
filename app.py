@@ -2113,6 +2113,16 @@ def api_setup_zone():
         "imap_host": IMAP_HOST
     })
 
+
+@app.route("/api/version")
+def api_version():
+    return jsonify({
+        "version": "2.5.0",
+        "features": ["KeyPool","HuggingFace","GeminiRotation","imap.zone.eu"],
+        "imap_host": IMAP_HOST,
+        "provider": _active_provider() or "keyword",
+    })
+
 @app.route("/health")
 def health():
     return "ok", 200
@@ -2182,7 +2192,7 @@ def _check_token():
 @app.before_request
 def require_auth():
     """Block unauthenticated API calls."""
-    skip = ("/api/auth-check", "/api/stats", "/health", "/api/test-scan", "/api/diagnose", "/api/setup-zone", "/api/keys", "/api/keys/add")
+    skip = ("/api/auth-check", "/api/stats", "/health", "/api/test-scan", "/api/diagnose", "/api/setup-zone", "/api/keys", "/api/keys/add", "/api/version")
     if request.path.startswith("/api/") and request.path not in skip:
         if not _check_token():
             return jsonify({"error": "unauthorized"}), 401
