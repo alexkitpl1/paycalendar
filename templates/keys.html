@@ -65,6 +65,24 @@ a.hint-link{color:#60a5fa}
   <div class="log" id="addLog"></div>
 </div>
 
+
+<!-- Email Accounts -->
+<div class="card">
+  <div class="card-title">📧 Email аккаунты</div>
+  <p style="color:#9ca3af;font-size:12px;margin-bottom:14px">
+    Добавь все адреса на которые приходят счета — они будут сканироваться вместе
+  </p>
+  <div id="accountsList" style="margin-bottom:14px"></div>
+  <div style="background:#111827;border-radius:10px;padding:14px;margin-bottom:10px">
+    <div style="font-size:12px;font-weight:600;color:#6b7280;margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Добавить аккаунт</div>
+    <input type="email" id="newEmail" placeholder="info@welltechnology.eu" style="width:100%;padding:10px;border-radius:8px;border:1px solid #2d3748;background:#0f1117;color:#e2e8f0;font-size:13px;margin-bottom:8px">
+    <input type="password" id="newPass" placeholder="Пароль" style="width:100%;padding:10px;border-radius:8px;border:1px solid #2d3748;background:#0f1117;color:#e2e8f0;font-size:13px;margin-bottom:8px">
+    <input type="text" id="newImap" placeholder="IMAP сервер (необязательно, по умолч. imap.zone.eu)" style="width:100%;padding:10px;border-radius:8px;border:1px solid #2d3748;background:#0f1117;color:#e2e8f0;font-size:13px;margin-bottom:10px">
+    <button class="btn btn2" onclick="testAndAddAccount()" id="addAccBtn">➕ Проверить и добавить</button>
+  </div>
+  <div class="log" id="accLog"></div>
+</div>
+
 <!-- Fix IMAP -->
 <div class="card">
   <div class="card-title">Исправить IMAP (Zone.ee)</div>
@@ -185,5 +203,68 @@ async function runTest() {
 }
 
 loadStatus();
+
+async function loadAccounts(){
+  try {
+    var accs = await api('/api/email-accounts');
+    var html2 = '';
+    accs.forEach(function(acc){
+      var isPrimary = acc.id === 'primary';
+      html2 += '<div style="display:flex;align-items:center;gap:8px;padding:10px;background:#111827;border-radius:8px;margin-bottom:6px">'
+        +'<div style="width:36px;height:36px;border-radius:50%;background:#1e3a5f;display:flex;align-items:center;justify-content:center;font-size:14px;flex-shrink:0">📧</div>'
+        +'<div style="flex:1;min-width:0">'
+          +'<div style="font-size:13px;color:#e2e8f0;font-weight:600">'+acc.email+'</div>'
+          +'<div style="font-size:11px;color:#6b7280">'+acc.imap+' · '+(isPrimary?'<span style="color:#34d399">основной</span>':'дополнительный')+'</div>'
+        +'</div>'
+        +(isPrimary?'':'<button onclick="deleteAccount(''+acc.id+'')" style="padding:4px 10px;border-radius:6px;border:1px solid #374151;background:transparent;color:#f87171;font-size:11px;cursor:pointer">✕</button>')
+      +'</div>';
+    });
+    if(accs.length === 0) html2 = '<div style="color:#6b7280;font-size:13px;text-align:center;padding:10px">Нет аккаунтов</div>';
+    document.getElementById('accountsList').innerHTML = html2;
+  } catch(e){ console.error(e); }
+}
+
+async function testAndAddAccount(){
+  var email = document.getElementById('newEmail').value.trim();
+  var pass  = document.getElementById('newPass').value.trim();
+  var imap  = document.getElementById('newImap').value.trim() || 'imap.zone.eu';
+  if(!email||!pass){ addLog('accLog','Введи email и пароль','err'); return; }
+  
+  document.getElementById('addAccBtn').disabled = true;
+  addLog('accLog','Проверяю подключение...','info');
+  
+  try {
+    // Test first
+    var test = await api('/api/email-accounts/test', {email,password:pass,imap});
+    if(!test.ok){ addLog('accLog','❌ '+test.error,'err'); document.getElementById('addAccBtn').disabled=false; return; }
+    addLog('accLog','✅ '+test.email+' — '+test.total+' писем на '+test.host,'ok');
+    
+    // Save
+    var save = await api('/api/email-accounts/add', {email,password:pass,imap});
+    if(save.ok){
+      addLog('accLog','✅ Аккаунт #'+save.idx+' сохранён!','ok');
+      document.getElementById('newEmail').value='';
+      document.getElementById('newPass').value='';
+      document.getElementById('newImap').value='';
+      loadAccounts();
+    } else {
+      addLog('accLog','❌ '+save.error,'err');
+    }
+  } catch(e){
+    addLog('accLog','❌ '+e.message,'err');
+  }
+  document.getElementById('addAccBtn').disabled=false;
+}
+
+async function deleteAccount(id){
+  if(!confirm('Удалить аккаунт '+id+'?')) return;
+  var idx = parseInt(id.replace('account_',''));
+  var r = await api('/api/email-accounts/delete', {idx});
+  if(r.ok){ addLog('accLog','Удалён','ok'); loadAccounts(); }
+  else addLog('accLog','❌ '+r.error,'err');
+}
+
+loadAccounts();
+
 </script>
 </body></html>

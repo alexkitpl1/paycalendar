@@ -1372,6 +1372,20 @@ def scan_email(emit=None, quick=False, from_date=None, to_date=None):
         SCAN_LIMIT = QUICK_SCAN_LIMIT
         emitter(f"Quick scan: last {QUICK_SCAN_LIMIT} emails")
     try:
+        accounts = load_email_accounts()
+        all_results = []
+
+        if len(accounts) > 1:
+            emitter(f"Сканирую {len(accounts)} почтовых аккаунта...", "ok")
+            for acc in accounts:
+                try:
+                    res = scan_account(acc, emitter, from_date=from_date, to_date=to_date)
+                    all_results.extend(res or [])
+                except Exception as ex:
+                    emitter(f"Аккаунт {acc['email']}: {ex}", "warn")
+            return all_results
+
+        # Single account - original logic
         emitter(f"Checking IMAP {IMAP_HOST}:{IMAP_PORT}...")
         try:
             with socket.create_connection((IMAP_HOST, IMAP_PORT), timeout=5):
@@ -1705,6 +1719,178 @@ def create_bitrix_invoice(inv: dict) -> dict:
     }})
     log.info(f"Bitrix invoice created: {result}")
     return result
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MULTI-ACCOUNT EMAIL SUPPORT
+#  Scan multiple email accounts for invoices
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def load_email_accounts() -> list:
+    """Load all configured email accounts from config + env vars."""
+    accounts = []
+    
+    # Primary account (always first)
+    if EMAIL_ADDR and EMAIL_PASS:
+        accounts.append({
+            "id":    "primary",
+            "email": EMAIL_ADDR,
+            "password": EMAIL_PASS,
+            "imap":  IMAP_HOST,
+            "port":  IMAP_PORT,
+            "label": EMAIL_ADDR.split("@")[0],
+        })
+    
+    # Additional accounts from config: [email_2], [email_3], ...
+    for i in range(2, 11):
+        addr = c("email", f"address_{i}", "") or os.environ.get(f"PC_EMAIL_ADDRESS_{i}", "")
+        pwd  = c("email", f"password_{i}", "") or os.environ.get(f"PC_EMAIL_PASSWORD_{i}", "")
+        if addr and pwd:
+            host = c("email", f"imap_host_{i}", "imap.zone.eu") or os.environ.get(f"PC_EMAIL_IMAP_HOST_{i}", "imap.zone.eu")
+            accounts.append({
+                "id":    f"account_{i}",
+                "email": addr,
+                "password": pwd,
+                "imap":  host,
+                "port":  993,
+                "label": addr.split("@")[0],
+            })
+    
+    return accounts
+
+
+def save_email_account(idx: int, email: str, password: str, imap_host: str = "imap.zone.eu"):
+    """Save an additional email account to config."""
+    if idx < 2 or idx > 10:
+        raise ValueError("Account index must be 2-10")
+    save_config_value("email", f"address_{idx}",  email)
+    save_config_value("email", f"password_{idx}", password)
+    save_config_value("email", f"imap_host_{idx}", imap_host or "imap.zone.eu")
+    log.info(f"Saved email account #{idx}: {email}")
+
+
+def delete_email_account(idx: int):
+    """Remove an additional email account."""
+    for key in [f"address_{idx}", f"password_{idx}", f"imap_host_{idx}"]:
+        save_config_value("email", key, "")
+    log.info(f"Deleted email account #{idx}")
+
+
+def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
+    """Scan a single email account. Returns new invoices."""
+    label = account["email"]
+    emit(f"📧 Аккаунт: {label}", "info")
+
+    # Temporarily override globals for this account
+    orig_addr = os.environ.get("_scan_addr", EMAIL_ADDR)
+    orig_pass = os.environ.get("_scan_pass", EMAIL_PASS)
+    orig_host = os.environ.get("_scan_host", IMAP_HOST)
+
+    # Use a custom scan_imap that uses account credentials
+    alt_hosts = list(dict.fromkeys([
+        account["imap"],
+        "imap.zone.eu",
+        f"imap.{account['email'].split('@')[1]}" if '@' in account['email'] else "",
+    ]))
+    alt_hosts = [h for h in alt_hosts if h]
+
+    mail, connected_host = _try_imap_connect(
+        alt_hosts, account["port"],
+        account["email"], account["password"]
+    )
+    if not mail:
+        emit(f"  ✗ Не удалось подключиться к {label}", "err")
+        return []
+
+    emit(f"  ✓ Подключён к {connected_host}", "ok")
+
+    try:
+        mail.select(IMAP_FOLDER)
+        date_terms = []
+        if from_date:
+            from datetime import datetime as _dt
+            since_str = _dt.strptime(from_date, "%Y-%m-%d").strftime("%d-%b-%Y")
+            date_terms.append(f"SINCE {since_str}".encode())
+        if to_date:
+            from datetime import datetime as _dt2, timedelta
+            before_dt = _dt2.strptime(to_date, "%Y-%m-%d") + timedelta(days=1)
+            date_terms.append(f"BEFORE {before_dt.strftime('%d-%b-%Y')}".encode())
+
+        ids = set()
+        if date_terms:
+            _, data = mail.search(None, *date_terms)
+            for uid in data[0].split(): ids.add(uid)
+        else:
+            for term in IMAP_SUBJECTS:
+                try:
+                    _, data = mail.search(None, term)
+                    for uid in data[0].split(): ids.add(uid)
+                except Exception: pass
+            if not ids:
+                _, data = mail.search(None, "ALL")
+                all_ids = data[0].split()
+                ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
+
+        ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x,bytes) else x), reverse=True)
+        ids = set(ids_sorted[:SCAN_LIMIT])
+        emit(f"  Писем для анализа: {len(ids)}", "info")
+
+        emails_raw = []
+        for uid in list(ids):
+            try:
+                _, data = mail.fetch(uid, "(RFC822.HEADER)")
+                if not data or not data[0]: continue
+                msg = email.message_from_bytes(data[0][1])
+                subj = decode_header(msg.get("Subject",""))
+                sndr = decode_header(msg.get("From",""))
+                try:
+                    ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
+                except Exception:
+                    ds = date.today().isoformat()
+                uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
+                emails_raw.append({
+                    "id": f"{account['id']}_{uid_s}",
+                    "subject": subj, "from": sndr,
+                    "body": "", "date": ds, "has_attachment": False,
+                    "account": account["email"],
+                })
+            except Exception as ex:
+                emit(f"  Header error {uid}: {ex}", "err")
+
+        def _fetch_pdf(uid_str):
+            try:
+                real_uid = uid_str.split("_")[-1].encode()
+                _, data = mail.fetch(real_uid, "(RFC822)")
+                if not data or not data[0]: return ""
+                raw_msg = email.message_from_bytes(data[0][1])
+                body_text = get_plain_body(raw_msg)
+                pdf_texts = []
+                for part in raw_msg.walk():
+                    ct = part.get_content_type() or ""
+                    fn = part.get_filename() or ""
+                    if "pdf" in ct.lower() or fn.lower().endswith(".pdf"):
+                        try:
+                            pdf_bytes = part.get_payload(decode=True)
+                            if pdf_bytes:
+                                pt = extract_pdf_text(pdf_bytes)
+                                if pt: pdf_texts.append(pt)
+                        except Exception: pass
+                result = body_text
+                if pdf_texts: result += "\n--- PDF ---\n" + "\n".join(pdf_texts)
+                return result
+            except Exception: return ""
+
+        result = process_emails(emails_raw, emit, fetch_body=_fetch_pdf, source=f"imap:{account['email']}")
+        try: mail.logout()
+        except Exception: pass
+        return result if isinstance(result, list) else []
+
+    except Exception as ex:
+        emit(f"  ✗ {label}: {ex}", "err")
+        try: mail.logout()
+        except Exception: pass
+        return []
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2111,6 +2297,83 @@ def api_scan_stop():
         _scan_state_live["running"] = False
     return jsonify({"ok": True})
 
+
+
+
+@app.route("/api/email-accounts", methods=["GET"])
+def api_email_accounts():
+    """List all configured email accounts."""
+    accounts = load_email_accounts()
+    # Mask passwords
+    safe = []
+    for acc in accounts:
+        safe.append({
+            "id":    acc["id"],
+            "email": acc["email"],
+            "imap":  acc["imap"],
+            "label": acc["label"],
+            "has_password": bool(acc.get("password")),
+        })
+    return jsonify(safe)
+
+
+@app.route("/api/email-accounts/add", methods=["POST"])
+def api_email_accounts_add():
+    """Add a new email account."""
+    data  = request.json or {}
+    email_addr = data.get("email","").strip()
+    pwd        = data.get("password","").strip()
+    imap_host  = data.get("imap","").strip() or "imap.zone.eu"
+    if not email_addr or not pwd:
+        return jsonify({"ok":False,"error":"Email и пароль обязательны"})
+    # Find next free slot
+    accounts = load_email_accounts()
+    next_idx = len(accounts) + 1
+    if next_idx > 10:
+        return jsonify({"ok":False,"error":"Максимум 10 аккаунтов"})
+    # Test connection first
+    try:
+        import imaplib as _il2, ssl as _ssl3
+        alt = [imap_host, "imap.zone.eu"]
+        mail, host = _try_imap_connect(alt, 993, email_addr, pwd)
+        if not mail:
+            return jsonify({"ok":False,"error":"Не удалось подключиться к IMAP — проверь данные"})
+        mail.logout()
+        log.info(f"IMAP test OK for {email_addr}")
+    except Exception as ex:
+        return jsonify({"ok":False,"error":f"IMAP ошибка: {ex}"})
+    save_email_account(next_idx, email_addr, pwd, imap_host)
+    return jsonify({"ok":True,"idx":next_idx,"email":email_addr,"imap":imap_host})
+
+
+@app.route("/api/email-accounts/delete", methods=["POST"])
+def api_email_accounts_delete():
+    """Remove an email account by index."""
+    idx = int((request.json or {}).get("idx", 0))
+    if idx < 2:
+        return jsonify({"ok":False,"error":"Нельзя удалить основной аккаунт"})
+    delete_email_account(idx)
+    return jsonify({"ok":True})
+
+
+@app.route("/api/email-accounts/test", methods=["POST"])
+def api_email_accounts_test():
+    """Test IMAP connection for given credentials."""
+    data  = request.json or {}
+    email_addr = data.get("email","").strip()
+    pwd        = data.get("password","").strip()
+    imap_host  = data.get("imap","").strip() or "imap.zone.eu"
+    try:
+        mail, host = _try_imap_connect([imap_host, "imap.zone.eu"], 993, email_addr, pwd)
+        if not mail:
+            return jsonify({"ok":False,"error":"Подключение не удалось"})
+        mail.select("INBOX")
+        _, data2 = mail.search(None, "ALL")
+        total = len(data2[0].split()) if data2[0] else 0
+        mail.logout()
+        return jsonify({"ok":True,"total":total,"host":host,"email":email_addr})
+    except Exception as ex:
+        return jsonify({"ok":False,"error":str(ex)[:100]})
 
 
 @app.route("/api/bitrix/sync", methods=["POST"])
