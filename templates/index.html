@@ -340,19 +340,21 @@ body {
 
 /* ── Calendar main ───────────────────────────────────── */
 #cal-main {
-  flex: 1; overflow-y: auto; overflow-x: hidden;
-  padding: 4px 5px calc(70px + env(safe-area-inset-bottom)) 5px;
-  scrollbar-width: none; min-height: 0;
+  flex: 1; display: flex; flex-direction: column;
+  overflow: hidden;
+  padding: 4px 5px calc(68px + env(safe-area-inset-bottom)) 5px;
+  min-height: 0;
 }
-#cal-main::-webkit-scrollbar { display: none; }
 
 /* ── Grid: stretch rows to fill viewport ────────────── */
 #m-grid {
+  flex: 1;
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  grid-auto-rows: 1fr;
+  /* grid-template-rows set dynamically in JS: auto + N×1fr */
   gap: 2px;
-  min-height: calc(100vh - 220px);
+  min-height: 0;
+  align-content: stretch;
 }
 .day {
   padding: 4px 3px 3px; border-radius: 8px;
@@ -1031,17 +1033,23 @@ function renderCalendar(){
   const todayISO=toISO(new Date()),actISO=S.activeDay?toISO(S.activeDay):"";
   if(S.view==="month"){
     wg.style.display="none";mg.style.display="grid";
-    let h=DOW.map(d=>`<div class="dow-h">${d}</div>`).join("");
-    for(const dc of monthCells()){
+    // Headers in separate div, days fill remaining space equally
+    const cells = monthCells();
+    const weeks  = Math.ceil(cells.length / 7);  // 4, 5 or 6
+    let heads = DOW.map(d=>`<div class="dow-h">${d}</div>`).join("");
+    let days  = "";
+    for(const dc of cells){
       const ds=toISO(dc.date),{h:dh,total}=dayHTML(dc.date);
       const invs=evOnDay(dc.date);
       const hasOv=invs.some(i=>stOf(i)==="overdue"),hasUg=invs.some(i=>stOf(i)==="urgent");
       const cls=["day",!dc.cur?"dim":"",ds===todayISO?"today":"",ds===actISO?"act":"",hasOv?"has-ov":hasUg?"has-ug":""].filter(Boolean).join(" ");
-      h+=`<div class="${cls}" onclick="selDay('${ds}')">
+      days+=`<div class="${cls}" onclick="selDay('${ds}')">
         <div class="day-n"><span class="dn">${dc.date.getDate()}</span>${total>0?`<span class="d-sum has">${fmtAmt(total)}</span>`:""}</div>
         ${dh}</div>`;
     }
-    mg.innerHTML=h;
+    // Set grid: header row auto, then N equal week rows
+    mg.style.gridTemplateRows = `auto repeat(${weeks}, 1fr)`;
+    mg.innerHTML = heads + days;
   }else{
     mg.style.display="none";wg.style.display="grid";
     const wd=weekDays();
