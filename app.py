@@ -1532,6 +1532,174 @@ def start_bg_scan(from_date=None, to_date=None, quick=False):
     return task_id
 
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  BITRIX24 CRM INTEGRATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+BITRIX_WEBHOOK = c("bitrix", "webhook_url") or os.environ.get("BITRIX_WEBHOOK", "")
+
+def bitrix_call(method: str, params: dict = None) -> dict:
+    """Call Bitrix24 REST API via webhook."""
+    if not BITRIX_WEBHOOK:
+        raise ValueError("Bitrix24 webhook не настроен")
+    url = BITRIX_WEBHOOK.rstrip("/") + f"/{method}.json"
+    try:
+        r = requests.post(url, json=params or {}, timeout=15)
+        r.raise_for_status()
+        data = r.json()
+        if "error" in data:
+            raise Exception(f"Bitrix error: {data.get('error_description', data['error'])}")
+        return data.get("result", data)
+    except Exception as ex:
+        log.error(f"Bitrix24 {method}: {ex}")
+        raise
+
+
+def sync_bitrix_invoices(emit=None) -> list:
+    """
+    Fetch invoices and deals from Bitrix24, convert to PayCalendar format.
+    Returns list of new invoices added.
+    """
+    def say(msg, t="info"):
+        log.info(f"Bitrix: {msg}")
+        if emit: emit(f"[Bitrix] {msg}", t)
+
+    if not BITRIX_WEBHOOK:
+        say("Webhook не настроен — открой /keys", "warn")
+        return []
+
+    say("Подключение к Bitrix24...")
+    existing     = load_invoices()
+    existing_ids = {i.get("bitrix_id") for i in existing if i.get("bitrix_id")}
+    new_invs     = []
+
+    # ── Fetch smart-process invoices (modern Bitrix) ──────────────────────────
+    try:
+        say("Загружаю счета (crm.invoice)...")
+        start = 0
+        while True:
+            res = bitrix_call("crm.invoice.list", {
+                "select": ["ID","ACCOUNT_NUMBER","UF_DEAL_ID","UF_COMPANY_ID",
+                           "PRICE","CURRENCY","DATE_INSERT","DATE_PAY_BEFORE",
+                           "STATUS_ID","ORDER_TOPIC","UF_CONTACT_ID"],
+                "order":  {"DATE_INSERT": "DESC"},
+                "start":  start,
+            })
+            items = res if isinstance(res, list) else res.get("invoices", [])
+            if not items:
+                break
+            for inv in items:
+                bid = f"bx_inv_{inv.get('ID','')}"
+                if bid in existing_ids:
+                    continue
+                # Map Bitrix status to PayCalendar status
+                bstatus = str(inv.get("STATUS_ID", ""))
+                status = "paid" if bstatus in ("P", "PAID", "5") else "pending"
+                amount = float(inv.get("PRICE") or 0)
+                vendor = inv.get("ORDER_TOPIC") or f"Клиент #{inv.get('UF_COMPANY_ID','?')}"
+                due    = (inv.get("DATE_PAY_BEFORE") or "")[:10] or None
+                issued = (inv.get("DATE_INSERT") or "")[:10] or date.today().isoformat()
+                new_invs.append(build_invoice({
+                    "is_invoice":   True,
+                    "vendor":       vendor,
+                    "amount":       amount,
+                    "currency":     inv.get("CURRENCY", "EUR"),
+                    "due_date":     due,
+                    "issue_date":   issued,
+                    "invoice_number": str(inv.get("ACCOUNT_NUMBER", "")),
+                    "description":  inv.get("ORDER_TOPIC", ""),
+                    "category":     "services",
+                    "status":       status,
+                }, bid, inv.get("ORDER_TOPIC","Bitrix счёт"),
+                   "", issued, False, "bitrix"))
+                new_invs[-1]["bitrix_id"] = bid
+                new_invs[-1]["bitrix_raw_id"] = inv.get("ID")
+            say(f"  Загружено: {len(items)} счетов (start={start})")
+            if len(items) < 50:
+                break
+            start += 50
+        say(f"✓ Счета: {len(new_invs)} новых", "ok")
+    except Exception as ex:
+        say(f"crm.invoice.list: {ex} — пробую crm.deal...", "warn")
+
+    # ── Fetch deals as fallback (older Bitrix or deals-as-invoices) ───────────
+    try:
+        say("Загружаю сделки (crm.deal)...")
+        deals_added = 0
+        start = 0
+        while True:
+            res = bitrix_call("crm.deal.list", {
+                "select": ["ID","TITLE","OPPORTUNITY","CURRENCY_ID",
+                           "CLOSEDATE","DATE_CREATE","STAGE_ID",
+                           "COMPANY_ID","CONTACT_ID","COMMENTS"],
+                "filter": {"!STAGE_ID": ["LOSE", "FINAL_INVOICE"]},
+                "order":  {"DATE_CREATE": "DESC"},
+                "start":  start,
+            })
+            items = res if isinstance(res, list) else []
+            if not items:
+                break
+            for deal in items:
+                bid = f"bx_deal_{deal.get('ID','')}"
+                if bid in existing_ids:
+                    continue
+                stage = str(deal.get("STAGE_ID", ""))
+                status = "paid" if stage in ("WON","C7:WON") else "pending"
+                amount = float(deal.get("OPPORTUNITY") or 0)
+                if amount == 0:
+                    continue  # skip zero deals
+                vendor = deal.get("TITLE", "Сделка Bitrix")
+                due    = (deal.get("CLOSEDATE") or "")[:10] or None
+                issued = (deal.get("DATE_CREATE") or "")[:10] or date.today().isoformat()
+                inv_obj = build_invoice({
+                    "is_invoice":   True,
+                    "vendor":       vendor,
+                    "amount":       amount,
+                    "currency":     deal.get("CURRENCY_ID", "EUR"),
+                    "due_date":     due,
+                    "issue_date":   issued,
+                    "invoice_number": f"D-{deal.get('ID','')}",
+                    "description":  deal.get("COMMENTS", "")[:100],
+                    "category":     "services",
+                    "status":       status,
+                }, bid, vendor, "", issued, False, "bitrix_deal")
+                inv_obj["bitrix_id"]     = bid
+                inv_obj["bitrix_raw_id"] = deal.get("ID")
+                inv_obj["source_type"]   = "deal"
+                new_invs.append(inv_obj)
+                deals_added += 1
+            if len(items) < 50: break
+            start += 50
+        say(f"✓ Сделки: {deals_added} новых", "ok")
+    except Exception as ex:
+        say(f"crm.deal.list: {ex}", "warn")
+
+    if new_invs:
+        save_invoices(existing + new_invs)
+        say(f"✅ Добавлено из Bitrix24: {len(new_invs)}", "ok")
+    else:
+        say("Новых записей не найдено", "info")
+    return new_invs
+
+
+def create_bitrix_invoice(inv: dict) -> dict:
+    """Push a PayCalendar invoice back to Bitrix24 as invoice."""
+    if not BITRIX_WEBHOOK:
+        raise ValueError("Webhook не настроен")
+    result = bitrix_call("crm.invoice.add", {"fields": {
+        "ORDER_TOPIC":      inv.get("vendor", "Invoice"),
+        "PRICE":            inv.get("amount", 0),
+        "CURRENCY":         inv.get("currency", "EUR"),
+        "DATE_PAY_BEFORE":  inv.get("due_date", ""),
+        "DATE_INSERT":      inv.get("issue_date", date.today().isoformat()),
+        "STATUS_ID":        "P" if inv.get("status") == "paid" else "N",
+        "COMMENTS":         inv.get("description", ""),
+    }})
+    log.info(f"Bitrix invoice created: {result}")
+    return result
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  ROUTES
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1677,6 +1845,46 @@ def api_config():
         "has_groq":         bool(GROQ_KEY),
     })
 
+
+
+@app.route("/api/invoices/fix-offers", methods=["POST"])
+def api_fix_offers():
+    """Move items with invoice keywords from offers to regular invoices, remove offer-word duplicates."""
+    invs = load_invoices()
+    before = len(invs)
+
+    OFFER_KW   = ["offer","quote","quotation","proposal","предложение","hinnapakkumine"]
+    INVOICE_KW = ["arve","invoice","rechnung","счёт","счет","lasku","faktura","bill","payment"]
+
+    moved = 0
+    deduped = 0
+    seen_desc = {}
+
+    cleaned = []
+    for inv in invs:
+        desc = (inv.get("description") or "").lower()
+        has_offer   = any(k in desc for k in OFFER_KW)
+        has_invoice = any(k in desc for k in INVOICE_KW)
+
+        # Move invoice-keyword items out of "offer" status
+        if has_invoice and inv.get("is_offer"):
+            inv.pop("is_offer", None)
+            moved += 1
+
+        # Deduplicate offer threads (Re: Re: same subject)
+        norm = re.sub(r"^(re:|fwd:|fw:)\s*", "", desc, flags=re.IGNORECASE).strip()[:60]
+        if has_offer and not has_invoice:
+            if norm in seen_desc:
+                deduped += 1
+                continue  # skip duplicate
+            seen_desc[norm] = True
+
+        cleaned.append(inv)
+
+    save_invoices(cleaned)
+    log.info(f"fix-offers: moved={moved}, deduped={deduped}")
+    return jsonify({"ok":True, "moved":moved, "deduped":deduped,
+                    "before":before, "after":len(cleaned)})
 
 @app.route("/api/invoices/cleanup", methods=["POST"])
 def api_invoices_cleanup():
@@ -1881,6 +2089,92 @@ def api_scan_stop():
     with _scan_state_lock:
         _scan_state_live["running"] = False
     return jsonify({"ok": True})
+
+
+
+@app.route("/api/bitrix/sync", methods=["POST"])
+def api_bitrix_sync():
+    """Sync invoices from Bitrix24 CRM."""
+    import threading as _thr
+    import queue as _q
+
+    q = _q.Queue()
+    sentinel = object()
+    cnt = [0]
+
+    def emit(msg, t="info"):
+        q.put((msg, t))
+
+    def run():
+        try:
+            result = sync_bitrix_invoices(emit)
+            cnt[0] = len(result)
+        except Exception as ex:
+            emit(f"❌ {ex}", "err")
+        q.put(sentinel)
+
+    _thr.Thread(target=run, daemon=True).start()
+
+    def generate():
+        while True:
+            try:
+                item = q.get(timeout=30)
+            except Exception:
+                yield f"data: {json.dumps({'done':True,'count':cnt[0]})}\n\n"
+                return
+            if item is sentinel:
+                yield f"data: {json.dumps({'done':True,'count':cnt[0]})}\n\n"
+                return
+            msg, t = item
+            ts = datetime.now().strftime("%H:%M:%S")
+            yield f"data: {json.dumps({'msg':msg,'type':t,'ts':ts})}\n\n"
+
+    return Response(stream_with_context(generate()),
+                    content_type="text/event-stream",
+                    headers={"Cache-Control":"no-cache","X-Accel-Buffering":"no"})
+
+
+@app.route("/api/bitrix/status")
+def api_bitrix_status():
+    """Check Bitrix24 connection."""
+    reload_config()
+    webhook = c("bitrix","webhook_url") or os.environ.get("BITRIX_WEBHOOK","")
+    if not webhook:
+        return jsonify({"ok":False,"error":"Webhook не настроен"})
+    try:
+        res = bitrix_call("app.info")
+        return jsonify({"ok":True,"info":str(res)[:100],"webhook":webhook[:40]+"..."})
+    except Exception as ex:
+        return jsonify({"ok":False,"error":str(ex)[:100]})
+
+
+@app.route("/api/bitrix/save-webhook", methods=["POST"])
+def api_bitrix_save_webhook():
+    """Save Bitrix24 webhook URL."""
+    global BITRIX_WEBHOOK
+    url = (request.json or {}).get("url","").strip()
+    if not url:
+        return jsonify({"ok":False,"error":"URL пустой"})
+    if "bitrix24" not in url and "bitrix" not in url.lower():
+        return jsonify({"ok":False,"error":"Не похоже на Bitrix24 webhook URL"})
+    save_config_value("bitrix","webhook_url",url)
+    BITRIX_WEBHOOK = url
+    return jsonify({"ok":True,"saved":url[:50]+"..."})
+
+
+@app.route("/api/bitrix/push", methods=["POST"])
+def api_bitrix_push():
+    """Push a PayCalendar invoice to Bitrix24."""
+    inv_id = (request.json or {}).get("id","")
+    invs = load_invoices()
+    inv  = next((i for i in invs if i.get("id") == inv_id), None)
+    if not inv:
+        return jsonify({"ok":False,"error":"Счёт не найден"})
+    try:
+        result = create_bitrix_invoice(inv)
+        return jsonify({"ok":True,"bitrix_result":str(result)[:100]})
+    except Exception as ex:
+        return jsonify({"ok":False,"error":str(ex)})
 
 
 @app.route("/api/reset-scan", methods=["POST"])

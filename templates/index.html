@@ -792,88 +792,81 @@ function renderOffers(){
   var el = document.getElementById('offers-area');
   if(!el) return;
 
-  // Detect offers: invoices with category hint OR keyword in description
-  var offerKW = ['offer', 'quote', 'quotation', 'proposal', 'offre', 'angebot', 'предложение', 'прайс', 'kokkulepe', 'hinnapakkumine'];
+  // Pure offer keywords — NOT invoice keywords
+  var offerKW   = ['offer','quote','quotation','proposal','offre','angebot',
+                   'предложение','прайс','hinnapakkumine','kokkulepe'];
+  var invoiceKW = ['arve','invoice','bill','rechnung','счёт','счет','lasku',
+                   'faktura','payment due','amount due','tasuda'];
+
+  // Only show if it has OFFER keywords AND no invoice keywords
   var offers = S.invoices.filter(function(inv){
     var d = (inv.description||'').toLowerCase();
     var v = (inv.vendor||'').toLowerCase();
-    var cat = (inv.category||'');
-    return offerKW.some(function(k){ return d.includes(k) || v.includes(k); })
-        || cat === 'offer' || inv.is_offer;
+    var hasOffer   = offerKW.some(function(k){ return d.includes(k)||v.includes(k); });
+    var hasInvoice = invoiceKW.some(function(k){ return d.includes(k)||v.includes(k); });
+    return (hasOffer && !hasInvoice) || inv.is_offer === true;
   });
 
-  // Also include unpaid invoices with amount=0 (likely offers without price confirmed)
-  var pending0 = S.invoices.filter(function(inv){
-    return inv.status !== 'paid' && parseFloat(inv.amount||0) === 0
-        && !offers.find(function(o){ return o.id === inv.id; });
+  // Deduplicate by normalised description (remove Re:/RE: prefix)
+  var seen = {};
+  offers = offers.filter(function(inv){
+    var norm = (inv.description||'').replace(/^(Re:|RE:|Fwd:|FW:\s*)+/gi,'').trim().toLowerCase().slice(0,60);
+    if(seen[norm]) return false;
+    seen[norm] = true;
+    return true;
   });
 
-  var html = '<div style="padding:14px">';
+  var html2 = '<div style="padding:14px">';
 
-  // Offers section
-  html += '<div class="ov-title">💼 Предложения · '+offers.length+'</div>';
   if(offers.length === 0){
-    html += '<div class="ov-empty">Предложения не найдены.<br>Письма с "offer", "quote", "proposal" появятся здесь.</div>';
+    html2 += '<div class="ov-empty" style="text-align:center;padding:40px 0;color:var(--text3)">'
+      +'Предложений нет.<br><span style="font-size:12px">Письма с "offer", "quote", "proposal" появятся здесь.</span></div>';
   } else {
-    offers.sort(function(a,b){ return (b.issue_date||'') > (a.issue_date||'') ? 1 : -1; });
+    html2 += '<div class="ov-title">💼 Предложения · '+offers.length+'</div>';
+    offers.sort(function(a,b){ return (b.issue_date||'')>(a.issue_date||'')?1:-1; });
     offers.forEach(function(inv){
-      var st = stOf(inv);
       var amt = parseFloat(inv.amount||0);
-      var amtStr = amt > 0 ? fmtAmt(amt, inv.currency) : '— (цена не указана)';
-      var remind = inv.reminder_count > 1
+      var amtStr = amt>0 ? fmtAmt(amt,inv.currency) : '<span style="color:var(--text3);font-style:italic">цена не указана</span>';
+      var remind = inv.reminder_count>1
         ? '<span class="ic-remind">🔔 ×'+inv.reminder_count+'</span>' : '';
-      html += '<div class="ov-card of-card" data-inv-id="'+inv.id+'" style="border-left-color:#8b5cf6">'
-        + '<div style="display:flex;justify-content:space-between;align-items:flex-start">'
-          + '<div>'
-            + '<div class="ov-v">'+esc(inv.vendor||'—')+'</div>'
-            + '<div class="ov-d">'+esc((inv.description||'').slice(0,60))+'</div>'
-          + '</div>'
-          + '<div style="text-align:right">'
-            + '<div style="font-size:15px;font-weight:700;color:#8b5cf6">'+amtStr+'</div>'
-            + '<div style="font-size:11px;color:var(--text3)">'+(inv.issue_date||'')+'</div>'
-          + '</div>'
-        + '</div>'
-        + '<div style="display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap">'
-          + remind
-          + (inv.due_date
-              ? '<span class="ic-b" style="background:#7c3aed22;color:#8b5cf6">Ответ до '+inv.due_date+'</span>'
-              : '')
-          + '<button class="of-btn" onclick="markOfferAccepted(this.dataset.id)" data-id="'+inv.id+'" title="Принято">✅ Принято</button>'
-          + '<button class="of-btn of-btn-del" data-del-id="'+inv.id+'" onclick="deleteInv(this.dataset.delId)" title="Отклонить">✕</button>'
-        + '</div>'
-      + '</div>';
+      html2 += '<div class="ov-card of-card" style="border-left-color:#8b5cf6;margin-bottom:8px;background:var(--inv-bg);border:1px solid var(--border2);border-radius:8px;padding:10px;border-left:3px solid #8b5cf6">'
+        +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
+          +'<div style="min-width:0;flex:1">'
+            +'<div style="font-size:13px;font-weight:600;color:var(--text)">'+esc(inv.vendor||'—')+'</div>'
+            +'<div style="font-size:11px;color:var(--text3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc((inv.description||'').replace(/^(Re:|RE:|Fwd:|FW:\s*)+/gi,'').trim().slice(0,60))+'</div>'
+          +'</div>'
+          +'<div style="text-align:right;flex-shrink:0">'
+            +'<div style="font-size:14px;font-weight:700;color:#8b5cf6">'+amtStr+'</div>'
+            +'<div style="font-size:11px;color:var(--text3)">'+(inv.issue_date||'')+'</div>'
+          +'</div>'
+        +'</div>'
+        +'<div style="display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap">'
+          +remind
+          +(inv.due_date?'<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#7c3aed22;color:#8b5cf6">до '+inv.due_date+'</span>':'')
+          +'<button class="of-btn" data-acc-id="'+inv.id+'" onclick="markOfferAccepted(this.dataset.accId)">✅ В счета</button>'
+          +'<button class="of-btn of-btn-del" data-del-id="'+inv.id+'" onclick="deleteInv(this.dataset.delId)">✕</button>'
+        +'</div>'
+      +'</div>';
     });
   }
 
-  // Zero-amount pending (possible offers/discussions)
-  if(pending0.length > 0){
-    html += '<div class="ov-title" style="margin-top:16px">❓ Без суммы · '+pending0.length+'</div>';
-    pending0.slice(0,10).forEach(function(inv){
-      html += '<div class="ov-card" style="border-left-color:#6b7280;opacity:.8">'
-        + '<div class="ov-v">'+esc(inv.vendor||'—')+'</div>'
-        + '<div class="ov-d">'+esc((inv.description||'').slice(0,60))+'</div>'
-        + '<div style="margin-top:6px;display:flex;gap:6px">'
-          + '<button class="of-btn" data-del-id="'+inv.id+'" onclick="deleteInv(this.dataset.delId)" style="color:#6b7280">Удалить</button>'
-        + '</div>'
-      + '</div>';
-    });
-  }
-
-  html += '</div>';
-  el.innerHTML = html;
+  html2 += '</div>';
+  el.innerHTML = html2;
 }
 
+
 function markOfferAccepted(id){
-  // Convert offer to regular invoice
   var inv = S.invoices.find(function(i){ return i.id === id; });
-  if(inv){
-    inv.category = 'services';
-    inv.is_offer = false;
-    if(!inv.due_date) inv.due_date = new Date(Date.now()+30*86400000).toISOString().slice(0,10);
-    saveInvoices(S.invoices);
-    showNotif('✅ Оффер принят — перемещён в счета','ok');
-    setView('month');
-  }
+  if(!inv){ showNotif('Не найден','err'); return; }
+  inv.is_offer   = false;
+  inv.category   = inv.category || 'services';
+  inv.status     = inv.status === 'paid' ? 'paid' : 'pending';
+  if(!inv.due_date) inv.due_date = new Date(Date.now()+30*86400000).toISOString().slice(0,10);
+  // Remove offer keywords from description to avoid re-detection
+  saveInvoices(S.invoices);
+  showNotif('✅ Перемещено в счета','ok');
+  loadInvoices();
+  setView('month');
 }
 
 function renderOverdue(){
@@ -995,10 +988,18 @@ function renderTopbar(){
   if(ug.length)h+=`<div class="stat-pill pill-amber">Срочно <span class="pv">${ug.length}</span></div>`;
   h+=`<div class="stat-pill pill-blue">К оплате <span class="pv">${fmtAmt(sp)}</span></div>`;
   // Count offers
-  var ofKW=['offer','quote','proposal','quotation','предложение','hinnapakkumine'];
+  var ofKW=['offer','quote','quotation','proposal','предложение','hinnapakkumine'];
+  var invKW=['arve','invoice','rechnung','счёт','счет','lasku','faktura','bill'];
+  // Deduplicate + exclude items that are really invoices
+  var ofSeen={};
   var ofCount=S.invoices.filter(function(i){
     var d=(i.description||'').toLowerCase();
-    return ofKW.some(function(k){return d.includes(k);}) || i.is_offer;
+    var hasOff=ofKW.some(function(k){return d.includes(k);}) || i.is_offer;
+    var hasInv=invKW.some(function(k){return d.includes(k);});
+    if(!hasOff || hasInv) return false;
+    var norm=d.replace(/^(re:|fwd:)\s*/gi,'').trim().slice(0,50);
+    if(ofSeen[norm]) return false;
+    ofSeen[norm]=true; return true;
   }).length;
   if(ofCount)h+=`<div class="stat-pill" style="border-color:#8b5cf655;color:#8b5cf6;cursor:pointer" onclick="setView('offers')">💼 Офферы <span class="pv">${ofCount}</span></div>`;
   setStatPills(h);
