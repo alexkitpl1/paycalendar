@@ -803,6 +803,124 @@ def get_pdf_text_from_imap(mail_conn, uid: str) -> str:
         log.debug(f"get_pdf_text error uid={uid}: {ex}")
         return ""
 
+
+# ── PDF Invoice Header Parser ──────────────────────────────────────────────────
+_PDF_INVOICE_PATTERNS = [
+    # Amount patterns (Estonian/Russian/English)
+    r"(?:kokku|total|summa|итого|gesamtbetrag|total amount)[\s:]*([\d\s.,]+)\s*(?:€|eur|usd|gbp|chf)?",
+    r"(?:tasuda|to pay|zu zahlen|к оплате)[\s:]*([\d\s.,]+)\s*(?:€|eur)?",
+    r"([\d\s.,]+)\s*(?:€|eur)\b",
+    # Invoice number
+    r"(?:arve nr|invoice no|rechnung nr|счёт №)[\s:.#]*([A-Z0-9\-/]+)",
+    r"(?:arve|invoice|faktura|arvenumber)[\s:]*#?([A-Z0-9\-/]+)",
+    # Date patterns
+    r"(?:kuupäev|date|datum|дата)[\s:]*([\d]{1,2}[./\-][\d]{1,2}[./\-][\d]{2,4})",
+    r"([\d]{1,2}[./][\d]{1,2}[./][\d]{4})",
+    # Due date
+    r"(?:maksetähtaeg|due date|fälligkeitsdatum|срок оплаты)[\s:]*([\d./\-]+)",
+    r"(?:tasuda|pay by|bis)[\s:]*([\d]{1,2}[./][\d]{1,2}[./][\d]{4})",
+]
+
+def parse_pdf_invoice(pdf_text: str, filename: str = "") -> dict:
+    """
+    Extract invoice fields from PDF text.
+    Returns dict with: amount, currency, invoice_number, issue_date, due_date, vendor, is_invoice
+    """
+    if not pdf_text or len(pdf_text) < 10:
+        return {}
+    
+    text  = pdf_text.lower()
+    text_orig = pdf_text
+    result = {}
+    
+    # Detect if it's an invoice at all
+    invoice_signals = [
+        "arve", "invoice", "rechnung", "faktura", "счёт", "arve nr", "invoice no",
+        "tasuda", "due date", "payment due", "к оплате", "kokku", "total due",
+        "maksetähtaeg", "lugupidamisega", "käibemaks", "vat", "käibemaksunumber",
+        "reg.nr", "kmkr", "reg nr"
+    ]
+    signal_count = sum(1 for s in invoice_signals if s in text)
+    if signal_count < 2:
+        return {}
+    
+    result["is_invoice"]  = True
+    result["signal_count"] = signal_count
+    
+    # Extract amount (look for largest reasonable number)
+    amounts = []
+    for pat in [
+        r"(?:kokku|total|summa|итого|tasuda)[\s:€]*([\d\s]+[.,][\d]{2})",
+        r"([\d]{1,6}[.,][\d]{2})\s*(?:€|eur|EUR)",
+        r"([\d]{2,6})\s*(?:€|eur|EUR)",
+    ]:
+        for m in re.finditer(pat, text_orig, re.IGNORECASE):
+            try:
+                amt_str = m.group(1).replace(" ","").replace(",",".")
+                amt = float(amt_str)
+                if 0.01 < amt < 1_000_000:
+                    amounts.append(amt)
+            except: pass
+    if amounts:
+        result["amount"] = max(amounts)  # Take largest amount (likely total)
+    
+    # Extract currency
+    if "€" in pdf_text or "eur" in text:
+        result["currency"] = "EUR"
+    elif "usd" in text or "$" in pdf_text:
+        result["currency"] = "USD"
+    else:
+        result["currency"] = "EUR"
+    
+    # Extract invoice number
+    for pat in [
+        r"(?:arve nr|arve number|invoice no\.?|invoice #|arve)[\s:.#]*([A-Z0-9][A-Z0-9\-/_.]{1,20})",
+        r"(?:nr|no)\.?[\s:]*([A-Z0-9][A-Z0-9\-/]{1,15})",
+    ]:
+        m = re.search(pat, text_orig, re.IGNORECASE)
+        if m:
+            result["invoice_number"] = m.group(1).strip()[:30]
+            break
+    
+    # Extract dates
+    date_patterns = [
+        r"(\d{2}[./]\d{2}[./]\d{4})",
+        r"(\d{4}-\d{2}-\d{2})",
+        r"(\d{1,2}\s+\w+\s+\d{4})",
+    ]
+    dates_found = []
+    for pat in date_patterns:
+        for m in re.finditer(pat, pdf_text):
+            try:
+                ds = m.group(1)
+                # Normalize
+                for fmt in ["%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"]:
+                    try:
+                        from datetime import datetime as _dtp
+                        d = _dtp.strptime(ds, fmt)
+                        if 2020 <= d.year <= 2030:
+                            dates_found.append(d.strftime("%Y-%m-%d"))
+                        break
+                    except: pass
+            except: pass
+    if dates_found:
+        dates_found = sorted(set(dates_found))
+        result["issue_date"] = dates_found[0]
+        if len(dates_found) > 1:
+            result["due_date"] = dates_found[-1]  # Last date is usually due date
+    
+    # Extract vendor (first few lines often have company name)
+    lines = [l.strip() for l in pdf_text.split("\n") if l.strip() and len(l.strip()) > 3]
+    if lines:
+        # Vendor is usually in first 5 lines
+        for line in lines[:5]:
+            if len(line) > 5 and not any(x in line.lower() for x in ["arve", "invoice", "rechnung", "http", "www", "tel:", "fax:"]):
+                result["vendor"] = line[:60]
+                break
+    
+    return result
+
+
 # ── Keyword-based invoice extractor (no Claude API needed) ────────────────────
 INVOICE_KW_STRONG = [
     # Estonian
@@ -1326,6 +1444,24 @@ def scan_imap(emit, from_date=None, to_date=None):
             except Exception:
                 pass
 
+        # ALL emails with PDF attachments (catch invoices with unusual subjects)
+        try:
+            for att_term in [b"HAS ATTACHMENT", b"HASATTACHMENT"]:
+                try:
+                    search_args = [att_term] + date_terms if date_terms else [att_term]
+                    _, att_data = mail.search(None, *search_args)
+                    if att_data and att_data[0]:
+                        att_uids = set(att_data[0].split())
+                        new_att = att_uids - ids
+                        if new_att:
+                            ids.update(new_att)
+                            emit(f"📎 +{len(new_att)} писем с вложениями", "ok")
+                    break
+                except Exception:
+                    continue
+        except Exception as ex:
+            log.debug(f"Attachment search: {ex}")
+
         # Fallback: last N emails
         if not ids:
             emit("Нет совпадений — беру последние письма", "warn")
@@ -1366,10 +1502,10 @@ def scan_imap(emit, from_date=None, to_date=None):
                 emit(f"Ошибка заголовка {uid}: {ex}", "err")
 
         # Hook for PDF fetching - pass mail connection
-        _pending_pdfs = {}  # uid_str -> {filename, bytes}
+        _pending_pdfs = {}  # uid_str -> {filename, bytes, parsed}
 
         def _fetch_pdf_and_body(uid_str):
-            """Fetch body + PDF text, also save PDF to disk."""
+            """Fetch full message: body text + extract ALL PDFs, parse invoice data."""
             try:
                 uid_b = uid_str.encode() if isinstance(uid_str, str) else uid_str
                 _, data = mail.fetch(uid_b, "(RFC822)")
@@ -1377,24 +1513,42 @@ def scan_imap(emit, from_date=None, to_date=None):
                 raw_msg = email.message_from_bytes(data[0][1])
                 body_text = get_plain_body(raw_msg)
                 pdf_texts = []
+                best_parsed = {}
+
                 for part in raw_msg.walk():
                     ct = part.get_content_type() or ""
                     fn = part.get_filename() or ""
-                    if "pdf" in ct.lower() or (fn and fn.lower().endswith(".pdf")):
-                        try:
-                            pdf_bytes = part.get_payload(decode=True)
-                            if pdf_bytes:
-                                pt = extract_pdf_text(pdf_bytes)
-                                if pt:
-                                    pdf_texts.append(f"[PDF: {fn}]\n{pt}")
-                                # Save PDF bytes for later storage (after invoice ID is known)
-                                _pending_pdfs[uid_str] = {"filename": fn, "bytes": pdf_bytes}
-                                emit(f"  📄 PDF: {fn} ({len(pdf_bytes)//1024}КБ)", "ok")
-                        except Exception as pe:
-                            log.debug(f"PDF {fn}: {pe}")
+                    is_pdf = "pdf" in ct.lower() or (fn and fn.lower().endswith(".pdf"))
+                    if not is_pdf: continue
+                    try:
+                        pdf_bytes = part.get_payload(decode=True)
+                        if not pdf_bytes: continue
+                        
+                        # Extract text
+                        pt = extract_pdf_text(pdf_bytes, max_chars=4000)
+                        if pt:
+                            pdf_texts.append(f"[PDF: {fn}]\n{pt}")
+                            
+                            # Parse invoice fields from PDF
+                            parsed = parse_pdf_invoice(pt, fn)
+                            if parsed.get("is_invoice"):
+                                # Keep best parsed (highest signal count)
+                                if parsed.get("signal_count", 0) > best_parsed.get("signal_count", 0):
+                                    best_parsed = parsed
+                        
+                        # Store PDF bytes for saving
+                        _pending_pdfs[uid_str] = {
+                            "filename": fn, "bytes": pdf_bytes,
+                            "parsed": best_parsed, "text": pt
+                        }
+                        emit(f"  📄 {fn} ({len(pdf_bytes)//1024}КБ)" +
+                             (f" → invoice detected!" if best_parsed.get("is_invoice") else ""), "ok")
+                    except Exception as pe:
+                        log.debug(f"PDF {fn}: {pe}")
+
                 result = body_text
                 if pdf_texts:
-                    result += "\n\n--- ВЛОЖЕНИЯ PDF ---\n" + "\n".join(pdf_texts)
+                    result += "\n\n--- PDF СОДЕРЖИМОЕ ---\n" + "\n".join(pdf_texts)
                 return result
             except Exception as ex:
                 log.debug(f"fetch full {uid_str}: {ex}")
@@ -1403,9 +1557,8 @@ def scan_imap(emit, from_date=None, to_date=None):
         result = process_emails(emails_raw, emit,
                                 fetch_body=_fetch_pdf_and_body, source="imap")
 
-        # Save PDFs to disk, link to invoice IDs
+        # Save PDFs and enrich invoices with PDF-parsed data
         if _pending_pdfs and isinstance(result, list):
-            existing_all = load_invoices()
             for inv in result:
                 uid = inv.get("email_uid","")
                 if uid in _pending_pdfs:
@@ -1414,16 +1567,64 @@ def scan_imap(emit, from_date=None, to_date=None):
                         save_pdf(inv["id"], pdf_info["bytes"], pdf_info["filename"])
                         inv["has_pdf"]      = True
                         inv["pdf_filename"] = pdf_info["filename"]
-                        log.info(f"PDF linked to invoice {inv['id']}: {pdf_info['filename']}")
+                        
+                        # Enrich invoice with PDF-extracted data if missing
+                        parsed = pdf_info.get("parsed", {})
+                        if parsed.get("is_invoice"):
+                            if not inv.get("amount") or float(inv.get("amount",0)) == 0:
+                                if parsed.get("amount"):
+                                    inv["amount"] = parsed["amount"]
+                                    log.info(f"PDF amount: {parsed['amount']} for {inv['id']}")
+                            if not inv.get("due_date") and parsed.get("due_date"):
+                                inv["due_date"] = parsed["due_date"]
+                            if not inv.get("invoice_number") and parsed.get("invoice_number"):
+                                inv["invoice_number"] = parsed["invoice_number"]
+                            if parsed.get("vendor") and not inv.get("vendor"):
+                                inv["vendor"] = parsed["vendor"]
                     except Exception as pe:
                         log.error(f"PDF save error: {pe}")
-            # Re-save invoices with has_pdf flag
+            
+            # Also add invoices detected ONLY in PDF (not caught by email keywords)
+            result_uids = {i.get("email_uid","") for i in result}
+            for uid_str, pdf_info in _pending_pdfs.items():
+                if uid_str in result_uids: continue  # already processed
+                parsed = pdf_info.get("parsed", {})
+                if not parsed.get("is_invoice"): continue
+                if not parsed.get("amount") and parsed.get("signal_count",0) < 3: continue
+                
+                # Find email metadata for this UID
+                em_meta = next((e for e in emails_raw if str(e.get("id","")) == uid_str), {})
+                subj = em_meta.get("subject","PDF Invoice")
+                frm  = em_meta.get("from","")
+                ds   = em_meta.get("date", date.today().isoformat())[:10]
+                
+                inv = build_invoice({
+                    "is_invoice":     True,
+                    "vendor":         parsed.get("vendor") or extract_vendor(subj, frm, ""),
+                    "amount":         parsed.get("amount", 0),
+                    "currency":       parsed.get("currency", "EUR"),
+                    "due_date":       parsed.get("due_date"),
+                    "issue_date":     parsed.get("issue_date") or ds,
+                    "invoice_number": parsed.get("invoice_number",""),
+                    "description":    subj[:100],
+                    "category":       "services",
+                    "status":         "pending",
+                }, uid_str, subj, frm, ds, True, "imap:pdf")
+                inv["has_pdf"]      = True
+                inv["pdf_filename"] = pdf_info["filename"]
+                try:
+                    save_pdf(inv["id"], pdf_info["bytes"], pdf_info["filename"])
+                except Exception: pass
+                result.append(inv)
+                emit(f"  📄 PDF invoice: {inv['vendor']} {inv['amount']}€", "ok")
+            
+            # Save all with has_pdf flags
             if any(i.get("has_pdf") for i in result):
                 all_invs = load_invoices()
                 inv_map  = {i["id"]: i for i in result}
-                for i, inv in enumerate(all_invs):
-                    if inv["id"] in inv_map:
-                        all_invs[i] = inv_map[inv["id"]]
+                for i, inv_item in enumerate(all_invs):
+                    if inv_item["id"] in inv_map:
+                        all_invs[i] = inv_map[inv_item["id"]]
                 save_invoices(all_invs)
 
         try: mail.logout()
