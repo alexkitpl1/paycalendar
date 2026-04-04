@@ -1,7 +1,12 @@
 """
 PayCalendar — платёжный календарь через почту
 """
-import email, email.header, imaplib, json, logging, os, re, socket
+import os
+# Zone.ee IMAP fix - MUST be before any config reads
+if not os.environ.get("PC_EMAIL_IMAP_HOST"):
+    os.environ["PC_EMAIL_IMAP_HOST"] = "imap.zone.eu"
+
+import email, email.header, imaplib, json, logging, re, socket
 import subprocess, sys, threading, time, traceback
 import urllib.parse as urlparse, webbrowser, configparser
 from datetime import datetime, date
