@@ -298,7 +298,6 @@ def reload_config():
     WEBMAIL_COOKIE = c("email", "webmail_cookie", "")
     WEBMAIL_XSRF   = c("email", "webmail_xsrf_token", "")
     WEBMAIL_URL    = c("email", "webmail_session_url", "")
-    # Reload credentials from saved config (overrides env if file has values)
     _addr = c("email", "address", "")
     _pass = c("email", "password", "")
     _host = c("email", "imap_host", "")
@@ -306,7 +305,9 @@ def reload_config():
     _co   = c("app", "company_name", "")
     if _addr: EMAIL_ADDR = _addr
     if _pass: EMAIL_PASS = _pass
-    if _host: IMAP_HOST  = _host
+    # Always fix wrong Zone.ee hostname
+    if _host and _host != "mail.zone.ee": IMAP_HOST = _host
+    else: IMAP_HOST = "imap.zone.eu"  # Zone.ee official IMAP (mail.zone.ee = wrong)
     if _key:  CLAUDE_KEY = _key
     if _co:   COMPANY    = _co
 
