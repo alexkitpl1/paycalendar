@@ -1268,6 +1268,16 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                     _inv["last_reminded"] = datetime.now().strftime("%Y-%m-%d")
                     break
             skipped_dup += 1; all_uids.append(uid); continue
+        # Decode RFC2047 subject
+        raw_subj = str(em.get("subject") or "")
+        try:
+            import email.header as _eh
+            parts = _eh.decode_header(raw_subj)
+            subj = "".join(
+                (p.decode(enc or "utf-8", errors="replace") if isinstance(p, bytes) else p)
+                for p, enc in parts)
+        except Exception:
+            subj = raw_subj
         # Normalise subject to catch Re:/RE: thread duplicates
         norm_key = (_norm_subj(subj), ds[:10])
         if norm_key in existing_subj_dates:
