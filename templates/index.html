@@ -238,50 +238,131 @@ input, select, textarea { font-size: 16px !important; }
   .dn { font-size: 12px; }
   .dow-h { font-size: 10px; padding: 3px 0; }
 }
+
+/* ═══════ MOBILE REDESIGN ═══════ */
+#topbar{display:flex;flex-direction:column;gap:6px;
+  padding:10px 14px 8px;background:var(--bg2);
+  border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:50}
+.top-row1{display:flex;align-items:center;justify-content:space-between}
+.brand{display:flex;align-items:center;gap:10px}
+.brand-icon{width:38px;height:38px;border-radius:12px;
+  background:linear-gradient(135deg,#f59e0b,#d97706);
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;font-weight:700;color:#fff}
+.brand-name{font-size:17px;font-weight:700;color:var(--text)}
+.top-actions{display:flex;align-items:center;gap:2px}
+.th-btn{width:34px;height:34px;border-radius:9px;border:none;
+  background:transparent;cursor:pointer;font-size:15px;color:var(--text3)}
+.th-btn.active,.th-btn:hover{background:var(--bg3)}
+.icon-btn{width:34px;height:34px;border-radius:9px;border:none;
+  background:transparent;cursor:pointer;font-size:22px;
+  color:var(--text2);line-height:1}
+.top-row2{display:flex;align-items:center;justify-content:center;gap:14px}
+#month-label{font-family:'Playfair Display',serif;font-size:19px;
+  font-weight:700;color:var(--text);min-width:170px;text-align:center}
+.view-tabs{display:flex;gap:3px}
+.vtab{flex:1;padding:8px 10px;border-radius:9px;border:none;
+  background:transparent;color:var(--text3);font-size:13px;
+  font-weight:500;cursor:pointer;min-height:38px;transition:all .15s}
+.vtab.active{background:var(--bg3);color:var(--text);font-weight:600}
+#stat-pills{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+.stat-pill{padding:4px 12px;border-radius:20px;font-size:12px;
+  background:var(--bg3);border:1px solid var(--border);
+  color:var(--text2);white-space:nowrap}
+.stat-pill.overdue{border-color:#ef4444;color:#ef4444}
+[data-theme="dark"] .stat-pill.overdue{background:#2d0b0b}
+.nav-btn{width:36px;height:36px;border-radius:9px;
+  border:1px solid var(--border2);background:var(--bg3);
+  color:var(--text2);cursor:pointer;font-size:16px;
+  display:flex;align-items:center;justify-content:center}
+.nav-btn:hover{border-color:var(--border3);color:var(--text)}
+#fab-scan{position:fixed;bottom:28px;right:20px;z-index:90;
+  width:58px;height:58px;border-radius:50%;border:none;
+  background:linear-gradient(135deg,#f59e0b,#d97706);
+  color:#fff;font-size:22px;cursor:pointer;
+  box-shadow:0 4px 20px rgba(245,158,11,.45);
+  display:flex;align-items:center;justify-content:center;
+  transition:transform .15s,box-shadow .15s}
+#fab-scan:active{transform:scale(.93)}
+.sheet-bg{position:fixed;inset:0;background:rgba(0,0,0,.4);z-index:100}
+.sheet-body{position:fixed;bottom:0;left:0;right:0;z-index:101;
+  background:var(--bg2);border-radius:22px 22px 0 0;
+  padding:16px 14px calc(20px + env(safe-area-inset-bottom));
+  box-shadow:0 -4px 30px rgba(0,0,0,.18)}
+.sheet-title{font-size:12px;font-weight:700;color:var(--text3);
+  text-align:center;margin-bottom:14px;text-transform:uppercase;letter-spacing:.6px}
+.sheet-div{height:1px;background:var(--border);margin:8px 0}
+.sheet-btn{display:block;width:100%;padding:15px 16px;border-radius:13px;
+  border:none;background:var(--bg3);color:var(--text);font-size:15px;
+  font-weight:500;cursor:pointer;margin-bottom:6px;text-align:left}
+.sheet-btn:active{filter:brightness(.95)}
+.sheet-btn.primary{background:linear-gradient(135deg,#f59e0b,#d97706);
+  color:#fff;font-weight:600}
+.sheet-btn.danger{color:#ef4444}
+.sheet-btn.muted{color:var(--text3);font-size:14px;text-align:center}
+.menu-item{padding:11px 14px;font-size:14px;color:var(--text2);
+  cursor:pointer;border-radius:9px;transition:background .1s}
+.menu-item:hover{background:var(--bg3)}
+.cal-wrap{padding:10px 8px 90px}
+#m-grid{gap:2px}
+.day{min-height:64px;padding:4px;border-radius:9px}
+#scan-panel,.scan-panel-fixed{
+  padding-bottom:calc(12px + env(safe-area-inset-bottom)) !important}
+/* Hide old desktop elements */
+.brand-sub,.topbar-center,.topbar-right,.theme-sw,.view-toggle{display:none!important}
+@media(min-width:700px){
+  #fab-scan{bottom:32px;right:32px}
+  .sheet-body{max-width:420px;left:50%;transform:translateX(-50%);border-radius:22px 22px 0 0}
+}
 </style>
 </head>
 <body>
 
 <div id="topbar">
-  <div class="brand">
-    <div class="brand-icon">₽</div>
-    <div>
+  <div class="top-row1">
+    <div class="brand">
+      <div class="brand-icon">₽</div>
       <div class="brand-name">PayCalendar</div>
-      <div class="brand-sub">PAYMENT INTELLIGENCE</div>
+    </div>
+    <div class="top-actions">
+      <button class="th-btn" id="th-dark"  onclick="setTheme('dark')"  title="Тёмная">🌑</button>
+      <button class="th-btn active" id="th-white" onclick="setTheme('white')" title="Светлая">☀️</button>
+      <button class="icon-btn" onclick="toggleMenu()" title="Меню">⋮</button>
     </div>
   </div>
-  <span id="company-name">—</span>
-
-  <div class="topbar-center">
-    <div class="month-nav">
-      <button class="nav-btn" onclick="prevP()">‹</button>
-      <div id="month-label">—</div>
-      <button class="nav-btn" onclick="nextP()">›</button>
-    </div>
-    <div id="stat-pills"></div>
+  <div class="top-row2">
+    <button class="nav-btn" onclick="prevP()">‹</button>
+    <div id="month-label">—</div>
+    <button class="nav-btn" onclick="nextP()">›</button>
   </div>
-
-  <div class="topbar-right">
-    <div class="theme-sw">
-      <button class="th-btn th-dark active" id="th-dark" onclick="setTheme('dark')" title="Тёмная">🌑</button>
-      <button class="th-btn th-grey" id="th-grey" onclick="setTheme('grey')" title="Серая">🌫</button>
-      <button class="th-btn th-white" id="th-white" onclick="setTheme('white')" title="Светлая">☀</button>
-    </div>
-    <div class="view-toggle">
-      <button class="vtab active" id="vt-m" onclick="setView('month')">Месяц</button>
-      <button class="vtab" id="vt-w" onclick="setView('week')">Неделя</button>
-      <button class="vtab" id="vt-o" onclick="setView('overdue')">⚠ Долги</button>
-    </div>
-    <button class="btn btn-gold" id="scanThisBtn" onclick="scanSequential(1)" title="Сканировать текущий месяц">📥 Этот месяц</button>
-    <button class="btn btn-glass" id="scan2Btn"   onclick="scanSequential(2)" title="Текущий, затем предыдущий">📥 + Предыдущий</button>
-    <button class="btn btn-glass" id="scan3Btn"   onclick="scanSequential(4)" title="Текущий + 3 предыдущих месяца">📥 + 3 месяца</button>
-    <span id="autoScanTimer" style="font-size:11px;color:var(--text3);opacity:.7;align-self:center" title="Следующее автосканирование"></span>
-    <button class="btn btn-glass" id="refreshBtn" onclick="doRefresh()" title="Проверить последние 30 писем">🔄 Обновить</button>
-    <button class="btn btn-glass" onclick="resetAndScan()" title="Сбросить историю и пересканировать все письма заново">🔁 Пересканировать всё</button>
-    <a href="/login-helper" class="btn btn-glass" title="Войти в почту">🌐 Войти в почту</a>
-    <a href="/debug-log?n=200&level=all" target="_blank" class="btn btn-glass" title="Лог отладки">📋 Лог</a>
-    <button class="btn btn-glass" id="pubBtn" onclick="showPublicUrl()" title="Доступ с телефона/Android">📱 На телефон</button>
-    <button class="btn btn-glass" onclick="openAdd()">+ Счёт</button>
+  <div id="stat-pills"></div>
+  <div class="view-tabs">
+    <button class="vtab active" id="vt-m" onclick="setView('month')">Месяц</button>
+    <button class="vtab" id="vt-w" onclick="setView('week')">Неделя</button>
+    <button class="vtab" id="vt-o" onclick="setView('overdue')">⚠ Долги</button>
+  </div>
+</div>
+<div id="top-menu" style="display:none;position:fixed;top:68px;right:12px;
+  background:var(--bg2);border:1px solid var(--border2);border-radius:14px;
+  padding:8px;z-index:200;min-width:180px;
+  box-shadow:0 8px 32px rgba(0,0,0,.18)">
+  <div class="menu-item" onclick="hideMenu();window.open('/login-helper','_blank')">🌐 Настройки почты</div>
+  <div class="menu-item" onclick="hideMenu();showScanMenu()">📥 Сканировать</div>
+  <div class="menu-item" onclick="hideMenu();window.open('/debug-log','_blank')">📋 Лог</div>
+</div>
+<button id="fab-scan" onclick="showScanMenu()" title="Сканировать">📥</button>
+<div id="scan-sheet" style="display:none">
+  <div class="sheet-bg" onclick="hideScanSheet()"></div>
+  <div class="sheet-body">
+    <div class="sheet-title">Сканировать почту</div>
+    <button class="sheet-btn primary" id="scanThisBtn" onclick="hideScanSheet();scanSequential(1)">📥 Этот месяц</button>
+    <button class="sheet-btn" id="scan2Btn" onclick="hideScanSheet();scanSequential(2)">📥 + Предыдущий</button>
+    <button class="sheet-btn" id="scan3Btn" onclick="hideScanSheet();scanSequential(4)">📥 + 3 месяца</button>
+    <div class="sheet-div"></div>
+    <button class="sheet-btn" id="refreshBtn" onclick="hideScanSheet();doRefresh()">🔄 Обновить</button>
+    <button class="sheet-btn danger" onclick="hideScanSheet();resetAndScan()">🔁 Пересканировать всё</button>
+    <button class="sheet-btn muted" onclick="hideScanSheet()">✕ Отмена</button>
   </div>
 </div>
 
@@ -310,7 +391,7 @@ const S = {
   month: new Date(),
   weekStart: mondayOf(new Date()),
   activeDay: null,
-  theme: (function(){try{return localStorage.getItem("pcal_theme")||"dark";}catch(e){return "dark";}})(),
+  theme: (function(){try{return localStorage.getItem("pcal_theme")||"white";}catch(e){return "dark";}})(),
   company: "",
 };
 
@@ -1237,6 +1318,28 @@ window.addEventListener('load', ()=>{
     const b = document.getElementById('ios-hint');
     if(b) b.style.display = 'flex';
   }
+});
+
+function showScanMenu(){
+  var s=document.getElementById('scan-sheet');
+  if(s){s.style.display='block';document.body.style.overflow='hidden';}
+}
+function hideScanSheet(){
+  var s=document.getElementById('scan-sheet');
+  if(s){s.style.display='none';document.body.style.overflow='';}
+}
+function toggleMenu(){
+  var m=document.getElementById('top-menu');
+  if(m) m.style.display=m.style.display==='none'?'block':'none';
+}
+function hideMenu(){
+  var m=document.getElementById('top-menu');
+  if(m) m.style.display='none';
+}
+document.addEventListener('click',function(e){
+  var m=document.getElementById('top-menu');
+  if(m&&!m.contains(e.target)&&!e.target.closest('.icon-btn'))
+    m.style.display='none';
 });
 
 /* ─── Init ──────────────────────────────────────────────────────────────── */
