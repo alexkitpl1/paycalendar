@@ -425,6 +425,35 @@ input, select, textarea { font-size: 16px !important; }
 /* ── Sum bar ─────────────────────────────────────────── */
 .sum-bar { overflow-x: auto; scrollbar-width: none; white-space: nowrap; }
 .sum-bar::-webkit-scrollbar { display: none; }
+
+/* Day panel as bottom sheet on mobile */
+@media (max-width: 700px) {
+  #sp {
+    position: fixed !important;
+    bottom: 0 !important;
+    left: 0 !important;
+    right: 0 !important;
+    top: auto !important;
+    width: 100% !important;
+    max-height: 70vh !important;
+    border-radius: 22px 22px 0 0 !important;
+    border: none !important;
+    border-top: 1px solid var(--border2) !important;
+    box-shadow: 0 -8px 32px rgba(0,0,0,.2) !important;
+    z-index: 85 !important;
+    overflow-y: auto !important;
+    animation: slideUp .25s cubic-bezier(.22,.68,0,1.2);
+    padding-bottom: env(safe-area-inset-bottom) !important;
+  }
+  /* Backdrop for sp on mobile */
+  #sp::before {
+    content: '';
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,.3);
+    z-index: -1;
+  }
+}
 </style>
 </head>
 <body>
@@ -942,7 +971,7 @@ function renderSP(){
   const total=invs.filter(i=>i.status!=="paid").reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
   const dn=S.activeDay.getDate(),mon=MONTHS_G[S.activeDay.getMonth()];
   const dow=DOW_G[S.activeDay.getDay()===0?6:S.activeDay.getDay()-1];
-  let h=`<div class="sp-h"><div class="sp-date">${dn} ${mon}</div><div class="sp-dow">${dow} · ${S.activeDay.getFullYear()}</div>
+  let h=`<div class="sp-h"><div style="display:flex;align-items:flex-start;justify-content:space-between"><div><div class="sp-date">${dn} ${mon}</div><div class="sp-dow">${dow} · ${S.activeDay.getFullYear()}</div></div><button onclick="closeDay()" style="width:32px;height:32px;border-radius:50%;border:1px solid var(--border2);background:var(--bg3);color:var(--text3);font-size:18px;cursor:pointer;flex-shrink:0;display:flex;align-items:center;justify-content:center;line-height:1">×</button></div>
     ${total>0?`<div class="sp-tot">
       <div class="sp-tot-l">К ОПЛАТЕ</div>
       <div class="sp-tot-v">${fmtAmt(total)}</div>
@@ -1002,7 +1031,17 @@ function renderLegend(){
 }
 
 /* ─── Actions ───────────────────────────────────────────────────────────── */
-function selDay(iso){S.activeDay=new Date(iso+"T00:00:00");render()}
+function selDay(iso){
+  S.activeDay=new Date(iso+"T00:00:00");
+  render();
+  // On mobile, scroll sp into view
+  if(window.innerWidth<=700){
+    setTimeout(function(){
+      var sp=document.getElementById('sp');
+      if(sp) sp.scrollTop=0;
+    },50);
+  }
+}
 function closeDay(){S.activeDay=null;render()}
 function setView(v){
   S.view=v;

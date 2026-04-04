@@ -2086,6 +2086,96 @@ def api_reset_scan():
         return jsonify({"ok": False, "error": str(ex)})
 
 
+
+@app.route("/api/test-scan")
+def api_test_scan():
+    """Full diagnostic: IMAP + Gemini + sample emails."""
+    import imaplib as _il, email as _em
+    from email.header import decode_header as _dh
+    results = {"steps": []}
+    
+    def step(name, ok, detail=""):
+        results["steps"].append({"name": name, "ok": ok, "detail": str(detail)[:200]})
+        log.info(f"test-scan [{name}]: {'OK' if ok else 'FAIL'} {detail}")
+
+    reload_config()
+    
+    # 1. Config check
+    step("config_email",    bool(EMAIL_ADDR), EMAIL_ADDR)
+    step("config_password", bool(EMAIL_PASS and len(EMAIL_PASS)>3), "***" if EMAIL_PASS else "MISSING")
+    step("config_gemini",   bool(GEMINI_KEY), GEMINI_KEY[:20]+"..." if GEMINI_KEY else "MISSING")
+    step("active_provider", bool(_active_provider()), _active_provider() or "NONE")
+    
+    # 2. IMAP connection
+    try:
+        import socket as _so
+        with _so.create_connection((IMAP_HOST, IMAP_PORT), timeout=8):
+            step("imap_tcp", True, f"{IMAP_HOST}:{IMAP_PORT} reachable")
+    except Exception as ex:
+        step("imap_tcp", False, str(ex))
+        results["imap_available"] = False
+        results["note"] = "IMAP blocked - will use webmail"
+    
+    # 3. IMAP login + fetch emails
+    emails_found = []
+    try:
+        mail = _il.IMAP4_SSL(IMAP_HOST, IMAP_PORT)
+        mail.login(EMAIL_ADDR, EMAIL_PASS)
+        step("imap_login", True, f"Logged in as {EMAIL_ADDR}")
+        
+        mail.select("INBOX")
+        _, data = mail.search(None, "ALL")
+        all_ids = data[0].split()
+        step("imap_inbox", True, f"{len(all_ids)} total emails")
+        
+        # Last 20 emails
+        last = all_ids[-20:]
+        for uid in reversed(last):
+            try:
+                _, d = mail.fetch(uid, "(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])")
+                if d and d[0]:
+                    raw = d[0][1].decode("utf-8", errors="replace")
+                    subj = frm = dt = ""
+                    for line in raw.split("\n"):
+                        ll = line.lower()
+                        if ll.startswith("subject:"): subj = line[8:].strip()[:80]
+                        elif ll.startswith("from:"): frm = line[5:].strip()[:60]
+                        elif ll.startswith("date:"): dt = line[5:].strip()[:30]
+                    from app import is_invoice_by_keywords, INVOICE_KW_STRONG
+                    score = is_invoice_by_keywords(subj, "", frm, False)
+                    emails_found.append({
+                        "uid": uid.decode(),
+                        "subject": subj,
+                        "from": frm,
+                        "date": dt[:20],
+                        "score": score,
+                        "likely_invoice": score >= 50
+                    })
+            except Exception:
+                pass
+        
+        mail.logout()
+        step("imap_emails", True, f"Fetched {len(emails_found)} recent emails")
+        results["recent_emails"] = emails_found
+        results["invoice_candidates"] = [e for e in emails_found if e["likely_invoice"]]
+        
+    except Exception as ex:
+        step("imap_login", False, str(ex))
+    
+    # 4. Gemini API test
+    try:
+        resp = _ask_gemini("Say: {is_invoice: false}")
+        step("gemini_api", True, resp[:50])
+    except Exception as ex:
+        step("gemini_api", False, str(ex)[:100])
+    
+    results["summary"] = {
+        "total_emails_checked": len(emails_found),
+        "invoice_candidates": len([e for e in emails_found if e.get("likely_invoice")]),
+        "provider": _active_provider(),
+    }
+    return jsonify(results)
+
 @app.route("/api/diagnose")
 def api_diagnose():
     """Diagnostic endpoint - shows system status."""
