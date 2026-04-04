@@ -424,6 +424,181 @@ def build_invoice(obj, uid, subject, sender, date_str, attach, source):
     }
 
 # ── Core email processor ──────────────────────────────────────────────────────
+
+# ── Keyword-based invoice extractor (no Claude API needed) ────────────────────
+INVOICE_KW_STRONG = [
+    # Estonian
+    "arve","arve nr","arved","tasuda","makse","maksetähtaeg","maksenõue",
+    # English  
+    "invoice","bill","payment due","amount due","please pay","remittance",
+    "overdue","pro forma","statement of account",
+    # Russian
+    "счёт","счет","счёт-фактура","к оплате","оплата","квитанция","задолженность",
+    # German
+    "rechnung","zahlung","fällig","betrag fällig","mahnung","zahlungserinnerung",
+    # Finnish/Nordic
+    "lasku","maksu","eräpäivä","faktura","betalning","förfallodatum",
+    # French/Spanish/Italian
+    "facture","factura","fattura","paiement","pago","pagamento",
+    # Latvian/Lithuanian
+    "rēķins","sąskaita","apmokėjimas",
+]
+
+AMOUNT_PATTERNS = [
+    # €1,234.56 or EUR 1234.56 or 1 234,56 €
+    r"(?:EUR|€|USD|\$|GBP|£|SEK|NOK|DKK|PLN|CHF)?\s*([\d\s]{1,8}[,.]\d{2})\s*(?:EUR|€|USD|\$)?",
+    r"(?:summa|amount|total|kokku|итого|gesamt|montant|importe|totale)[:\s]+(?:EUR|€)?\s*([\d\s,.]+)",
+    r"([\d]+[,.]\d{2})\s*(?:EUR|€|eur)",
+    r"(?:EUR|€)\s*([\d]+[,.]\d{2})",
+]
+
+VENDOR_PATTERNS = [
+    r"^(?:from|от|von|de|da):\s*(.+)",
+    r"(?:company|firma|ettevõte|компания)[:\s]+([A-ZÀ-Ža-zÀ-ž\s&.,]{3,50})",
+    r"([A-Z][A-Za-zÀ-ž\s]{2,30}\s+(?:OÜ|AS|SIA|UAB|GmbH|Ltd|LLC|SA|NV|BV|AB))",
+]
+
+DUE_DATE_PATTERNS = [
+    r"(?:due|tähtaeg|fällig|срок|eräpäivä|vencimiento|échéance)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+    r"(?:pay by|maksta|bezahlen bis|оплатить до)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+    r"([\d]{2}[.][\d]{2}[.][\d]{4})",  # DD.MM.YYYY
+    r"([\d]{4}-[\d]{2}-[\d]{2})",      # YYYY-MM-DD
+]
+
+
+def extract_amount(text):
+    """Extract monetary amount from text using regex."""
+    for pat in AMOUNT_PATTERNS:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            raw = m.group(1).strip().replace(" ","").replace(",",".")
+            try:
+                val = float(raw)
+                if 0.01 <= val <= 9_999_999:
+                    return round(val, 2)
+            except Exception:
+                pass
+    return 0.0
+
+
+def extract_vendor(subject, sender, body):
+    """Extract vendor name from email."""
+    # Try sender name first
+    if sender:
+        name_part = sender.split("<")[0].strip().strip('"').strip("'")
+        if 2 < len(name_part) < 60 and "@" not in name_part:
+            return name_part
+        # Extract from email domain
+        email_match = re.search(r"@([\w.-]+)", sender)
+        if email_match:
+            domain = email_match.group(1)
+            parts = domain.split(".")
+            if len(parts) >= 2:
+                return parts[-2].title()
+    # Try body/subject for company patterns
+    for pat in VENDOR_PATTERNS:
+        m = re.search(pat, subject + " " + body[:500], re.IGNORECASE | re.MULTILINE)
+        if m:
+            return m.group(1).strip()[:60]
+    return subject[:40] if subject else "Unknown"
+
+
+def extract_due_date(text, email_date):
+    """Extract due date from email text."""
+    for pat in DUE_DATE_PATTERNS:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            raw = m.group(1)
+            # Try to parse
+            for fmt in ["%d.%m.%Y","%d/%m/%Y","%Y-%m-%d","%d-%m-%Y",
+                        "%d.%m.%y","%m/%d/%Y"]:
+                try:
+                    from datetime import datetime as _dt
+                    d = _dt.strptime(raw, fmt).date()
+                    # Sanity check - within 2 years
+                    from datetime import date as _d2
+                    today = _d2.today()
+                    if _d2(today.year-1, 1, 1) <= d <= _d2(today.year+2, 12, 31):
+                        return str(d)
+                except Exception:
+                    pass
+    # Default: email date + 30 days
+    try:
+        from datetime import date as _d3, timedelta
+        base = _d3.fromisoformat(email_date[:10])
+        return str(base + timedelta(days=30))
+    except Exception:
+        return email_date[:10] if email_date else ""
+
+
+def extract_currency(text):
+    """Detect currency from text."""
+    for cur, pats in [
+        ("EUR", [r"EUR|€|euro"]),
+        ("USD", [r"USD|\$|dollar"]),
+        ("GBP", [r"GBP|£|pound"]),
+        ("SEK", [r"SEK|kr\b"]),
+    ]:
+        for pat in pats:
+            if re.search(pat, text, re.IGNORECASE):
+                return cur
+    return "EUR"  # default
+
+
+def guess_category(subject, body, sender):
+    """Guess invoice category from keywords."""
+    text = (subject + " " + body[:300] + " " + sender).lower()
+    if any(k in text for k in ["elekter","electricity","energy","strom","énergie",
+                                 "vesi","water","wasser","heat","küte","gas"]):
+        return "utilities"
+    if any(k in text for k in ["rent","üür","miete","loyer","alquiler","affitto"]):
+        return "rent"
+    if any(k in text for k in ["hosting","domain","server","cloud","software",
+                                 "saas","subscription","tarkvara"]):
+        return "software"
+    if any(k in text for k in ["tax","vat","maks","steuer","taxe","impuesto"]):
+        return "tax"
+    if any(k in text for k in ["transport","logistics","shipping","freight","cargo"]):
+        return "logistics"
+    return "services"
+
+
+def is_invoice_by_keywords(subject, body, sender, has_att):
+    """Determine if email is an invoice using keywords. Returns confidence 0-100."""
+    text = (subject + " " + body[:1000] + " " + sender).lower()
+    score = 0
+    
+    # Strong invoice keywords in subject = high confidence
+    for kw in INVOICE_KW_STRONG:
+        if kw in subject.lower():
+            score += 40
+            break
+    
+    # Keywords in body
+    for kw in INVOICE_KW_STRONG[:15]:  # most important ones
+        if kw in text:
+            score += 10
+            break
+    
+    # Has attachment = likely invoice
+    if has_att:
+        score += 20
+    
+    # Amount pattern found
+    if extract_amount(text) > 0:
+        score += 30
+    
+    # Negative signals
+    if any(k in text for k in ["newsletter","unsubscribe","отписаться",
+                                 "promotion","sale","%off","discount code"]):
+        score -= 40
+    if any(k in text for k in ["meeting","call","calendar","invite","demo"]):
+        score -= 30
+        
+    return min(100, max(0, score))
+
+
+
 def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
     """
     Run Claude on list of email dicts.
@@ -499,6 +674,7 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                 pass
 
         try:
+            # Try Claude API first
             prompt = CLAUDE_TMPL.format(
                 subject=subj, sender=frm, date=ds,
                 has_att=att, body=body[:2000])
@@ -506,9 +682,36 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
             if obj and obj.get("is_invoice"):
                 inv = build_invoice(obj, uid, subj, frm, ds, att, source)
                 new_invs.append(inv)
-                emit(f"✓ Invoice: {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
+                emit(f"✓ [AI] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
         except Exception as ex:
-            emit(f"Skipped {uid}: {ex}", "err")
+            # Claude failed (no credits/API error) → use keyword extractor
+            err_str = str(ex)
+            if "credit" in err_str.lower() or "balance" in err_str.lower() or "api" in err_str.lower():
+                emit(f"⚠ Claude недоступен — использую анализ по ключевым словам", "warn")
+            score = is_invoice_by_keywords(subj, body, frm, att)
+            if score >= 50:
+                amount   = extract_amount(subj + " " + body[:1000])
+                vendor   = extract_vendor(subj, frm, body)
+                due_date = extract_due_date(body + " " + subj, ds)
+                currency = extract_currency(subj + " " + body[:500])
+                category = guess_category(subj, body, frm)
+                inv = build_invoice({
+                    "is_invoice":      True,
+                    "vendor":          vendor,
+                    "amount":          amount or 0,
+                    "currency":        currency,
+                    "due_date":        due_date,
+                    "issue_date":      ds[:10],
+                    "description":     subj[:100],
+                    "category":        category,
+                    "invoice_number":  "",
+                }, uid, subj, frm, ds, att, source)
+                new_invs.append(inv)
+                emit(f"✓ [KW] {vendor} {amount} {currency} (score={score})", "ok")
+            elif score >= 25:
+                emit(f"  ~ Возможно счёт (score={score}): {subj[:50]}", "warn")
+            if score < 50:
+                emit(f"Пропускаю {uid}: {subj[:40]}", "info")
 
         processed_uids.append(uid)
         last_uid  = uid
