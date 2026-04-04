@@ -695,6 +695,89 @@ def build_invoice(obj, uid, subject, sender, date_str, attach, source):
 
 # ── Core email processor ──────────────────────────────────────────────────────
 
+
+# ── PDF Attachment Parser ─────────────────────────────────────────────────────
+def extract_pdf_text(pdf_bytes: bytes, max_chars: int = 3000) -> str:
+    """Extract text from PDF bytes. Returns empty string on failure."""
+    try:
+        import pypdf, io
+        reader = pypdf.PdfReader(io.BytesIO(pdf_bytes), strict=False)
+        texts = []
+        for i, page in enumerate(reader.pages[:5]):  # max 5 pages
+            try:
+                t = page.extract_text() or ""
+                if t.strip():
+                    texts.append(t.strip())
+            except Exception:
+                pass
+        result = "\n".join(texts)[:max_chars]
+        log.debug(f"PDF: extracted {len(result)} chars from {len(reader.pages)} pages")
+        return result
+    except ImportError:
+        log.warning("pypdf not installed - PDF parsing unavailable")
+        return ""
+    except Exception as ex:
+        log.debug(f"PDF parse error: {ex}")
+        return ""
+
+
+def extract_attachments_from_msg(msg) -> list[dict]:
+    """Extract attachments from email.message.Message object.
+    Returns list of {filename, content_type, data: bytes}
+    """
+    attachments = []
+    for part in msg.walk():
+        cd = part.get_content_disposition() or ""
+        ct = part.get_content_type() or ""
+        fn = part.get_filename() or ""
+        
+        is_attachment = (
+            "attachment" in cd or
+            "inline" in cd and fn or
+            ct in ("application/pdf", "application/octet-stream") and fn
+        )
+        
+        if is_attachment and fn:
+            try:
+                data = part.get_payload(decode=True)
+                if data:
+                    attachments.append({
+                        "filename":     fn,
+                        "content_type": ct,
+                        "data":         data,
+                        "size":         len(data),
+                    })
+            except Exception as ex:
+                log.debug(f"Attachment extract error ({fn}): {ex}")
+    return attachments
+
+
+def get_pdf_text_from_imap(mail_conn, uid: str) -> str:
+    """Fetch full RFC822 message from IMAP and extract PDF text from attachments."""
+    try:
+        uid_b = uid.encode() if isinstance(uid, str) else uid
+        _, data = mail_conn.fetch(uid_b, "(RFC822)")
+        if not data or not data[0]:
+            return ""
+        raw = data[0][1]
+        import email as _em
+        msg = _em.message_from_bytes(raw)
+        
+        all_pdf_text = []
+        for att in extract_attachments_from_msg(msg):
+            fn  = att["filename"].lower()
+            ct  = att["content_type"].lower()
+            if "pdf" in fn or "pdf" in ct:
+                txt = extract_pdf_text(att["data"])
+                if txt:
+                    all_pdf_text.append(f"[PDF: {att['filename']}]\n{txt}")
+                    log.info(f"PDF parsed: {att['filename']} ({len(txt)} chars)")
+        
+        return "\n\n".join(all_pdf_text)
+    except Exception as ex:
+        log.debug(f"get_pdf_text error uid={uid}: {ex}")
+        return ""
+
 # ── Keyword-based invoice extractor (no Claude API needed) ────────────────────
 INVOICE_KW_STRONG = [
     # Estonian
@@ -1032,8 +1115,11 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
 
         inv = None
         try:
+            combined = body
+            if pdf_text:
+                combined = body + "\n\n--- ВЛОЖЕНИЕ PDF ---\n" + pdf_text[:2000]
             prompt = CLAUDE_TMPL.format(subject=subj, sender=frm,
-                                        date=ds, has_att=att, body=body)
+                                        date=ds, has_att=att, body=combined[:3000])
             obj = extract_json(ask_ai(prompt))
             if obj and obj.get("is_invoice"):
                 inv = build_invoice(obj, uid, subj, frm, ds, att, source)
@@ -1043,7 +1129,9 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         except Exception:
             # AI unavailable → keyword-only fallback
             if score >= 35:
-                amount   = extract_amount(subj + " " + body)
+                # Include PDF text in amount extraction
+                search_text = subj + " " + body + " " + pdf_text
+                amount   = extract_amount(search_text)
                 vendor   = extract_vendor(subj, frm, body)
                 # Skip if no amount found and it's not a very strong match
                 if amount == 0 and score < 65:
@@ -1107,6 +1195,156 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
 
 
 # ── Main scan dispatcher ──────────────────────────────────────────────────────
+def scan_imap(emit, from_date=None, to_date=None):
+    """Scan inbox via IMAP. Returns list of invoices or None on failure."""
+    emit(f"IMAP подключение к {IMAP_HOST}:{IMAP_PORT}...")
+    
+    alt_hosts = list(dict.fromkeys(["imap.zone.eu", IMAP_HOST, "mail.zone.ee"]))
+    alt_hosts = [h for h in alt_hosts if h]
+    
+    mail, connected_host = _try_imap_connect(alt_hosts, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
+    if not mail:
+        emit("IMAP недоступен — переключаюсь на webmail", "warn")
+        return None  # caller falls back to webmail
+
+    emit(f"✓ IMAP подключён через {connected_host}", "ok")
+
+    try:
+        mail.select(IMAP_FOLDER)
+        state    = load_state()
+        last_uid = state.get("last_uid")
+
+        # Build date filter
+        date_terms = []
+        if from_date:
+            from datetime import datetime as _dt
+            since_str = _dt.strptime(from_date, "%Y-%m-%d").strftime("%d-%b-%Y")
+            date_terms.append(f"SINCE {since_str}".encode())
+            emit(f"Фильтр: с {since_str}", "ok")
+        if to_date:
+            from datetime import datetime as _dt2, timedelta
+            before_dt = _dt2.strptime(to_date, "%Y-%m-%d") + timedelta(days=1)
+            date_terms.append(f"BEFORE {before_dt.strftime('%d-%b-%Y')}".encode())
+
+        ids = set()
+
+        # When date range given, fetch ALL emails in range
+        if date_terms:
+            try:
+                _, data = mail.search(None, *date_terms)
+                for uid in data[0].split():
+                    ids.add(uid)
+                emit(f"Дата-фильтр: {len(ids)} писем", "ok")
+            except Exception as ex:
+                emit(f"Дата-поиск ошибка: {ex}", "warn")
+
+        # Subject keyword search
+        if not date_terms or not ids:
+            for term in IMAP_SUBJECTS:
+                try:
+                    args = [term] + date_terms if date_terms else [term]
+                    _, data = mail.search(None, *args)
+                    for uid in data[0].split():
+                        ids.add(uid)
+                except Exception:
+                    pass
+
+        # New since last scan
+        if last_uid and not from_date:
+            try:
+                _, data = mail.search(None, f"UID {int(last_uid)+1}:*")
+                for uid in data[0].split():
+                    ids.add(uid)
+                emit(f"Новые с UID {last_uid}...", "ok")
+            except Exception:
+                pass
+
+        # Fallback: last N emails
+        if not ids:
+            emit("Нет совпадений — беру последние письма", "warn")
+            _, data = mail.search(None, "ALL")
+            all_ids = data[0].split()
+            ids = set(all_ids[-min(SCAN_LIMIT, len(all_ids)):])
+
+        # Sort newest first, limit
+        try:
+            ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x,bytes) else x), reverse=True)
+        except Exception:
+            ids_sorted = list(ids)
+        ids = set(ids_sorted[:SCAN_LIMIT])
+        emit(f"Анализирую {len(ids)} писем (лимит {SCAN_LIMIT})...", "ok")
+
+        # Fetch headers
+        emails_raw = []
+        for uid in list(ids):
+            try:
+                _, data = mail.fetch(uid, "(RFC822.HEADER)")
+                if not data or not data[0]: continue
+                msg = email.message_from_bytes(data[0][1])
+                subj = decode_header(msg.get("Subject",""))
+                sndr = decode_header(msg.get("From",""))
+                att  = False  # will check separately
+                try:
+                    ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
+                except Exception:
+                    ds = date.today().isoformat()
+                uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
+                emails_raw.append({
+                    "id": uid_s, "subject": subj, "from": sndr,
+                    "body": "", "date": ds, "has_attachment": False,
+                })
+            except Exception as ex:
+                emit(f"Ошибка заголовка {uid}: {ex}", "err")
+
+        # Hook for PDF fetching - pass mail connection
+        def _fetch_pdf_and_body(uid_str):
+            """Fetch body text + PDF text for given UID."""
+            try:
+                uid_b = uid_str.encode() if isinstance(uid_str, str) else uid_str
+                _, data = mail.fetch(uid_b, "(RFC822)")
+                if not data or not data[0]: return ""
+                raw_msg = email.message_from_bytes(data[0][1])
+                
+                # Get plain text body
+                body_text = get_plain_body(raw_msg)
+                
+                # Get PDF attachments
+                pdf_texts = []
+                for part in raw_msg.walk():
+                    ct = part.get_content_type() or ""
+                    fn = part.get_filename() or ""
+                    if "pdf" in ct.lower() or (fn and fn.lower().endswith(".pdf")):
+                        try:
+                            pdf_bytes = part.get_payload(decode=True)
+                            if pdf_bytes:
+                                pt = extract_pdf_text(pdf_bytes)
+                                if pt:
+                                    pdf_texts.append(f"[PDF: {fn}]\n{pt}")
+                                    emit(f"  📄 PDF: {fn} ({len(pt)} симв.)", "ok")
+                        except Exception as pe:
+                            log.debug(f"PDF {fn}: {pe}")
+                
+                result = body_text
+                if pdf_texts:
+                    result += "\n\n--- ВЛОЖЕНИЯ PDF ---\n" + "\n".join(pdf_texts)
+                return result
+            except Exception as ex:
+                log.debug(f"fetch full {uid_str}: {ex}")
+                return ""
+
+        result = process_emails(emails_raw, emit,
+                                fetch_body=_fetch_pdf_and_body, source="imap")
+        try: mail.logout()
+        except Exception: pass
+        return result
+
+    except Exception as ex:
+        emit(f"IMAP ошибка: {ex}", "err")
+        try: mail.logout()
+        except Exception: pass
+        return []
+
+
 def scan_email(emit=None, quick=False, from_date=None, to_date=None):
     """
     Scan inbox for invoices.
