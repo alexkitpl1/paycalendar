@@ -822,103 +822,157 @@ _PDF_INVOICE_PATTERNS = [
 ]
 
 def parse_pdf_invoice(pdf_text: str, filename: str = "") -> dict:
-    """
-    Extract invoice fields from PDF text.
-    Returns dict with: amount, currency, invoice_number, issue_date, due_date, vendor, is_invoice
-    """
+    """Extract invoice fields from PDF. English, Estonian, Russian, German."""
     if not pdf_text or len(pdf_text) < 10:
         return {}
-    
-    text  = pdf_text.lower()
-    text_orig = pdf_text
+
+    text = pdf_text.lower()
     result = {}
-    
-    # Detect if it's an invoice at all
-    invoice_signals = [
-        "arve", "invoice", "rechnung", "faktura", "счёт", "arve nr", "invoice no",
-        "tasuda", "due date", "payment due", "к оплате", "kokku", "total due",
-        "maksetähtaeg", "lugupidamisega", "käibemaks", "vat", "käibemaksunumber",
-        "reg.nr", "kmkr", "reg nr"
+
+    # ── Invoice detection signals ─────────────────────────────────────────
+    SIGNALS = [
+        # English
+        "invoice","invoice no","invoice number","amount due","total due",
+        "due date","payment due","subtotal","vat no","tax invoice","bill to",
+        "please pay","remit to","net 30","net 15","purchase order",
+        # Estonian
+        "arve","arve nr","tasuda","kokku","maksetähtaeg","käibemaks","kmkr",
+        "viitenumber","ettemaks","lugupidamisega","arve kuupäev",
+        # Russian
+        "счёт","счет","к оплате","итого","инн","р/с","платёж",
+        # German/Finnish
+        "rechnung","rechnungsnr","fällig","zahlung","mwst","lasku","faktura",
     ]
-    signal_count = sum(1 for s in invoice_signals if s in text)
-    if signal_count < 2:
+    signals = sum(1 for s in SIGNALS if s in text)
+    if signals < 1:
         return {}
-    
-    result["is_invoice"]  = True
-    result["signal_count"] = signal_count
-    
-    # Extract amount (look for largest reasonable number)
+    result["is_invoice"]   = True
+    result["signal_count"] = signals
+
+    import re as _re
+
+    # ── Amount extraction ─────────────────────────────────────────────────
+    # Normalize: "1,800.00" → 1800.00 | "1.800,00" → 1800.00 | "1 800,00" → 1800.00
+    def clean_amount(s):
+        s = s.strip()
+        # European format: 1.800,00 or 1 800,00
+        if _re.search(r"\d[.,]\d{3}[,\.]\d{2}$", s):
+            s = _re.sub(r"[., ](?=\d{3}[,.])", "", s)
+        # Remove thousands sep: 1,800.00 or 1.800,00
+        if s.count(",") == 1 and s.count(".") == 0:
+            # Could be "1800,00" (decimal comma)
+            s = s.replace(",", ".")
+        elif s.count(",") >= 1 and s.count(".") == 1:
+            # "1,800.00" → remove commas
+            s = s.replace(",", "")
+        elif s.count(",") == 1 and s.count(".") >= 1:
+            # "1.800,00" → remove dot, replace comma
+            s = s.replace(".", "").replace(",", ".")
+        s = _re.sub(r"\s", "", s)
+        return float(s)
+
     amounts = []
-    for pat in [
-        r"(?:kokku|total|summa|итого|tasuda)[\s:€]*([\d\s]+[.,][\d]{2})",
-        r"([\d]{1,6}[.,][\d]{2})\s*(?:€|eur|EUR)",
-        r"([\d]{2,6})\s*(?:€|eur|EUR)",
-    ]:
-        for m in re.finditer(pat, text_orig, re.IGNORECASE):
+    amount_patterns = [
+        # English: "Total Due: 1,800.00" / "Amount Due: EUR 1,800.00"
+        r"(?:total\s*due|amount\s*due|balance\s*due|grand\s*total|total\s*payable|invoice\s*total|net\s*total)[^\d€$£\\n]{0,15}([\d,\s.]+\d{2})",
+        r"(?:subtotal|sub.total)[^\d€$£\\n]{0,10}([\d,\s.]+\d{2})",
+        r"(?:total)[^\d€$£\\n]{0,5}([\d,\s.]+\d{2})",
+        # Estonian: "Kokku tasuda: 1 800,00"
+        r"(?:kokku\s*tasuda|tasuda|kokku)[^\d\\n]{0,10}([\d\s]+[.,]\d{2})",
+        # Russian
+        r"(?:итого|к\s*оплате)[^\d\\n]{0,10}([\d\s]+[.,]\d{2})",
+        # Generic: number + currency symbol
+        r"([\d]{1,3}(?:[,.\s]\d{3})*[.,]\d{2})\s*(?:€|EUR|USD|\$|GBP|£)",
+        r"(?:€|EUR|\$|£)\s*([\d]{1,3}(?:[,.\s]\d{3})*[.,]\d{2})",
+    ]
+    for pat in amount_patterns:
+        for m in _re.finditer(pat, pdf_text, _re.IGNORECASE):
             try:
-                amt_str = m.group(1).replace(" ","").replace(",",".")
-                amt = float(amt_str)
-                if 0.01 < amt < 1_000_000:
-                    amounts.append(amt)
-            except: pass
+                v = clean_amount(m.group(1))
+                if 0.01 < v < 9_999_999:
+                    amounts.append(v)
+            except:
+                pass
+
     if amounts:
-        result["amount"] = max(amounts)  # Take largest amount (likely total)
-    
-    # Extract currency
-    if "€" in pdf_text or "eur" in text:
+        result["amount"] = round(max(amounts), 2)
+
+    # ── Currency ──────────────────────────────────────────────────────────
+    if "€" in pdf_text or _re.search(r"eur", text):
         result["currency"] = "EUR"
-    elif "usd" in text or "$" in pdf_text:
+    elif "$" in pdf_text or _re.search(r"usd", text):
         result["currency"] = "USD"
+    elif "£" in pdf_text or _re.search(r"gbp", text):
+        result["currency"] = "GBP"
     else:
         result["currency"] = "EUR"
-    
-    # Extract invoice number
+
+    # ── Invoice number ────────────────────────────────────────────────────
     for pat in [
-        r"(?:arve nr|arve number|invoice no\.?|invoice #|arve)[\s:.#]*([A-Z0-9][A-Z0-9\-/_.]{1,20})",
-        r"(?:nr|no)\.?[\s:]*([A-Z0-9][A-Z0-9\-/]{1,15})",
+        r"invoice\s*(?:no\.?|number|#|num\.?)\s*[:#]?\s*([A-Z0-9][\w\-/]{1,20})",
+        r"inv\.?\s*(?:no\.?|#)\s*:?\s*([A-Z0-9][\w\-/]{1,15})",
+        r"arve\s*(?:nr\.?|number|numbrid?)\s*:?\s*([A-Z0-9][\w\-/]{1,20})",
+        r"arvenumber\s*:?\s*([A-Z0-9][\w\-/]{1,20})",
+        r"rechnung\s*(?:nr\.?|nummer)\s*:?\s*([A-Z0-9][\w\-/]{1,15})",
+        r"(?:^|\s)(?:no\.|nr\.)\s*([A-Z0-9]{2,}[\w\-/]{0,15})",
     ]:
-        m = re.search(pat, text_orig, re.IGNORECASE)
+        m = _re.search(pat, pdf_text, _re.IGNORECASE | _re.MULTILINE)
         if m:
             result["invoice_number"] = m.group(1).strip()[:30]
             break
-    
-    # Extract dates
-    date_patterns = [
-        r"(\d{2}[./]\d{2}[./]\d{4})",
-        r"(\d{4}-\d{2}-\d{2})",
-        r"(\d{1,2}\s+\w+\s+\d{4})",
-    ]
-    dates_found = []
-    for pat in date_patterns:
-        for m in re.finditer(pat, pdf_text):
+
+    # ── Dates ─────────────────────────────────────────────────────────────
+    def pd(s):
+        from datetime import datetime as _dt
+        for fmt in ["%d.%m.%Y","%d/%m/%Y","%m/%d/%Y","%Y-%m-%d","%d-%m-%Y"]:
             try:
-                ds = m.group(1)
-                # Normalize
-                for fmt in ["%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d"]:
-                    try:
-                        from datetime import datetime as _dtp
-                        d = _dtp.strptime(ds, fmt)
-                        if 2020 <= d.year <= 2030:
-                            dates_found.append(d.strftime("%Y-%m-%d"))
-                        break
-                    except: pass
-            except: pass
-    if dates_found:
-        dates_found = sorted(set(dates_found))
-        result["issue_date"] = dates_found[0]
-        if len(dates_found) > 1:
-            result["due_date"] = dates_found[-1]  # Last date is usually due date
-    
-    # Extract vendor (first few lines often have company name)
-    lines = [l.strip() for l in pdf_text.split("\n") if l.strip() and len(l.strip()) > 3]
-    if lines:
-        # Vendor is usually in first 5 lines
-        for line in lines[:5]:
-            if len(line) > 5 and not any(x in line.lower() for x in ["arve", "invoice", "rechnung", "http", "www", "tel:", "fax:"]):
-                result["vendor"] = line[:60]
+                d = _dt.strptime(s.strip(), fmt)
+                if 2020 <= d.year <= 2030:
+                    return d.strftime("%Y-%m-%d")
+            except:
+                pass
+        return None
+
+    # Due date (English first)
+    for due_pat in [
+        r"(?:due\s*date|payment\s*due|pay\s*by|due\s*by)\s*[:\-]?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})",
+        r"(?:due\s*date|payment\s*due)\s*[:\-]?\s*(\d{4}-\d{2}-\d{2})",
+        r"(?:tasuda\s*(?:hiljemalt)?|maksetähtaeg)\s*[:\-]?\s*(\d{1,2}[./]\d{1,2}[./]\d{4})",
+        r"(?:срок\s*оплаты|оплатить\s*до)\s*[:\-]?\s*(\d{1,2}[./]\d{1,2}[./]\d{4})",
+        r"(?:fällig\s*am?)\s*[:\-]?\s*(\d{1,2}[./]\d{1,2}[./]\d{4})",
+    ]:
+        m = _re.search(due_pat, pdf_text, _re.IGNORECASE)
+        if m:
+            d = pd(m.group(1))
+            if d:
+                result["due_date"] = d
                 break
-    
+
+    # All dates
+    all_dates = []
+    for dp in [r"\d{2}\.\d{2}\.\d{4}", r"\d{2}/\d{2}/\d{4}", r"\d{4}-\d{2}-\d{2}", r"\d{2}-\d{2}-\d{4}"]:
+        for m in _re.finditer(dp, pdf_text):
+            d = pd(m.group(0))
+            if d and d not in all_dates:
+                all_dates.append(d)
+    if all_dates:
+        all_dates.sort()
+        result["issue_date"] = all_dates[0]
+        if not result.get("due_date") and len(all_dates) > 1:
+            result["due_date"] = all_dates[-1]
+
+    # ── Vendor (first meaningful non-header line) ─────────────────────────
+    skip_words = {"invoice","arve","rechnung","faktura","bill","receipt","statement",
+                  "http","www","tel:","fax:","email:","phone:","page ","date:","from:","to:"}
+    lines = [l.strip() for l in pdf_text.split("\n") if l.strip() and len(l.strip()) > 4]
+    for line in lines[:10]:
+        ll = line.lower()
+        if not any(sw in ll for sw in skip_words) and not _re.match(r"^[\d\s.,€$£]+$", line):
+            result["vendor"] = line[:60]
+            break
+
     return result
+
 
 
 # ── Keyword-based invoice extractor (no Claude API needed) ────────────────────
