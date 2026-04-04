@@ -1911,6 +1911,22 @@ def background_scanner():
 # ═══════════════════════════════════════════════════════════════════════════════
 
 
+
+@app.route("/api/setup-zone")
+def api_setup_zone():
+    """Force correct Zone.ee IMAP settings - no auth needed."""
+    global IMAP_HOST
+    save_config_value("email", "imap_host", "imap.zone.eu")
+    save_config_value("email", "imap_port", "993")
+    IMAP_HOST = "imap.zone.eu"
+    reload_config()
+    log.info("Zone.ee IMAP host fixed: imap.zone.eu")
+    return jsonify({
+        "ok": True,
+        "message": "IMAP host set to imap.zone.eu",
+        "imap_host": IMAP_HOST
+    })
+
 @app.route("/health")
 def health():
     return "ok", 200
@@ -1980,7 +1996,7 @@ def _check_token():
 @app.before_request
 def require_auth():
     """Block unauthenticated API calls."""
-    skip = ("/api/auth-check", "/api/stats", "/health", "/api/test-scan", "/api/diagnose")
+    skip = ("/api/auth-check", "/api/stats", "/health", "/api/test-scan", "/api/diagnose", "/api/setup-zone")
     if request.path.startswith("/api/") and request.path not in skip:
         if not _check_token():
             return jsonify({"error": "unauthorized"}), 401
