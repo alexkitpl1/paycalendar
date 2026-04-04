@@ -1763,9 +1763,7 @@ def scan_email(emit=None, quick=False, from_date=None, to_date=None):
         log.info(msg)
         if emit: emit(msg, t)
 
-    if not scan_lock.acquire(blocking=False):
-        emitter("Scan already running", "warn")
-        return []
+    # Note: scan_lock is managed by _run_bg_scan (caller) - do NOT acquire here
     # Temporarily override scan limit for quick scan
     global SCAN_LIMIT
     orig_limit = SCAN_LIMIT
@@ -1799,8 +1797,7 @@ def scan_email(emit=None, quick=False, from_date=None, to_date=None):
             emitter(f"IMAP blocked ({type(ex).__name__}) — пробуем другие серверы", "warn")
             return []
     finally:
-        SCAN_LIMIT = orig_limit  # always restore, even on exception
-        scan_lock.release()
+        SCAN_LIMIT = orig_limit  # always restore
 
 def check_notifications():
     today = date.today()
