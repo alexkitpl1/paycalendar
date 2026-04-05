@@ -998,7 +998,7 @@ function renderOverdue(){
       +'padding:5px 0 8px;border-bottom:1px solid var(--border2);margin-bottom:10px;'
       +'display:flex;justify-content:space-between">'+g.label
       +'<span style="color:#f87171">'+fmtAmt(Math.round(g.total*100)/100)+'</span></div>';
-    h+='<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch">';
+    h+='<div style="display:flex;flex-wrap:wrap;gap:10px;padding-bottom:8px">';
     sorted.forEach(function(inv,n){
       var dl=Math.round((today-new Date(inv.due_date+'T00:00:00'))/86400000);
       var bc=dl<=7?'#fbbf24':'#f87171';
@@ -1007,7 +1007,7 @@ function renderOverdue(){
       var clickable=inv.has_pdf||inv.gdrive_link;
       var cardClick=clickable?'style="cursor:pointer"':'style="cursor:default"';
       h+='<div '+cardClick+' data-inv-id="'+esc(inv.id)+'"'
-        +' style="flex:0 0 190px;background:var(--bg2);border:1px solid var(--border2);'
+        +' style="flex:0 0 200px;min-width:180px;background:var(--bg2);border:1px solid var(--border2);'
         +'border-top:3px solid '+bc+';border-radius:10px;padding:12px;position:relative">';
       // header: number + date
       h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
