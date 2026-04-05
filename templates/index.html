@@ -1958,6 +1958,9 @@ var _pollDone = null;
 function _startPolling(onDone){
   _pollDone = onDone;
   if(_pollInterval) clearInterval(_pollInterval);
+  // Stop resume-retry timer — we found an active scan
+  if(_resumeTimer){ clearTimeout(_resumeTimer); _resumeTimer=null; }
+  _resumeTries = 99;
   _showScanPanel();
   _pollInterval = setInterval(_pollStatus, 2500);
   _pollStatus(); // immediate first check
@@ -2009,51 +2012,64 @@ function _updateScanPanel(d){
   var lastMsg = '';
   if(d.log && d.log.length > 0) lastMsg = d.log[d.log.length-1].msg || '';
   var speed = d.speed ? d.speed.toFixed(1)+' п/с' : '';
-  var eta   = d.eta   ? ' · ~'+Math.round(d.eta)+'с' : '';
 
-  // Header-loading phase: total=0 means headers are being fetched (no AI analysis yet)
-  // Also detect by last log message containing "Заголовки" or "Аккаунт"
-  var isLoadingHeaders = lastMsg && (lastMsg.includes('Заголовки') || lastMsg.includes('Аккаунт') || lastMsg.includes('подключён'));
-  var isHeaderPhase = d.running && d.total === 0 && (pct === 0 || isLoadingHeaders);
-  // Analysis phase: have total count
-  var isAnalysisPhase = d.running && d.total > 0;
-
-  var statusColor = d.running ? '#fbbf24' : (d.found>0 ? '#4ade80' : '#9ca3af');
-  var statusIcon  = d.running ? '📬' : (d.found>0 ? '✅' : '📭');
-  var statusText  = isHeaderPhase
-    ? 'Загрузка заголовков...'
-    : isAnalysisPhase
-      ? 'Анализ писем...'
-      : (d.finished ? 'Готово' : 'Ожидание');
-
-  // Progress bar: animate during header phase, real % during analysis
-  var barHtml;
-  if(isHeaderPhase){
-    barHtml = '<div style="background:rgba(255,255,255,.1);border-radius:4px;height:6px;overflow:hidden">'
-      +'<div style="height:100%;width:30%;background:linear-gradient(90deg,#f59e0b,#f97316);'
-      +'border-radius:4px;animation:ld 1.4s ease-in-out infinite"></div></div>';
-  } else {
-    barHtml = '<div style="background:rgba(255,255,255,.1);border-radius:4px;height:6px;overflow:hidden">'
-      +'<div style="height:100%;width:'+pct+'%;background:linear-gradient(90deg,#f59e0b,#f97316);'
-      +'transition:width .5s;border-radius:4px"></div></div>';
+  var etaStr = '';
+  if(d.eta > 0){
+    var em = Math.floor(d.eta/60), es = Math.round(d.eta%60);
+    etaStr = em>0 ? '~'+em+'м '+es+'с' : '~'+es+'с';
   }
 
+  var isLoadingHeaders = lastMsg && (lastMsg.includes('Заголовки') || lastMsg.includes('Аккаунт') || lastMsg.includes('подключён') || lastMsg.includes('Подключение') || lastMsg.includes('Предфильтр'));
+  var isHeaderPhase = d.running && d.total === 0 && (pct === 0 || isLoadingHeaders);
+  var isAnalysisPhase = d.running && d.total > 0;
+  var isDone = !d.running && !d.queued && d.started;
+
+  var statusColor = d.running ? '#fbbf24' : (isDone&&d.found>0 ? '#4ade80' : (isDone ? '#9ca3af' : '#6b7280'));
+  var statusIcon  = d.running ? (isHeaderPhase?'📨':'📊') : (isDone&&d.found>0 ? '✅' : '📭');
+
+  // Progress bar
+  var barColor = isDone ? 'linear-gradient(90deg,#059669,#047857)' : 'linear-gradient(90deg,#f59e0b,#f97316)';
+  var barWidth = isDone ? '100' : pct;
+  var barAnim  = isHeaderPhase ? 'animation:ld 1.4s ease-in-out infinite;width:40%' : ('width:'+barWidth+'%;transition:width .5s');
+  var barHtml  = '<div style="background:rgba(255,255,255,.08);border-radius:4px;height:5px;overflow:hidden;margin-top:7px">'
+    +'<div style="height:100%;'+barAnim+';background:'+barColor+';border-radius:4px"></div></div>';
+
+  // Recent log lines (last 3)
+  var logLines = '';
+  if(d.log && d.log.length > 0 && (d.running || isDone)){
+    var recent = d.log.slice(-3);
+    logLines = '<div style="margin-top:6px;display:flex;flex-direction:column;gap:2px">'
+      + recent.map(function(e){
+          var col = e.t==='ok'?'#4ade80':e.t==='err'?'#f87171':e.t==='warn'?'#fbbf24':'#94a3b8';
+          var txt = (e.msg||'').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+          return '<span style="font-size:10px;color:'+col+';font-family:monospace;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">'+txt+'</span>';
+        }).join('')
+      +'</div>';
+  }
+
+  // Header row
+  var countInfo = isAnalysisPhase
+    ? '<span style="color:#94a3b8;font-size:12px">'+d.done+' / '+d.total+' · <b style="color:#fbbf24">'+pct+'%</b>'
+        +(speed?' · '+speed:'')+(etaStr?' · осталось '+etaStr:'')+'</span>'
+    : (isDone&&d.found>0
+        ? '<span style="color:#4ade80;font-size:12px;font-weight:600">+'+d.found+' счетов добавлено</span>'
+        : (isDone ? '<span style="color:#9ca3af;font-size:12px">Новых счетов не найдено</span>' : ''));
+
   panel.innerHTML =
-    '<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:7px">'
+    '<div style="display:flex;justify-content:space-between;align-items:center">'
       +'<div style="display:flex;align-items:center;gap:10px;min-width:0;flex:1">'
-        +'<span style="color:'+statusColor+';font-weight:700;white-space:nowrap">'
-          +statusIcon+' '+statusText+'</span>'
-        +(d.running&&d.found>0?'<span style="color:#4ade80;font-size:12px">+'+d.found+' найдено</span>':'')
-        +(isAnalysisPhase?'<span style="color:#6b7280;font-size:12px">'+d.done+'/'+d.total+' · '+pct+'%'+(speed?' · '+speed:'')+(eta)+'</span>':'')
-        +(lastMsg?'<span style="font-size:11px;color:#94a3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;min-width:0">'+lastMsg+'</span>':'')
+        +'<span style="color:'+statusColor+';font-weight:700;white-space:nowrap;font-size:13px">'
+          +statusIcon+' '+(isHeaderPhase?'Загрузка писем...':isAnalysisPhase?'Анализ AI...':isDone?'Скан завершён':'Запуск...')+'</span>'
+        +countInfo
       +'</div>'
-      +'<div style="display:flex;gap:8px;align-items:center;flex-shrink:0;margin-left:12px">'
+      +'<div style="flex-shrink:0;margin-left:10px">'
         +(d.running
-          ?'<button onclick="stopScan()" style="padding:4px 12px;border-radius:6px;border:1px solid #ef4444;background:transparent;color:#ef4444;font-size:12px;cursor:pointer;font-weight:600">■ Стоп</button>'
-          :'<button onclick="hideScanPanel()" style="padding:4px 12px;border-radius:6px;border:1px solid #374151;background:transparent;color:#6b7280;font-size:12px;cursor:pointer">✕</button>')
+          ?'<button onclick="stopScan()" style="padding:3px 11px;border-radius:6px;border:1px solid #ef4444;background:transparent;color:#ef4444;font-size:12px;cursor:pointer;font-weight:600">■ Стоп</button>'
+          :'<button onclick="hideScanPanel()" style="padding:3px 11px;border-radius:6px;border:1px solid #374151;background:transparent;color:#6b7280;font-size:12px;cursor:pointer">✕</button>')
       +'</div>'
     +'</div>'
-    +barHtml;
+    +barHtml
+    +logLines;
 }
 
 function stopScan(){
@@ -2242,16 +2258,25 @@ document.addEventListener('click',function(e){
     m.style.display='none';
 });
 
-// Auto-resume: check if scan is running when page opens
+// Auto-resume: keep checking until a running scan is found (up to 2 min)
+// Covers auto-scans that start 8-10s after app boot
+var _resumeTries = 0;
+var _resumeTimer = null;
 function _checkResumePolling(){
+  if(_pollInterval) return; // fast-polling already active
   fetch('/api/scan-status',{headers:{'X-PC-Token':window._TOKEN||''},credentials:'include'})
     .then(function(r){return r.json();})
     .then(function(d){
       if(d.running || d.queued){
-        showNotif('🔄 Фоновый скан продолжается...','info');
         _startPolling(null);
+        _resumeTries = 99; // stop retrying
+      } else if(_resumeTries < 24){ // retry every 5s for up to 2 min
+        _resumeTries++;
+        _resumeTimer = setTimeout(_checkResumePolling, 5000);
       }
-    }).catch(function(){});
+    }).catch(function(){
+      if(_resumeTries < 24){ _resumeTries++; _resumeTimer = setTimeout(_checkResumePolling, 5000); }
+    });
 }
 
 function openPdf(invId){
@@ -2267,7 +2292,7 @@ function openPdf(invId){
   }
 }
 
-setTimeout(_checkResumePolling, 1500);
+setTimeout(_checkResumePolling, 2000);
 
 // Offer action event delegation
 document.addEventListener('click', function(e){
