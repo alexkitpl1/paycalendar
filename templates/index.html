@@ -451,15 +451,10 @@ body {
 @keyframes fadeIn  { from{opacity:0} to{opacity:1} }>
 
 .chip-pdf {
-  cursor: pointer; margin-left: 2px; opacity: .9;
-  transition: opacity .15s; vertical-align: middle;
-  display:inline-flex;align-items:center;gap:2px;font-size:10px;
+  font-size: 10px; cursor: pointer; margin-left: 2px;
+  opacity: .8; transition: opacity .15s; vertical-align: middle;
 }
-.chip-pdf:hover { opacity: 1; transform: scale(1.1); }
-.chip-drive { cursor:pointer; margin-left:2px; vertical-align:middle;
-  opacity:.9; transition:opacity .15s; text-decoration:none;
-  display:inline-flex;align-items:center;gap:2px;font-size:10px; }
-.chip-drive:hover { opacity:1; transform:scale(1.1); }
+.chip-pdf:hover { opacity: 1; transform: scale(1.2); }
 .chip-drive {
   font-size: 10px; margin-left: 2px; vertical-align: middle;
   opacity: .8; transition: opacity .15s; text-decoration: none; display: inline;
@@ -468,12 +463,6 @@ body {
 .of-btn { padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg2); color: var(--text); font-size: 11px; cursor: pointer; }
 .of-btn:hover { border-color: var(--border2); }
 .of-btn-del { color: #f87171; border-color: rgba(248,113,113,.25); }
-
-
-.mf{padding:5px 12px;border-radius:16px;border:1px solid #1e2d45;background:#111820;color:#5a7a9a;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s}
-.mf.active,.mf:hover{background:#1e2d45;color:#e2e8f0}
-
-
 </style>
 </head>
 <body>
@@ -661,7 +650,6 @@ body {
 <div id="content-wrap">
   <div id="overdue-area" style="display:none"></div>
   <div id="offers-area"  style="display:none"></div>
-  <div id="mail-area"    style="display:none;padding:0 16px 20px"></div>
   <div id="body-wrap">
     <div id="cal-main">
       <div id="m-grid" class="cal-grid"></div>
@@ -877,7 +865,7 @@ function dayHTML(date){
     const st=stOf(inv),cat=CAT[inv.category]||CAT.other;
     h+=`<div class="chip" style="background:${cat.b};border-left-color:${SC[st]};color:${cat.c}" onclick="event.stopPropagation();selDay('${toISO(dc.date)}')">
       <span class="chip-d"></span><span class="chip-n">${esc(inv.vendor||"Счёт")}</span>
-      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.has_pdf?(`<span class="chip-pdf" onclick="event.stopPropagation();openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">${pdfIcon(13)}</span>`+(inv.gdrive_link?`<a href="${inv.gdrive_link}" target="_blank" class="chip-drive">☁</a>`:"")):""}${inv.reminder_count>1?"<span class='chip-remind'>🔔"+inv.reminder_count+"</span>":""}${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
+      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.has_pdf?(`<span class="chip-pdf" onclick="event.stopPropagation();openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">📄</span>`+(inv.gdrive_link?`<a href="${inv.gdrive_link}" target="_blank" class="chip-drive">☁</a>`:"")):""}${inv.reminder_count>1?"<span class='chip-remind'>🔔"+inv.reminder_count+"</span>":""}${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
   }
   if(extra>0)h+=`<div class="more">+${extra}</div>`;
   return{h,total};
@@ -943,8 +931,6 @@ function renderOffers(){
           +(inv.due_date?'<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#7c3aed22;color:#8b5cf6">до '+inv.due_date+'</span>':'')
           +'<button class="of-btn" data-acc-id="'+inv.id+'" onclick="markOfferAccepted(this.dataset.accId)">✅ В счета</button>'
           +'<button class="of-btn of-btn-del" data-del-id="'+inv.id+'" onclick="deleteInv(this.dataset.delId)">✕</button>'
-          +(inv.has_pdf?'<button class="of-btn" onclick="openPdf(\''+inv.id+'\')" style="color:#60a5fa;border-color:rgba(96,165,250,.3)">📄 PDF</button>':'')
-          +(inv.gdrive_link?'<a href="'+inv.gdrive_link+'" target="_blank" class="of-btn" style="text-decoration:none;color:#34d399;border-color:rgba(52,211,153,.25)">☁️ Drive</a>':'')
         +'</div>'
       +'</div>';
     });
@@ -969,73 +955,86 @@ function markOfferAccepted(id){
   setView('month');
 }
 
-function renderOverdue(){
-  var el=document.getElementById("overdue-area");
-  if(!el) return;
-  var today=new Date(); today.setHours(0,0,0,0);
-  var todayISO=toISO(today);
-  var overdue=S.invoices.filter(function(i){
-    return i.status!=="paid" && i.due_date && i.due_date<todayISO;
-  });
-  if(!overdue.length){
-    el.innerHTML='<div style="text-align:center;padding:48px 0;color:var(--text3)"><div style="font-size:40px;margin-bottom:12px">'+String.fromCodePoint(0x2705)+'</div>'+
-      'Нет неоплаченных счетов прошлых периодов</div>';
-    return;
-  }
-  var groups={};
-  overdue.forEach(function(inv){
-    var d=new Date(inv.due_date+"T00:00:00");
-    var key=d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0");
-    var MN=["Январь","Февраль","Март","Апрель","Май","Июнь","Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"];
-    if(!groups[key]) groups[key]={label:MN[d.getMonth()]+" "+d.getFullYear(),items:[],total:0};
-    groups[key].items.push(inv); groups[key].total+=parseFloat(inv.amount)||0;
-  });
-  var keys=Object.keys(groups).sort().reverse();
-  var tot=overdue.reduce(function(s,i){return s+(parseFloat(i.amount)||0);},0);
-  var PRI={high:0,medium:1,low:2,none:3};
-  var h='<div style="display:flex;align-items:center;justify-content:space-between;padding:12px 0 10px;border-bottom:1px solid var(--border2);margin-bottom:12px">';
-  h+='<div style="font-size:15px;font-weight:600">'+String.fromCodePoint(0x26A0)+' Неоплаченные счета прошлых периодов</div>';
-  h+='<div style="color:#f87171;font-weight:600">'+overdue.length+' сч. | '+fmtAmt(tot)+'</div></div>';
-  keys.forEach(function(key){
-    var g=groups[key];
-    var sorted=g.items.slice().sort(function(a,b){return(PRI[a.priority||"none"]||3)-(PRI[b.priority||"none"]||3);});
-    h+='<div style="margin-bottom:20px">';
-    h+='<div style="font-size:11px;color:var(--text3);text-transform:uppercase;padding:6px 0 6px;border-bottom:1px solid var(--border2);margin-bottom:8px;display:flex;justify-content:space-between">';
-    h+=g.label+' | <span style="color:#f87171">'+fmtAmt(Math.round(g.total*100)/100)+'</span></div>';
-    sorted.forEach(function(inv){
-      var dl=Math.round((today-new Date(inv.due_date+"T00:00:00"))/86400000);
-      var urg=dl<=7;
-      var PL={high:"[R]",medium:"[Y]",low:"[G]",none:""}[inv.priority||"none"];
-      h+='<div class="icard" style="border-left-color:'+(urg?"#fbbf24":"#f87171")+';display:grid;grid-template-columns:1fr auto;gap:6px;margin-bottom:8px">';
-      h+='<div>';
-      h+='<div style="font-size:13px;font-weight:600">'+PL+esc(inv.vendor||"—")+'</div>';
-      if(inv.description) h+='<div style="font-size:11px;color:var(--text3)">'+esc(inv.description)+'</div>';
-      h+='<div style="font-size:11px;color:var(--text3);margin-top:4px">№ '+esc(inv.invoice_number||"—")+' | до '+inv.due_date+'</div>';
-      h+='<div style="display:flex;gap:5px;margin-top:8px" data-inv-id="'+esc(inv.id)+'">';
-      h+='<button class="ic-btn ic-btn-pay" data-inv="'+esc(inv.id)+'" onclick="markPaidOv(this.dataset.inv)">'+String.fromCodePoint(0x2713)+' Оплачен</button>';
-      h+='<select data-inv="'+esc(inv.id)+'" onchange="setPriority(this.dataset.inv,this.value)" class="ic-btn" style="cursor:pointer;font-size:10px">';
-      h+='<option value="none"'+(!inv.priority||inv.priority==="none"?" selected":"")+'> Приоритет</option>';
-      h+='<option value="high"'+(inv.priority==="high"?" selected":"")+'>Срочно</option>';
-      h+='<option value="medium"'+(inv.priority==="medium"?" selected":"")+'>Важно</option>';
-      h+='<option value="low"'+(inv.priority==="low"?" selected":"")+'>Обычный</option>';
-      h+='</select></div></div>';
-      h+='<div style="text-align:right">';
-      h+='<div style="font-size:16px;font-weight:700;color:'+(urg?"#fbbf24":"#f87171")+'">'+fmtAmt(inv.amount,inv.currency)+'</div>';
-      h+='<div style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;margin-top:4px;background:'+(urg?"rgba(251,191,36,.15)":"rgba(248,113,113,.15)")+';color:'+(urg?"#fbbf24":"#f87171")+'">'+dl+' дн.</div>';
-      if(inv.vat_amount) h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">НДС: '+fmtAmt(inv.vat_amount,inv.currency)+'</div>';
-      // PDF + Drive icons
-      if(inv.has_pdf) h+='<button onclick="openPdf(\''+inv.id+'\')" style="margin-top:6px;display:block;width:100%;padding:4px 6px;border-radius:6px;border:1px solid rgba(96,165,250,.3);background:rgba(96,165,250,.1);color:#60a5fa;font-size:11px;cursor:pointer">📄 PDF</button>';
-      if(inv.gdrive_link) h+='<a href="'+inv.gdrive_link+'" target="_blank" onclick="event.stopPropagation()" style="margin-top:4px;display:block;width:100%;padding:4px 6px;border-radius:6px;border:1px solid rgba(52,211,153,.25);background:rgba(52,211,153,.08);color:#34d399;font-size:11px;text-decoration:none;text-align:center">☁️ Drive</a>';
-      h+='</div></div>';
-    });
-    h+='</div>';
-  });
-  el.innerHTML=h;
+function pdfIcon(sz){
+  sz=sz||16;
+  var s='<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 24 28" ';
+  s+='xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">';
+  s+='<path d="M4 0h11l7 7v19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2z" fill="#f7f7f7" stroke="#ccc" stroke-width="1"/>';
+  s+='<path d="M15 0l7 7h-7V0z" fill="#ddd"/>';
+  s+='<rect x="2" y="14" width="20" height="9" rx="1" fill="#e53e3e"/>';
+  s+='<text x="12" y="21.5" font-family="Arial" font-size="6.5" font-weight="900" fill="#fff" text-anchor="middle">PDF</text>';
+  s+='</svg>';
+  return s;
 }
 
-async function markPaidOv(id){
-  await markPaid(id);
-  renderOverdue();
+function renderOverdue(){
+  var el=document.getElementById('overdue-area');
+  if(!el)return;
+  var today=new Date();today.setHours(0,0,0,0);
+  var todayISO=toISO(today);
+  var ov=S.invoices.filter(function(i){return i.status!=='paid'&&i.due_date&&i.due_date<todayISO;});
+  if(!ov.length){el.innerHTML='<div style="text-align:center;padding:48px 0;color:var(--text3)">'+
+    '<div style="font-size:40px;margin-bottom:12px">'+String.fromCodePoint(0x2705)+'</div>Нет просроченных счетов</div>';return;}
+  var MN=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
+  var grp={};
+  ov.forEach(function(inv){
+    var d=new Date(inv.due_date+'T00:00:00');
+    var k=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0');
+    if(!grp[k])grp[k]={label:MN[d.getMonth()]+' '+d.getFullYear(),items:[],total:0};
+    grp[k].items.push(inv);grp[k].total+=parseFloat(inv.amount)||0;
+  });
+  var keys=Object.keys(grp).sort().reverse();
+  var tot=ov.reduce(function(s,i){return s+(parseFloat(i.amount)||0);},0);
+  var PRI={high:0,medium:1,low:2,none:3};
+  var h='<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0 12px;'
+    +'border-bottom:1px solid var(--border2);margin-bottom:16px">';
+  h+='<div style="font-size:15px;font-weight:700">⚠ Просрочено</div>';
+  h+='<div style="color:#f87171;font-weight:700">'+ov.length+' сч. · '+fmtAmt(tot)+'</div></div>';
+  keys.forEach(function(key){
+    var g=grp[key];
+    var sorted=g.items.slice().sort(function(a,b){
+      var pa=PRI[a.priority||'none']||3,pb=PRI[b.priority||'none']||3;
+      return pa!==pb?pa-pb:b.due_date.localeCompare(a.due_date);
+    });
+    h+='<div style="margin-bottom:20px">';
+    h+='<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;'
+      +'padding:5px 0 8px;border-bottom:1px solid var(--border2);margin-bottom:10px;'
+      +'display:flex;justify-content:space-between">'+g.label
+      +'<span style="color:#f87171">'+fmtAmt(Math.round(g.total*100)/100)+'</span></div>';
+    h+='<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch">';
+    sorted.forEach(function(inv,n){
+      var dl=Math.round((today-new Date(inv.due_date+'T00:00:00'))/86400000);
+      var bc=dl<=7?'#fbbf24':'#f87171';
+      var num=String(n+1).padStart(2,'0');
+      h+='<div style="flex:0 0 195px;background:var(--bg2);border:1px solid var(--border2);'
+        +'border-left:3px solid '+bc+';border-radius:10px;padding:12px">';
+      // row: number + date
+      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
+      h+='<span style="font-size:18px;font-weight:800;color:'+bc+';font-family:monospace">#'+num+'</span>';
+      h+='<span style="font-size:10px;color:var(--text3);background:var(--bg);padding:2px 7px;'
+        +'border-radius:8px;border:1px solid var(--border)">до '+inv.due_date+'</span></div>';
+      // vendor
+      h+='<div style="font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">'+esc(inv.vendor||'—')+'</div>';
+      if(inv.description)h+='<div style="font-size:10px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">'+esc(inv.description)+'</div>';
+      if(inv.invoice_number)h+='<div style="font-size:10px;color:var(--text3);margin-bottom:6px">№ '+esc(inv.invoice_number)+'</div>';
+      // amount + days
+      h+='<div style="font-size:16px;font-weight:800;color:#f87171;margin-bottom:3px">'+fmtAmt(inv.amount,inv.currency)+'</div>';
+      h+='<div style="font-size:10px;font-weight:600;color:'+bc+';margin-bottom:10px">просрочен '+dl+' дн.</div>';
+      // buttons
+      h+='<div style="display:flex;flex-direction:column;gap:5px">';
+      h+='<button class="ic-btn ic-btn-pay" data-inv="'+esc(inv.id)+'" onclick="markPaidOv(this.dataset.inv)">✓ Оплачен</button>';
+      if(inv.has_pdf)h+='<button class="ic-btn" data-id="'+esc(inv.id)+'" onclick="openPdf(this.dataset.id)">'+pdfIcon(13)+' PDF</button>';
+      if(inv.gdrive_link)h+='<a href="'+inv.gdrive_link+'" target="_blank" class="ic-btn" style="text-decoration:none;color:#34d399">☁️ Drive</a>';
+      h+='<select data-inv="'+esc(inv.id)+'" onchange="setPriority(this.dataset.inv,this.value)" class="ic-btn" style="cursor:pointer;font-size:10px">';
+      h+='<option value="none"'+(!inv.priority||inv.priority==="none"?' selected':'')+'Приоритет></option>';
+      h+='<option value="high"'+(inv.priority==="high"?' selected':'')+'>'+String.fromCodePoint(0x1F534)+' Срочно</option>';
+      h+='<option value="medium"'+(inv.priority==="medium"?' selected':'')+'>'+String.fromCodePoint(0x1F7E1)+' Важно</option>';
+      h+='<option value="low"'+(inv.priority==="low"?' selected':'')+'>'+String.fromCodePoint(0x1F7E2)+' Обычный</option>';
+      h+='</select></div></div>';
+    });
+    h+='</div></div>';
+  });
+  el.innerHTML=h;
 }
 
 function render(){
@@ -1273,7 +1272,7 @@ function renderSP(){
           </select>
           <button class="btn btn-sm btn-edit" onclick="openEdit('${inv.id}')">✎</button>
           <button class="btn btn-sm btn-del" onclick="deleteInv('${inv.id}')">✕</button>
-          ${inv.has_pdf?`<button class="btn btn-sm" onclick="openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">"+pdfIcon(14)+" PDF</button>`:""}
+          ${inv.has_pdf?`<button class="btn btn-sm" onclick="openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">📄 PDF</button>`:""}
           ${inv.gdrive_link?`<a href="${inv.gdrive_link}" target="_blank" class="btn btn-sm" style="text-decoration:none;background:rgba(52,211,153,.12);color:#34d399;border:1px solid rgba(52,211,153,.25)">☁️ Drive</a>`:""}
         </div>
       </div>`;
@@ -1306,7 +1305,7 @@ function closeDay(){S.activeDay=null;render()}
 function setView(v){
   S.view=v;
   document.querySelectorAll(".vtab").forEach(function(el){el.classList.remove("active");});
-  var map={"month":["vt-m","vt-m2"],"week":["vt-w","vt-w2"],"overdue":["vt-o","vt-o2"],"offers":["vt-of","vt-of2"],"mail":["vt-m2"]};
+  var map={"month":["vt-m","vt-m2"],"week":["vt-w","vt-w2"],"overdue":["vt-o","vt-o2"],"offers":["vt-of","vt-of2"]};
   (map[v]||["vt-m","vt-m2"]).forEach(function(id){
     var el=document.getElementById(id); if(el) el.classList.add("active");
   });
@@ -1888,17 +1887,6 @@ loadAll();
 setInterval(()=>loadAll(),5*60*1000); // refresh every 5 min
 startAutoTimer(60); // auto-scan countdown
 
-
-function pdfIcon(size){
-  size = size||16;
-  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 28" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;flex-shrink:0">'
-    +'<path d="M4 0h11l7 7v19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2z" fill="#f7f7f7" stroke="#ccc" stroke-width="1"/>'
-    +'<path d="M15 0l7 7h-7V0z" fill="#ddd"/>'
-    +'<rect x="2" y="14" width="20" height="9" rx="1" fill="#e53e3e"/>'
-    +'<text x="12" y="21.5" font-family="Arial,sans-serif" font-size="6.5" font-weight="900" fill="#fff" text-anchor="middle" letter-spacing="0.3">PDF</text>'
-    +'</svg>';
-}
-
 // ── SEARCH ───────────────────────────────────────────────────────────────────
 var _searchFilter = 'all';
 var _searchTimer  = null;
@@ -2050,7 +2038,7 @@ function renderSearchResults(results, q){
     if(inv.has_pdf){
       var pdfBtn = document.createElement('button');
       pdfBtn.style.cssText='margin-top:8px;padding:4px 10px;border-radius:7px;border:1px solid #1e2d45;background:#111820;color:#60a5fa;font-size:11px;cursor:pointer';
-      pdfBtn.innerHTML = pdfIcon(14) + ' PDF';
+      pdfBtn.textContent = '📄 PDF';
       pdfBtn.onclick = function(e){ e.stopPropagation(); openPdf(inv.id); };
       card.querySelector('div:last-child').appendChild(pdfBtn);
     }
@@ -2079,280 +2067,6 @@ function openSearchResult(id){
   S.view  = 'month';
   S.activeDay = dt;
   render();
-}
-
-
-
-// ── GMAIL MAIL TAB ────────────────────────────────────────────────────────────
-var _mailState = {loading: false, messages: [], nextPage: '', query: '', page: 1};
-
-async function renderMail(){
-  var el = document.getElementById('mail-area');
-  if(!el) return;
-
-  // Check Gmail status
-  el.innerHTML = '<div style="text-align:center;padding:30px;color:#5a7a9a">⏳ Подключаюсь к Gmail...</div>';
-
-  try {
-    var st = await fetch('/api/gmail/status',{credentials:'include'}).then(function(r){return r.json();});
-    if(!st.connected){
-      el.innerHTML = renderMailConnect();
-      return;
-    }
-    el.innerHTML = renderMailUI(st);
-    loadMailMessages('');
-  } catch(e){
-    el.innerHTML = '<div style="color:#f87171;padding:20px">Ошибка: '+e.message+'</div>';
-  }
-}
-
-function renderMailConnect(){
-  return '<div style="text-align:center;padding:60px 20px">' +
-    '<div style="font-size:50px;margin-bottom:16px">📨</div>' +
-    '<div style="font-size:16px;font-weight:700;color:#e2e8f0;margin-bottom:8px">Gmail не подключён</div>' +
-    '<div style="font-size:13px;color:#5a7a9a;margin-bottom:24px">Подключи на странице настроек — нужна переавторизация Google с Gmail правами</div>' +
-    '<a href="/keys" style="padding:12px 24px;border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-weight:700;text-decoration:none">⚙️ Перейти в настройки</a>' +
-    '</div>';
-}
-
-function renderMailUI(st){
-  var wrap = document.createElement('div');
-  wrap.style.paddingTop = '12px';
-
-  // Header row
-  var hdr = document.createElement('div');
-  hdr.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap';
-
-  var info = document.createElement('div');
-  info.style.cssText = 'font-size:13px;color:#4ade80;font-weight:600';
-  info.textContent = '📨 ' + st.email + ' · ' + fmtNum(st.total) + ' писем';
-  hdr.appendChild(info);
-
-  var inp = document.createElement('input');
-  inp.id = 'mailSearch'; inp.type = 'text';
-  inp.placeholder = 'Поиск в Gmail...';
-  inp.style.cssText = 'flex:1;min-width:180px;padding:8px 14px;border-radius:8px;border:1px solid #1e2d45;background:#111820;color:#e2e8f0;font-size:13px;outline:none';
-  inp.oninput = mailSearchDebounce;
-  inp.onkeydown = function(e){ if(e.key==='Enter') loadMailMessages(inp.value.trim()); };
-  hdr.appendChild(inp);
-
-  var scanBtn = document.createElement('button');
-  scanBtn.style.cssText = 'padding:8px 14px;border-radius:8px;border:1px solid #1e2d45;background:#111820;color:#60a5fa;font-size:12px;font-weight:600;cursor:pointer';
-  scanBtn.textContent = '🤖 Найти счета';
-  scanBtn.onclick = scanGmail;
-  hdr.appendChild(scanBtn);
-  wrap.appendChild(hdr);
-
-  // Filter row
-  var filters = [
-    {label:'Все', q:''},
-    {label:'📎 С PDF', q:'has:attachment filename:pdf'},
-    {label:'📄 Счета', q:'subject:arve OR subject:invoice OR subject:счёт'},
-    {label:'🔵 Непрочитанные', q:'is:unread'},
-  ];
-  var frow = document.createElement('div');
-  frow.style.cssText = 'display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap';
-  filters.forEach(function(f, i){
-    var btn = document.createElement('button');
-    btn.className = 'mf' + (i===0?' active':'');
-    btn.textContent = f.label;
-    btn.onclick = function(){ mailFilter(btn, f.q); };
-    frow.appendChild(btn);
-  });
-  wrap.appendChild(frow);
-
-  var list = document.createElement('div');
-  list.id = 'mailList';
-  list.style.cssText = 'display:flex;flex-direction:column;gap:6px';
-  wrap.appendChild(list);
-
-  var more = document.createElement('div');
-  more.id = 'mailMore';
-  more.style.cssText = 'display:none;text-align:center;margin-top:12px';
-  var moreBtn = document.createElement('button');
-  moreBtn.style.cssText = 'padding:10px 24px;border-radius:8px;border:1px solid #1e2d45;background:#111820;color:#8aa8c8;cursor:pointer';
-  moreBtn.textContent = 'Загрузить ещё';
-  moreBtn.onclick = loadMoreMail;
-  more.appendChild(moreBtn);
-  wrap.appendChild(more);
-
-  return wrap.outerHTML;
-}
-
-function fmtNum(n){ return n ? n.toLocaleString('ru') : '0'; }
-
-var _mailTimer = null;
-function mailSearchDebounce(){
-  clearTimeout(_mailTimer);
-  _mailTimer = setTimeout(function(){
-    loadMailMessages(document.getElementById('mailSearch').value.trim());
-  }, 500);
-}
-
-function mailFilter(el, q){
-  document.querySelectorAll('.mf').forEach(function(b){ b.classList.remove('active'); });
-  el.classList.add('active');
-  var inp = document.getElementById('mailSearch');
-  if(inp) inp.value = '';
-  loadMailMessages(q);
-}
-
-async function loadMailMessages(q){
-  _mailState.query = q;
-  _mailState.nextPage = '';
-  var list = document.getElementById('mailList');
-  if(!list) return;
-  list.innerHTML = '<div style="text-align:center;padding:20px;color:#5a7a9a">⏳ Загружаю...</div>';
-
-  try {
-    var url = '/api/gmail/messages?n=30&q='+encodeURIComponent(q||'in:inbox');
-    var d = await fetch(url,{credentials:'include'}).then(function(r){return r.json();});
-    if(!d.ok){ list.innerHTML='<div style="color:#f87171">'+d.error+'</div>'; return; }
-    _mailState.messages = d.messages;
-    _mailState.nextPage = d.nextPage;
-    renderMailList(d.messages);
-    document.getElementById('mailMore').style.display = d.nextPage ? 'block' : 'none';
-  } catch(e){
-    list.innerHTML = '<div style="color:#f87171">Ошибка: '+e.message+'</div>';
-  }
-}
-
-async function loadMoreMail(){
-  if(!_mailState.nextPage) return;
-  var url = '/api/gmail/messages?n=30&q='+encodeURIComponent(_mailState.query||'in:inbox')+'&page='+_mailState.nextPage;
-  var d = await fetch(url,{credentials:'include'}).then(function(r){return r.json();});
-  if(!d.ok) return;
-  _mailState.messages = _mailState.messages.concat(d.messages);
-  _mailState.nextPage = d.nextPage;
-  renderMailList(_mailState.messages);
-  document.getElementById('mailMore').style.display = d.nextPage ? 'block' : 'none';
-}
-
-function renderMailList(msgs){
-  var list = document.getElementById('mailList');
-  if(!list) return;
-  if(!msgs||!msgs.length){
-    list.innerHTML='<div style="text-align:center;padding:40px;color:#5a7a9a">Писем не найдено</div>';
-    return;
-  }
-  list.innerHTML = '';
-  msgs.forEach(function(m){
-    var card = document.createElement('div');
-    card.style.cssText = 'background:#0f1520;border:1px solid '+(m.unread?'#2a3a60':'#131e2d')+';border-radius:10px;padding:12px 14px;cursor:pointer;transition:border-color .15s;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start';
-    card.onmouseover = function(){ this.style.borderColor='#2a3a50'; };
-    card.onmouseout  = function(){ this.style.borderColor=m.unread?'#2a3a60':'#131e2d'; };
-    card.onclick     = function(){ openMailMessage(m.id); };
-
-    var left = '<div>';
-    left += '<div style="font-size:13px;font-weight:'+(m.unread?700:500)+';color:#e2e8f0;margin-bottom:2px">'+esc(m.subject||'(без темы)')+'</div>';
-    left += '<div style="font-size:11px;color:#5a7a9a;margin-bottom:4px">'+esc(m.from)+'</div>';
-    left += '<div style="font-size:11px;color:#3a4a60">'+esc(m.snippet)+'</div>';
-    left += '</div>';
-
-    var right = '<div style="text-align:right;flex-shrink:0">';
-    right += '<div style="font-size:11px;color:#3a4a60;white-space:nowrap">'+m.date+'</div>';
-    if(m.has_pdf) right += '<div style="margin-top:4px;font-size:18px" title="PDF вложение">📎</div>';
-    right += '</div>';
-
-    card.innerHTML = left + right;
-    list.appendChild(card);
-  });
-}
-
-async function openMailMessage(msgId){
-  var overlay = document.createElement('div');
-  overlay.id = 'mailOverlay';
-  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:600;background:rgba(12,15,20,.98);overflow-y:auto';
-  document.body.appendChild(overlay);
-
-  var inner = document.createElement('div');
-  inner.style.cssText = 'max-width:700px;margin:0 auto;padding:20px';
-  inner.innerHTML = '<div style="text-align:center;padding:40px;color:#5a7a9a">⏳ Загружаю письмо...</div>';
-  overlay.appendChild(inner);
-
-  try {
-    var d = await fetch('/api/gmail/message/'+msgId,{credentials:'include'}).then(function(r){return r.json();});
-    if(!d.ok){ inner.innerHTML='<div style="color:#f87171">'+esc(d.error)+'</div>'; return; }
-    var m = d.message;
-    inner.innerHTML = '';
-
-    // Close button + header
-    var hdr = document.createElement('div');
-    hdr.style.cssText = 'display:flex;align-items:flex-start;gap:12px;margin-bottom:20px';
-    var closeBtn = document.createElement('button');
-    closeBtn.style.cssText = 'background:none;border:none;color:#5a7a9a;font-size:22px;cursor:pointer;flex-shrink:0;margin-top:-2px';
-    closeBtn.textContent = '✕';
-    closeBtn.onclick = function(){ overlay.remove(); };
-    hdr.appendChild(closeBtn);
-    var subj = document.createElement('div');
-    subj.innerHTML = '<div style="font-size:16px;font-weight:700;color:#e2e8f0">'+esc(m.subject)+'</div>' +
-                     '<div style="font-size:12px;color:#5a7a9a;margin-top:3px">'+esc(m.from)+' · '+m.date+'</div>';
-    hdr.appendChild(subj);
-    inner.appendChild(hdr);
-
-    // Attachments
-    if(m.attachments && m.attachments.length){
-      var attWrap = document.createElement('div');
-      attWrap.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px';
-      m.attachments.forEach(function(att){
-        var card = document.createElement('div');
-        card.style.cssText = 'background:#111820;border:1px solid #1e2d45;border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:8px';
-        card.innerHTML = '<span style="font-size:18px">'+(att.is_pdf?'📄':'📎')+'</span>' +
-          '<div><div style="font-size:12px;color:#e2e8f0;font-weight:600">'+esc(att.filename)+'</div>' +
-          '<div style="font-size:10px;color:#5a7a9a">'+Math.round(att.size/1024)+'КБ</div></div>';
-        if(att.is_pdf && att.attachmentId){
-          var pdfLink = document.createElement('a');
-          pdfLink.href = '/api/gmail/attachment/'+msgId+'/'+att.attachmentId;
-          pdfLink.target = '_blank';
-          pdfLink.style.cssText = 'padding:5px 10px;border-radius:6px;background:#1e3a5f;color:#60a5fa;font-size:11px;text-decoration:none';
-          pdfLink.textContent = 'Открыть PDF';
-          card.appendChild(pdfLink);
-          var addBtn = document.createElement('button');
-          addBtn.style.cssText = 'padding:5px 10px;border-radius:6px;background:rgba(245,158,11,.15);color:#f59e0b;font-size:11px;border:1px solid rgba(245,158,11,.3);cursor:pointer';
-          addBtn.textContent = '+ В счета';
-          (function(mid, aid){ addBtn.onclick = function(){ addGmailPdfAsInvoice(mid, aid); }; })(msgId, att.attachmentId);
-          card.appendChild(addBtn);
-        }
-        attWrap.appendChild(card);
-      });
-      inner.appendChild(attWrap);
-    }
-
-    // Body
-    var body = document.createElement('div');
-    body.style.cssText = 'background:#111820;border:1px solid #1e2d45;border-radius:10px;padding:16px;font-size:13px;color:#c8d8ec;white-space:pre-wrap;line-height:1.7';
-    body.textContent = m.body || '(пустое письмо)';
-    inner.appendChild(body);
-
-  } catch(e){
-    inner.innerHTML = '<div style="color:#f87171;padding:20px">Ошибка: '+e.message+'</div>';
-  }
-}
-
-async function addGmailPdfAsInvoice(msgId, attId){
-  showNotif('Добавляю счёт из Gmail...','info');
-  try {
-    var r = await fetch('/api/gmail/add-as-invoice',{
-      method:'POST',credentials:'include',
-      headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({msg_id:msgId,att_id:attId})
-    }).then(function(r){return r.json();});
-    if(r.ok){
-      showNotif('✅ Счёт добавлен: '+(r.invoice.vendor||'?')+' '+r.invoice.amount+'€','ok');
-      await loadAll();
-    } else {
-      showNotif('❌ '+r.error,'err');
-    }
-  } catch(e){ showNotif('❌ '+e.message,'err'); }
-}
-
-async function scanGmail(){
-  showNotif('🤖 Сканирую Gmail...','info');
-  try {
-    var r = await fetch('/api/gmail/scan',{method:'POST',credentials:'include'}).then(function(r){return r.json();});
-    showNotif('✅ Gmail: просмотрено '+r.scanned+', найдено '+r.found+' счетов','ok');
-    await loadAll();
-  } catch(e){ showNotif('❌ '+e.message,'err'); }
 }
 
 </script>
