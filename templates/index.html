@@ -488,7 +488,7 @@ body {
       <div id="sp-desktop" class="stat-pills-wrap"></div>
     </div>
     <div class="topbar-right">
-      <button class="icon-btn" onclick="toggleSearch()" title="Поиск" id="searchToggleBtn">🔍</button>
+      <div style="position:relative;display:flex;align-items:center" id="topSearchWrap"><input id="topSearchInput" type="text" placeholder="Поиск..." autocomplete="off" style="width:160px;padding:6px 30px 6px 12px;border-radius:20px;border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;outline:none;transition:width .2s" oninput="liveSearch(this.value)" onfocus="this.style.width='220px'" onblur="if(!this.value)this.style.width='160px'" onkeydown="if(event.key==='Escape'){this.value='';liveSearch('');this.blur();}"><span style="position:absolute;right:8px;font-size:14px;color:var(--text3);pointer-events:none">🔍</span></div>
       <div class="theme-sw">
         <button class="th-btn th-dark" id="th-dark2" onclick="setTheme('dark')" title="Тёмная">🌑</button>
         <button class="th-btn th-grey" id="th-grey2" onclick="setTheme('grey')" title="Серая">🌫</button>
@@ -499,6 +499,7 @@ body {
         <button class="vtab"        id="vt-w"  onclick="setView('week')">Неделя</button>
         <button class="vtab"        id="vt-o"  onclick="setView('overdue')">⚠ Долги</button>
         <button class="vtab"        id="vt-of" onclick="setView('offers')">💼 Офферы</button>
+        <button class="vtab" id="vt-ct" onclick="setView('contracts')">📋 Контракты</button>
       </div>
       <button class="btn btn-gold" id="scanThisBtn" onclick="scanSequential(1)">📥 Этот месяц</button>
       <button class="btn btn-glass" id="scan2Btn" onclick="scanSequential(2)">📥 +Пред</button>
@@ -649,6 +650,7 @@ body {
 <div id="sum-bar"></div>
 <div id="content-wrap">
   <div id="overdue-area" style="display:none"></div>
+  <div id="contracts-area" style="display:none;flex-direction:column;flex:1;overflow-y:auto;padding:12px 16px"></div>
   <div id="offers-area"  style="display:none"></div>
   <div id="body-wrap">
     <div id="cal-main">
@@ -1069,6 +1071,112 @@ function renderOverdue(){
   });
 }
 
+function renderContracts(){
+  var el=document.getElementById('contracts-area');
+  if(!el)return;
+  var kw=['contract','agreement','leping','\u0434\u043e\u0433\u043e\u0432\u043e\u0440','\u043a\u043e\u043d\u0442\u0440\u0430\u043a\u0442','vereinbarung','raamleping','kokkulepe','\u0441\u043e\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435'];
+  var list=S.invoices.filter(function(inv){
+    var d=(inv.description||'').toLowerCase(),v=(inv.vendor||'').toLowerCase();
+    return inv.is_contract||kw.some(function(k){return d.includes(k)||v.includes(k);});
+  });
+  if(!list.length){el.innerHTML='<div style="text-align:center;padding:48px 0;color:var(--text3)"><div style="font-size:40px;margin-bottom:12px">'+String.fromCodePoint(0x1F4CB)+'</div>\u041a\u043e\u043d\u0442\u0440\u0430\u043a\u0442\u044b \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b<br><span style="font-size:12px;color:var(--text3);\u041f\u0440\u0438\u0434\u0443\u0442 \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438 \u043f\u0440\u0438 \u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0438</span></div>';return;}
+  var tot=list.reduce(function(s,i){return s+(parseFloat(i.amount)||0);},0);
+  var h='<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0 12px;border-bottom:1px solid var(--border2);margin-bottom:12px">';
+  h+='<div style="font-size:15px;font-weight:700">'+String.fromCodePoint(0x1F4CB)+' \u041a\u043e\u043d\u0442\u0440\u0430\u043a\u0442\u044b</div>';
+  h+='<div style="font-weight:600;color:var(--text2)">'+list.length+' \xb7 '+fmtAmt(tot)+'</div></div>';
+  list.forEach(function(inv){
+    h+='<div class="icard" style="border-left-color:#60a5fa;margin-bottom:10px;display:grid;grid-template-columns:1fr auto;gap:8px;cursor:'+(inv.has_pdf||inv.gdrive_link?'pointer':'default')+'" data-cid="'+esc(inv.id)+'">';
+    h+='<div>';
+    h+='<div style="font-size:13px;font-weight:700;margin-bottom:3px">'+esc(inv.vendor||'\u2014')+'</div>';
+    if(inv.description)h+='<div style="font-size:11px;color:var(--text3);margin-bottom:3px">'+esc(inv.description)+'</div>';
+    if(inv.invoice_number)h+='<div style="font-size:10px;color:var(--text3)">\u2116 '+esc(inv.invoice_number)+'</div>';
+    h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">';
+    if(inv.issue_date)h+=String.fromCodePoint(0x1F4C5)+' '+inv.issue_date+'  ';
+    if(inv.due_date)h+=String.fromCodePoint(0x23F0)+' \u0434\u043e '+inv.due_date;
+    h+='</div>';
+    h+='<div style="display:flex;gap:5px;margin-top:8px">';
+    if(inv.has_pdf)h+='<button class="of-btn" data-id="'+esc(inv.id)+'" onclick="event.stopPropagation();openPdf(this.dataset.id)">'+pdfIcon(13)+' PDF</button>';
+    if(inv.gdrive_link)h+='<a href="'+inv.gdrive_link+'" target="_blank" class="of-btn" style="text-decoration:none;color:#34d399" onclick="event.stopPropagation()">'+String.fromCodePoint(0x2601,0xFE0F)+' Drive</a>';
+    h+='<button class="of-btn of-btn-del" data-del-id="'+esc(inv.id)+'" onclick="event.stopPropagation();deleteInv(this.dataset.delId)">\u2715</button>';
+    h+='</div></div>';
+    h+='<div style="text-align:right">';
+    if(inv.amount)h+='<div style="font-size:16px;font-weight:800;color:#60a5fa">'+fmtAmt(inv.amount,inv.currency)+'</div>';
+    var st=inv.status==='paid'?'\u2705 \u041e\u043f\u043b\u0430\u0447\u0435\u043d':'\uD83D\uDFE6 \u0410\u043a\u0442\u0438\u0432\u043d\u044b\u0439';
+    h+='<div style="font-size:10px;color:'+(inv.status==='paid'?'#4ade80':'#60a5fa')+';margin-top:4px;font-weight:700">'+st+'</div>';
+    h+='</div></div>';
+  });
+  el.innerHTML=h;
+  el.querySelectorAll('[data-cid]').forEach(function(card){
+    card.onclick=function(e){
+      if(e.target.tagName==='BUTTON'||e.target.tagName==='A')return;
+      var inv=S.invoices.find(function(i){return i.id===card.dataset.cid;});
+      if(inv&&inv.has_pdf)openPdf(card.dataset.cid);
+      else if(inv&&inv.gdrive_link)window.open(inv.gdrive_link,'_blank');
+    };
+  });
+}
+
+var _liveST=null;
+function liveSearch(q){
+  clearTimeout(_liveST);
+  q=q.trim();
+  if(!q){hideLiveResults();return;}
+  _liveST=setTimeout(function(){doLiveSearch(q);},200);
+}
+function doLiveSearch(q){
+  var tokens=q.toLowerCase().split(/\s+/).filter(Boolean);
+  var results=S.invoices.filter(function(inv){
+    var text=[inv.vendor,inv.description,inv.invoice_number,String(inv.amount||''),inv.due_date,inv.issue_date].join(' ').toLowerCase();
+    return tokens.every(function(t){return text.includes(t);});
+  }).slice(0,12);
+  showLiveResults(results,q);
+}
+function showLiveResults(results,q){
+  var wrap=document.getElementById('topSearchWrap');
+  hideLiveResults();
+  var today=new Date();today.setHours(0,0,0,0);
+  var SC2={paid:'#4ade80',pending:'#f59e0b',overdue:'#f87171'};
+  var p=document.createElement('div');
+  p.id='liveResultsPanel';
+  p.style.cssText='position:absolute;top:110%;left:0;min-width:300px;max-width:400px;background:var(--bg2);'
+    +'border:1px solid var(--border2);border-radius:12px;padding:6px;z-index:9999;'
+    +'box-shadow:0 8px 32px rgba(0,0,0,.35);max-height:65vh;overflow-y:auto';
+  if(!results.length){
+    p.innerHTML='<div style="padding:12px;text-align:center;font-size:12px;color:var(--text3)">\u041d\u0438\u0447\u0435\u0433\u043e \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u043e</div>';
+  } else {
+    results.forEach(function(inv){
+      var st='pending';
+      if(inv.status==='paid')st='paid';
+      else if(inv.due_date&&new Date(inv.due_date+'T00:00:00')<today)st='overdue';
+      var row=document.createElement('div');
+      row.style.cssText='display:flex;align-items:center;justify-content:space-between;padding:8px 10px;border-radius:8px;cursor:pointer;gap:8px';
+      row.onmouseenter=function(){this.style.background='var(--bg)';};
+      row.onmouseleave=function(){this.style.background='';};
+      row.onclick=function(){
+        hideLiveResults();
+        document.getElementById('topSearchInput').value='';
+        if(inv.has_pdf){openPdf(inv.id);return;}
+        var dt=new Date((inv.due_date||inv.issue_date||'')+'T00:00:00');
+        if(!isNaN(dt)){S.month=new Date(dt.getFullYear(),dt.getMonth(),1);S.view='month';S.activeDay=dt;render();}
+      };
+      var left=document.createElement('div');
+      left.style.cssText='flex:1;min-width:0';
+      left.innerHTML='<div style="font-size:12px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(inv.vendor||'\u2014')+'</div>'+
+        (inv.description?'<div style="font-size:10px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(inv.description)+'</div>':'')+
+        '<div style="font-size:10px;color:var(--text3)">'+(inv.due_date?'\u0434\u043e '+inv.due_date:'')+' '+(inv.invoice_number?'\u2116'+inv.invoice_number:'')+'</div>';
+      var right=document.createElement('div');
+      right.style.cssText='text-align:right;flex-shrink:0';
+      right.innerHTML='<div style="font-size:13px;font-weight:800;color:'+SC2[st]+'">'+fmtAmt(inv.amount,inv.currency)+'</div>'+
+        (inv.has_pdf?'<div style="margin-top:2px">'+pdfIcon(11)+'</div>':'');
+      row.appendChild(left);row.appendChild(right);
+      p.appendChild(row);
+    });
+  }
+  wrap.appendChild(p);
+}
+function hideLiveResults(){var p=document.getElementById('liveResultsPanel');if(p)p.remove();}
+document.addEventListener('click',function(e){var w=document.getElementById('topSearchWrap');if(w&&!w.contains(e.target))hideLiveResults();});
+
 function render(){
   renderTopbar();
   renderSumBar();
@@ -1083,10 +1191,18 @@ function render(){
     if(bw) bw.style.display = 'none';
     if(ov) ov.style.display = 'none';
     if(ofArea) { ofArea.style.display = 'flex'; renderOffers(); }
+    var ctA=document.getElementById('contracts-area'); if(ctA) ctA.style.display='none';
+  } else if(S.view === 'contracts'){
+    if(bw) bw.style.display = 'none';
+    if(ov) ov.style.display = 'none';
+    if(ofArea) ofArea.style.display = 'none';
+    var ctA=document.getElementById('contracts-area');
+    if(ctA){ ctA.style.display='flex'; ctA.style.flexDirection='column'; renderContracts(); }
   } else {
     if(bw) bw.style.display = 'flex';
     if(ov) ov.style.display = 'none';
     if(ofArea) ofArea.style.display = 'none';
+    var ctA2=document.getElementById('contracts-area'); if(ctA2) ctA2.style.display='none';
     renderCalendar();
     renderSP();
     renderLegend();
@@ -1337,7 +1453,7 @@ function closeDay(){S.activeDay=null;render()}
 function setView(v){
   S.view=v;
   document.querySelectorAll(".vtab").forEach(function(el){el.classList.remove("active");});
-  var map={"month":["vt-m","vt-m2"],"week":["vt-w","vt-w2"],"overdue":["vt-o","vt-o2"],"offers":["vt-of","vt-of2"]};
+  var map={"month":["vt-m","vt-m2"],"week":["vt-w","vt-w2"],"overdue":["vt-o","vt-o2"],"offers":["vt-of","vt-of2"],"contracts":["vt-ct","vt-ct2"]};
   (map[v]||["vt-m","vt-m2"]).forEach(function(id){
     var el=document.getElementById(id); if(el) el.classList.add("active");
   });
