@@ -1911,12 +1911,24 @@ def scan_imap(emit, from_date=None, to_date=None):
 
         # Hook for PDF fetching - pass mail connection
         _pending_pdfs = {}  # uid_str -> {filename, bytes, parsed}
+        _imap_ref = [mail]  # mutable ref for reconnect inside closure
 
         def _fetch_pdf_and_body(uid_str):
             """Fetch full message: body text + extract ALL PDFs, parse invoice data."""
             try:
                 uid_b = uid_str.encode() if isinstance(uid_str, str) else uid_str
-                _, data = mail.fetch(uid_b, "(RFC822)")
+                # Try fetch; if IMAP connection dropped, reconnect once
+                try:
+                    _, data = _imap_ref[0].fetch(uid_b, "(RFC822)")
+                except Exception:
+                    log.debug(f"scan_imap: IMAP reconnect for {uid_str}")
+                    new_mail, _ = _try_imap_connect(alt_hosts, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
+                    if new_mail:
+                        new_mail.select(IMAP_FOLDER)
+                        _imap_ref[0] = new_mail
+                        _, data = _imap_ref[0].fetch(uid_b, "(RFC822)")
+                    else:
+                        return ""
                 if not data or not data[0]: return ""
                 raw_msg = email.message_from_bytes(data[0][1])
                 body_text = get_plain_body(raw_msg)
@@ -2563,10 +2575,26 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
             if (_hi_ac + 1) % 200 == 0 or _hi_ac + 1 == total_ac:
                 emit(f"  📥 Заголовки: {_hi_ac+1}/{total_ac}...", "info")
 
+        _mail_ref = [mail]  # mutable ref for reconnect inside closure
+
         def _fetch_pdf(uid_str):
+            nonlocal mail
             try:
                 real_uid = uid_str.split("_")[-1].encode()
-                _, data = mail.fetch(real_uid, "(RFC822)")
+                # Try fetch; if connection dropped, reconnect once
+                try:
+                    _, data = _mail_ref[0].fetch(real_uid, "(RFC822)")
+                except Exception:
+                    log.debug(f"scan_account: IMAP reconnect for {uid_str}")
+                    new_mail, _ = _try_imap_connect(alt_hosts, account["port"],
+                                                    account["email"], account["password"])
+                    if new_mail:
+                        new_mail.select(IMAP_FOLDER)
+                        _mail_ref[0] = new_mail
+                        mail = new_mail
+                        _, data = _mail_ref[0].fetch(real_uid, "(RFC822)")
+                    else:
+                        return ""
                 if not data or not data[0]: return ""
                 raw_msg = email.message_from_bytes(data[0][1])
                 body_text = get_plain_body(raw_msg)
