@@ -3362,7 +3362,7 @@ def api_gdrive_auth_url():
         "client_id":     client_id,
         "redirect_uri":  redirect_uri,
         "response_type": "code",
-        "scope":         "https://www.googleapis.com/auth/drive.file",
+        "scope":         " ".join(["https://www.googleapis.com/auth/drive.file","https://www.googleapis.com/auth/gmail.readonly"]),
         "access_type":   "offline",
         "prompt":        "consent",
     }
@@ -3547,6 +3547,375 @@ def api_search():
         "total":   len(results),
         "query":   q,
     })
+
+
+
+# ── Gmail API ─────────────────────────────────────────────────────────────────
+_gmail_service = None
+
+def _get_gmail_service(force_refresh=False):
+    """Build Gmail service from stored credentials (same token as Drive)."""
+    global _gmail_service
+    if _gmail_service and not force_refresh:
+        return _gmail_service
+    _gmail_service = None
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+        import json as _j
+        token_data = c("gdrive", "token", "") or os.environ.get("GDRIVE_TOKEN", "")
+        if not token_data:
+            return None
+        token = _j.loads(token_data)
+        creds = Credentials(
+            token=token.get("access_token"),
+            refresh_token=token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=token.get("client_id"),
+            client_secret=token.get("client_secret"),
+            scopes=["https://www.googleapis.com/auth/gmail.readonly",
+                    "https://www.googleapis.com/auth/drive.file"],
+        )
+        if creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            token["access_token"] = creds.token
+            save_config_value("gdrive", "token", _j.dumps(token))
+        _gmail_service = build("gmail", "v1", credentials=creds, cache_discovery=False)
+        return _gmail_service
+    except Exception as ex:
+        log.debug(f"Gmail service: {ex}")
+        return None
+
+
+def gmail_list_messages(max_results=50, query="", page_token=None):
+    """List Gmail messages. Returns {messages, nextPageToken, resultSizeEstimate}."""
+    svc = _get_gmail_service()
+    if not svc:
+        return None
+    try:
+        params = {"userId": "me", "maxResults": max_results}
+        if query:
+            params["q"] = query
+        if page_token:
+            params["pageToken"] = page_token
+        return svc.users().messages().list(**params).execute()
+    except Exception as ex:
+        log.error(f"Gmail list: {ex}")
+        return None
+
+
+def gmail_get_message(msg_id, fmt="metadata"):
+    """Get single Gmail message. fmt: metadata|full|minimal."""
+    svc = _get_gmail_service()
+    if not svc:
+        return None
+    try:
+        return svc.users().messages().get(
+            userId="me", id=msg_id, format=fmt,
+            metadataHeaders=["Subject","From","Date","To"] if fmt=="metadata" else []
+        ).execute()
+    except Exception as ex:
+        log.error(f"Gmail get {msg_id}: {ex}")
+        return None
+
+
+def gmail_get_attachment(msg_id, attachment_id):
+    """Download a Gmail attachment. Returns base64 bytes."""
+    svc = _get_gmail_service()
+    if not svc:
+        return None
+    try:
+        att = svc.users().messages().attachments().get(
+            userId="me", messageId=msg_id, id=attachment_id
+        ).execute()
+        import base64
+        return base64.urlsafe_b64decode(att["data"] + "==")
+    except Exception as ex:
+        log.error(f"Gmail attachment {attachment_id}: {ex}")
+        return None
+
+
+def _gmail_decode_header(raw):
+    """Decode RFC2047 header value."""
+    try:
+        import email.header as _eh
+        parts = _eh.decode_header(raw or "")
+        return "".join(
+            (p.decode(enc or "utf-8", errors="replace") if isinstance(p, bytes) else p)
+            for p, enc in parts
+        )
+    except Exception:
+        return raw or ""
+
+
+def _gmail_msg_to_dict(msg):
+    """Convert Gmail API message to simple dict."""
+    headers = {h["name"]: h["value"] for h in msg.get("payload",{}).get("headers",[])}
+    subj = _gmail_decode_header(headers.get("Subject",""))
+    frm  = headers.get("From","")
+    dt   = headers.get("Date","")
+    try:
+        ds = parsedate_to_datetime(dt).strftime("%Y-%m-%d %H:%M")
+    except Exception:
+        ds = dt[:16]
+
+    # Check for PDF attachments
+    has_pdf = False
+    parts   = msg.get("payload",{}).get("parts",[])
+    for part in parts:
+        fn = part.get("filename","")
+        ct = part.get("mimeType","")
+        if fn.lower().endswith(".pdf") or "pdf" in ct.lower():
+            has_pdf = True
+            break
+
+    snippet = msg.get("snippet","")[:120]
+    labels  = msg.get("labelIds",[])
+
+    return {
+        "id":       msg["id"],
+        "threadId": msg.get("threadId",""),
+        "subject":  subj,
+        "from":     frm,
+        "date":     ds,
+        "snippet":  snippet,
+        "has_pdf":  has_pdf,
+        "unread":   "UNREAD" in labels,
+        "labels":   labels,
+    }
+
+
+
+# ── Gmail Routes ─────────────────────────────────────────────────────────────
+
+@app.route("/api/gmail/status")
+def api_gmail_status():
+    svc = _get_gmail_service(force_refresh=True)
+    if not svc:
+        return jsonify({"ok": False, "connected": False})
+    try:
+        profile = svc.users().getProfile(userId="me").execute()
+        return jsonify({
+            "ok": True, "connected": True,
+            "email":       profile.get("emailAddress",""),
+            "total":       profile.get("messagesTotal", 0),
+            "threads":     profile.get("threadsTotal", 0),
+        })
+    except Exception as ex:
+        return jsonify({"ok": False, "connected": False, "error": str(ex)[:100]})
+
+
+@app.route("/api/gmail/messages")
+def api_gmail_messages():
+    """List Gmail messages with optional filter."""
+    q          = request.args.get("q","")
+    max_r      = min(int(request.args.get("n","50")), 100)
+    page_token = request.args.get("page","")
+    result = gmail_list_messages(max_results=max_r, query=q, page_token=page_token or None)
+    if not result:
+        return jsonify({"ok": False, "error": "Gmail не подключён"})
+
+    msg_ids = [m["id"] for m in result.get("messages",[])]
+    messages = []
+    for mid in msg_ids:
+        msg = gmail_get_message(mid, fmt="metadata")
+        if msg:
+            messages.append(_gmail_msg_to_dict(msg))
+
+    return jsonify({
+        "ok":           True,
+        "messages":     messages,
+        "total":        result.get("resultSizeEstimate", len(messages)),
+        "nextPage":     result.get("nextPageToken",""),
+    })
+
+
+@app.route("/api/gmail/message/<msg_id>")
+def api_gmail_message(msg_id):
+    """Get full message with body and attachments list."""
+    msg = gmail_get_message(msg_id, fmt="full")
+    if not msg:
+        return jsonify({"ok": False, "error": "Сообщение не найдено"}), 404
+
+    info = _gmail_msg_to_dict(msg)
+
+    # Extract body text
+    def get_body(payload):
+        mime = payload.get("mimeType","")
+        if mime == "text/plain":
+            import base64
+            data = payload.get("body",{}).get("data","")
+            return base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace") if data else ""
+        if mime == "text/html":
+            import base64
+            data = payload.get("body",{}).get("data","")
+            raw = base64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace") if data else ""
+            # Strip HTML tags
+            import re as _re
+            return _re.sub(r"<[^>]+>","", raw)
+        for part in payload.get("parts",[]):
+            result = get_body(part)
+            if result: return result
+        return ""
+
+    body_text = get_body(msg.get("payload",{}))[:3000]
+
+    # List attachments
+    attachments = []
+    for part in msg.get("payload",{}).get("parts",[]):
+        fn = part.get("filename","")
+        ct = part.get("mimeType","")
+        if fn:
+            att_id = part.get("body",{}).get("attachmentId","")
+            attachments.append({
+                "filename":     fn,
+                "mimeType":     ct,
+                "attachmentId": att_id,
+                "is_pdf":       fn.lower().endswith(".pdf") or "pdf" in ct.lower(),
+                "size":         part.get("body",{}).get("size",0),
+            })
+
+    info["body"]        = body_text
+    info["attachments"] = attachments
+    return jsonify({"ok": True, "message": info})
+
+
+@app.route("/api/gmail/attachment/<msg_id>/<att_id>")
+def api_gmail_attachment_download(msg_id, att_id):
+    """Download Gmail attachment — returns PDF inline."""
+    msg_full = gmail_get_message(msg_id, fmt="full")
+    filename = "attachment.pdf"
+    if msg_full:
+        for part in msg_full.get("payload",{}).get("parts",[]):
+            if part.get("body",{}).get("attachmentId","") == att_id:
+                filename = part.get("filename","attachment.pdf")
+                break
+
+    data = gmail_get_attachment(msg_id, att_id)
+    if not data:
+        return jsonify({"error": "Вложение не найдено"}), 404
+
+    from flask import Response
+    ct = "application/pdf" if filename.lower().endswith(".pdf") else "application/octet-stream"
+    resp = Response(data, content_type=ct)
+    resp.headers["Content-Disposition"] = f'inline; filename="{filename}"'
+    return resp
+
+
+@app.route("/api/gmail/add-as-invoice", methods=["POST"])
+def api_gmail_add_as_invoice():
+    """Extract PDF from Gmail message and add as invoice."""
+    data   = request.json or {}
+    msg_id = data.get("msg_id","")
+    att_id = data.get("att_id","")
+    if not msg_id or not att_id:
+        return jsonify({"ok": False, "error": "msg_id и att_id обязательны"})
+
+    # Download attachment
+    pdf_bytes = gmail_get_attachment(msg_id, att_id)
+    if not pdf_bytes:
+        return jsonify({"ok": False, "error": "Не удалось скачать вложение"})
+
+    # Get message metadata
+    msg      = gmail_get_message(msg_id, fmt="metadata")
+    msg_dict = _gmail_msg_to_dict(msg) if msg else {}
+    subj     = msg_dict.get("subject","Gmail Invoice")
+    frm      = msg_dict.get("from","")
+    ds       = msg_dict.get("date","")[:10] or date.today().isoformat()
+
+    # Parse PDF
+    pdf_text = extract_pdf_text(pdf_bytes, max_chars=4000)
+    parsed   = parse_pdf_invoice(pdf_text, att_id)
+
+    # Get attachment filename
+    att_filename = "invoice.pdf"
+    if msg:
+        for part in msg.get("payload",{}).get("parts",[]):
+            if part.get("body",{}).get("attachmentId","") == att_id:
+                att_filename = part.get("filename","invoice.pdf")
+                break
+
+    # Build invoice
+    inv = build_invoice({
+        "is_invoice":     True,
+        "vendor":         parsed.get("vendor") or extract_vendor(subj, frm, pdf_text),
+        "amount":         parsed.get("amount", 0),
+        "currency":       parsed.get("currency","EUR"),
+        "due_date":       parsed.get("due_date"),
+        "issue_date":     parsed.get("issue_date") or ds,
+        "invoice_number": parsed.get("invoice_number",""),
+        "description":    subj[:100],
+        "category":       "services",
+        "status":         "pending",
+    }, msg_id, subj, frm, ds, True, "gmail")
+
+    inv["pdf_filename"] = att_filename
+    inv["has_pdf"]      = True
+    save_pdf(inv["id"], pdf_bytes, att_filename, invoice_date=ds)
+
+    # Save
+    existing = load_invoices()
+    existing.append(inv)
+    save_invoices(existing)
+
+    return jsonify({"ok": True, "invoice": inv})
+
+
+@app.route("/api/gmail/scan", methods=["POST"])
+def api_gmail_scan():
+    """Quick scan Gmail for invoice emails (last 100)."""
+    svc = _get_gmail_service()
+    if not svc:
+        return jsonify({"ok": False, "error": "Gmail не подключён"})
+
+    # Search for invoice-related emails
+    queries = [
+        "has:attachment filename:pdf",
+        "subject:arve OR subject:invoice OR subject:счёт",
+    ]
+    found_ids = set()
+    for q in queries:
+        result = gmail_list_messages(max_results=100, query=q)
+        if result:
+            for m in result.get("messages",[]):
+                found_ids.add(m["id"])
+
+    emails_raw = []
+    for mid in list(found_ids)[:200]:
+        msg = gmail_get_message(mid, fmt="metadata")
+        if not msg: continue
+        d = _gmail_msg_to_dict(msg)
+        emails_raw.append({
+            "id":             mid,
+            "subject":        d["subject"],
+            "from":           d["from"],
+            "date":           d["date"][:10] if d["date"] else "",
+            "body":           d["snippet"],
+            "has_attachment": d["has_pdf"],
+        })
+
+    def emit(msg, t="info"):
+        log.info(f"[gmail-scan] {msg}")
+
+    def fetch_gmail_body(uid):
+        msg_full = gmail_get_message(uid, fmt="full")
+        if not msg_full: return ""
+        texts = []
+        for part in msg_full.get("payload",{}).get("parts",[]):
+            fn = part.get("filename","")
+            ct = part.get("mimeType","")
+            if fn.lower().endswith(".pdf") or "pdf" in ct.lower():
+                att_id = part.get("body",{}).get("attachmentId","")
+                if att_id:
+                    pdf_bytes = gmail_get_attachment(uid, att_id)
+                    if pdf_bytes:
+                        pt = extract_pdf_text(pdf_bytes)
+                        if pt: texts.append(pt)
+        return "\n".join(texts)
+
+    result = process_emails(emails_raw, emit, fetch_body=fetch_gmail_body, source="gmail")
+    return jsonify({"ok": True, "found": len(result), "scanned": len(emails_raw)})
 
 
 _bg_started = False

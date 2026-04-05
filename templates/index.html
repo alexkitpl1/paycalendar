@@ -463,6 +463,12 @@ body {
 .of-btn { padding: 5px 10px; border-radius: 7px; border: 1px solid var(--border); background: var(--bg2); color: var(--text); font-size: 11px; cursor: pointer; }
 .of-btn:hover { border-color: var(--border2); }
 .of-btn-del { color: #f87171; border-color: rgba(248,113,113,.25); }
+
+
+.mf{padding:5px 12px;border-radius:16px;border:1px solid #1e2d45;background:#111820;color:#5a7a9a;font-size:11px;font-weight:600;cursor:pointer;transition:all .15s}
+.mf.active,.mf:hover{background:#1e2d45;color:#e2e8f0}
+
+
 </style>
 </head>
 <body>
@@ -650,6 +656,7 @@ body {
 <div id="content-wrap">
   <div id="overdue-area" style="display:none"></div>
   <div id="offers-area"  style="display:none"></div>
+  <div id="mail-area"    style="display:none;padding:0 16px 20px"></div>
   <div id="body-wrap">
     <div id="cal-main">
       <div id="m-grid" class="cal-grid"></div>
@@ -1289,7 +1296,7 @@ function closeDay(){S.activeDay=null;render()}
 function setView(v){
   S.view=v;
   document.querySelectorAll(".vtab").forEach(function(el){el.classList.remove("active");});
-  var map={"month":["vt-m","vt-m2"],"week":["vt-w","vt-w2"],"overdue":["vt-o","vt-o2"],"offers":["vt-of","vt-of2"]};
+  var map={"month":["vt-m","vt-m2"],"week":["vt-w","vt-w2"],"overdue":["vt-o","vt-o2"],"offers":["vt-of","vt-of2"],"mail":["vt-m2"]};
   (map[v]||["vt-m","vt-m2"]).forEach(function(id){
     var el=document.getElementById(id); if(el) el.classList.add("active");
   });
@@ -2051,6 +2058,280 @@ function openSearchResult(id){
   S.view  = 'month';
   S.activeDay = dt;
   render();
+}
+
+
+
+// ── GMAIL MAIL TAB ────────────────────────────────────────────────────────────
+var _mailState = {loading: false, messages: [], nextPage: '', query: '', page: 1};
+
+async function renderMail(){
+  var el = document.getElementById('mail-area');
+  if(!el) return;
+
+  // Check Gmail status
+  el.innerHTML = '<div style="text-align:center;padding:30px;color:#5a7a9a">⏳ Подключаюсь к Gmail...</div>';
+
+  try {
+    var st = await fetch('/api/gmail/status',{credentials:'include'}).then(function(r){return r.json();});
+    if(!st.connected){
+      el.innerHTML = renderMailConnect();
+      return;
+    }
+    el.innerHTML = renderMailUI(st);
+    loadMailMessages('');
+  } catch(e){
+    el.innerHTML = '<div style="color:#f87171;padding:20px">Ошибка: '+e.message+'</div>';
+  }
+}
+
+function renderMailConnect(){
+  return '<div style="text-align:center;padding:60px 20px">' +
+    '<div style="font-size:50px;margin-bottom:16px">📨</div>' +
+    '<div style="font-size:16px;font-weight:700;color:#e2e8f0;margin-bottom:8px">Gmail не подключён</div>' +
+    '<div style="font-size:13px;color:#5a7a9a;margin-bottom:24px">Подключи на странице настроек — нужна переавторизация Google с Gmail правами</div>' +
+    '<a href="/keys" style="padding:12px 24px;border-radius:10px;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;font-weight:700;text-decoration:none">⚙️ Перейти в настройки</a>' +
+    '</div>';
+}
+
+function renderMailUI(st){
+  var wrap = document.createElement('div');
+  wrap.style.paddingTop = '12px';
+
+  // Header row
+  var hdr = document.createElement('div');
+  hdr.style.cssText = 'display:flex;align-items:center;gap:10px;margin-bottom:14px;flex-wrap:wrap';
+
+  var info = document.createElement('div');
+  info.style.cssText = 'font-size:13px;color:#4ade80;font-weight:600';
+  info.textContent = '📨 ' + st.email + ' · ' + fmtNum(st.total) + ' писем';
+  hdr.appendChild(info);
+
+  var inp = document.createElement('input');
+  inp.id = 'mailSearch'; inp.type = 'text';
+  inp.placeholder = 'Поиск в Gmail...';
+  inp.style.cssText = 'flex:1;min-width:180px;padding:8px 14px;border-radius:8px;border:1px solid #1e2d45;background:#111820;color:#e2e8f0;font-size:13px;outline:none';
+  inp.oninput = mailSearchDebounce;
+  inp.onkeydown = function(e){ if(e.key==='Enter') loadMailMessages(inp.value.trim()); };
+  hdr.appendChild(inp);
+
+  var scanBtn = document.createElement('button');
+  scanBtn.style.cssText = 'padding:8px 14px;border-radius:8px;border:1px solid #1e2d45;background:#111820;color:#60a5fa;font-size:12px;font-weight:600;cursor:pointer';
+  scanBtn.textContent = '🤖 Найти счета';
+  scanBtn.onclick = scanGmail;
+  hdr.appendChild(scanBtn);
+  wrap.appendChild(hdr);
+
+  // Filter row
+  var filters = [
+    {label:'Все', q:''},
+    {label:'📎 С PDF', q:'has:attachment filename:pdf'},
+    {label:'📄 Счета', q:'subject:arve OR subject:invoice OR subject:счёт'},
+    {label:'🔵 Непрочитанные', q:'is:unread'},
+  ];
+  var frow = document.createElement('div');
+  frow.style.cssText = 'display:flex;gap:6px;margin-bottom:12px;flex-wrap:wrap';
+  filters.forEach(function(f, i){
+    var btn = document.createElement('button');
+    btn.className = 'mf' + (i===0?' active':'');
+    btn.textContent = f.label;
+    btn.onclick = function(){ mailFilter(btn, f.q); };
+    frow.appendChild(btn);
+  });
+  wrap.appendChild(frow);
+
+  var list = document.createElement('div');
+  list.id = 'mailList';
+  list.style.cssText = 'display:flex;flex-direction:column;gap:6px';
+  wrap.appendChild(list);
+
+  var more = document.createElement('div');
+  more.id = 'mailMore';
+  more.style.cssText = 'display:none;text-align:center;margin-top:12px';
+  var moreBtn = document.createElement('button');
+  moreBtn.style.cssText = 'padding:10px 24px;border-radius:8px;border:1px solid #1e2d45;background:#111820;color:#8aa8c8;cursor:pointer';
+  moreBtn.textContent = 'Загрузить ещё';
+  moreBtn.onclick = loadMoreMail;
+  more.appendChild(moreBtn);
+  wrap.appendChild(more);
+
+  return wrap.outerHTML;
+}
+
+function fmtNum(n){ return n ? n.toLocaleString('ru') : '0'; }
+
+var _mailTimer = null;
+function mailSearchDebounce(){
+  clearTimeout(_mailTimer);
+  _mailTimer = setTimeout(function(){
+    loadMailMessages(document.getElementById('mailSearch').value.trim());
+  }, 500);
+}
+
+function mailFilter(el, q){
+  document.querySelectorAll('.mf').forEach(function(b){ b.classList.remove('active'); });
+  el.classList.add('active');
+  var inp = document.getElementById('mailSearch');
+  if(inp) inp.value = '';
+  loadMailMessages(q);
+}
+
+async function loadMailMessages(q){
+  _mailState.query = q;
+  _mailState.nextPage = '';
+  var list = document.getElementById('mailList');
+  if(!list) return;
+  list.innerHTML = '<div style="text-align:center;padding:20px;color:#5a7a9a">⏳ Загружаю...</div>';
+
+  try {
+    var url = '/api/gmail/messages?n=30&q='+encodeURIComponent(q||'in:inbox');
+    var d = await fetch(url,{credentials:'include'}).then(function(r){return r.json();});
+    if(!d.ok){ list.innerHTML='<div style="color:#f87171">'+d.error+'</div>'; return; }
+    _mailState.messages = d.messages;
+    _mailState.nextPage = d.nextPage;
+    renderMailList(d.messages);
+    document.getElementById('mailMore').style.display = d.nextPage ? 'block' : 'none';
+  } catch(e){
+    list.innerHTML = '<div style="color:#f87171">Ошибка: '+e.message+'</div>';
+  }
+}
+
+async function loadMoreMail(){
+  if(!_mailState.nextPage) return;
+  var url = '/api/gmail/messages?n=30&q='+encodeURIComponent(_mailState.query||'in:inbox')+'&page='+_mailState.nextPage;
+  var d = await fetch(url,{credentials:'include'}).then(function(r){return r.json();});
+  if(!d.ok) return;
+  _mailState.messages = _mailState.messages.concat(d.messages);
+  _mailState.nextPage = d.nextPage;
+  renderMailList(_mailState.messages);
+  document.getElementById('mailMore').style.display = d.nextPage ? 'block' : 'none';
+}
+
+function renderMailList(msgs){
+  var list = document.getElementById('mailList');
+  if(!list) return;
+  if(!msgs||!msgs.length){
+    list.innerHTML='<div style="text-align:center;padding:40px;color:#5a7a9a">Писем не найдено</div>';
+    return;
+  }
+  list.innerHTML = '';
+  msgs.forEach(function(m){
+    var card = document.createElement('div');
+    card.style.cssText = 'background:#0f1520;border:1px solid '+(m.unread?'#2a3a60':'#131e2d')+';border-radius:10px;padding:12px 14px;cursor:pointer;transition:border-color .15s;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start';
+    card.onmouseover = function(){ this.style.borderColor='#2a3a50'; };
+    card.onmouseout  = function(){ this.style.borderColor=m.unread?'#2a3a60':'#131e2d'; };
+    card.onclick     = function(){ openMailMessage(m.id); };
+
+    var left = '<div>';
+    left += '<div style="font-size:13px;font-weight:'+(m.unread?700:500)+';color:#e2e8f0;margin-bottom:2px">'+esc(m.subject||'(без темы)')+'</div>';
+    left += '<div style="font-size:11px;color:#5a7a9a;margin-bottom:4px">'+esc(m.from)+'</div>';
+    left += '<div style="font-size:11px;color:#3a4a60">'+esc(m.snippet)+'</div>';
+    left += '</div>';
+
+    var right = '<div style="text-align:right;flex-shrink:0">';
+    right += '<div style="font-size:11px;color:#3a4a60;white-space:nowrap">'+m.date+'</div>';
+    if(m.has_pdf) right += '<div style="margin-top:4px;font-size:18px" title="PDF вложение">📎</div>';
+    right += '</div>';
+
+    card.innerHTML = left + right;
+    list.appendChild(card);
+  });
+}
+
+async function openMailMessage(msgId){
+  var overlay = document.createElement('div');
+  overlay.id = 'mailOverlay';
+  overlay.style.cssText = 'position:fixed;top:0;left:0;right:0;bottom:0;z-index:600;background:rgba(12,15,20,.98);overflow-y:auto';
+  document.body.appendChild(overlay);
+
+  var inner = document.createElement('div');
+  inner.style.cssText = 'max-width:700px;margin:0 auto;padding:20px';
+  inner.innerHTML = '<div style="text-align:center;padding:40px;color:#5a7a9a">⏳ Загружаю письмо...</div>';
+  overlay.appendChild(inner);
+
+  try {
+    var d = await fetch('/api/gmail/message/'+msgId,{credentials:'include'}).then(function(r){return r.json();});
+    if(!d.ok){ inner.innerHTML='<div style="color:#f87171">'+esc(d.error)+'</div>'; return; }
+    var m = d.message;
+    inner.innerHTML = '';
+
+    // Close button + header
+    var hdr = document.createElement('div');
+    hdr.style.cssText = 'display:flex;align-items:flex-start;gap:12px;margin-bottom:20px';
+    var closeBtn = document.createElement('button');
+    closeBtn.style.cssText = 'background:none;border:none;color:#5a7a9a;font-size:22px;cursor:pointer;flex-shrink:0;margin-top:-2px';
+    closeBtn.textContent = '✕';
+    closeBtn.onclick = function(){ overlay.remove(); };
+    hdr.appendChild(closeBtn);
+    var subj = document.createElement('div');
+    subj.innerHTML = '<div style="font-size:16px;font-weight:700;color:#e2e8f0">'+esc(m.subject)+'</div>' +
+                     '<div style="font-size:12px;color:#5a7a9a;margin-top:3px">'+esc(m.from)+' · '+m.date+'</div>';
+    hdr.appendChild(subj);
+    inner.appendChild(hdr);
+
+    // Attachments
+    if(m.attachments && m.attachments.length){
+      var attWrap = document.createElement('div');
+      attWrap.style.cssText = 'display:flex;gap:8px;flex-wrap:wrap;margin-bottom:16px';
+      m.attachments.forEach(function(att){
+        var card = document.createElement('div');
+        card.style.cssText = 'background:#111820;border:1px solid #1e2d45;border-radius:8px;padding:8px 12px;display:flex;align-items:center;gap:8px';
+        card.innerHTML = '<span style="font-size:18px">'+(att.is_pdf?'📄':'📎')+'</span>' +
+          '<div><div style="font-size:12px;color:#e2e8f0;font-weight:600">'+esc(att.filename)+'</div>' +
+          '<div style="font-size:10px;color:#5a7a9a">'+Math.round(att.size/1024)+'КБ</div></div>';
+        if(att.is_pdf && att.attachmentId){
+          var pdfLink = document.createElement('a');
+          pdfLink.href = '/api/gmail/attachment/'+msgId+'/'+att.attachmentId;
+          pdfLink.target = '_blank';
+          pdfLink.style.cssText = 'padding:5px 10px;border-radius:6px;background:#1e3a5f;color:#60a5fa;font-size:11px;text-decoration:none';
+          pdfLink.textContent = 'Открыть PDF';
+          card.appendChild(pdfLink);
+          var addBtn = document.createElement('button');
+          addBtn.style.cssText = 'padding:5px 10px;border-radius:6px;background:rgba(245,158,11,.15);color:#f59e0b;font-size:11px;border:1px solid rgba(245,158,11,.3);cursor:pointer';
+          addBtn.textContent = '+ В счета';
+          (function(mid, aid){ addBtn.onclick = function(){ addGmailPdfAsInvoice(mid, aid); }; })(msgId, att.attachmentId);
+          card.appendChild(addBtn);
+        }
+        attWrap.appendChild(card);
+      });
+      inner.appendChild(attWrap);
+    }
+
+    // Body
+    var body = document.createElement('div');
+    body.style.cssText = 'background:#111820;border:1px solid #1e2d45;border-radius:10px;padding:16px;font-size:13px;color:#c8d8ec;white-space:pre-wrap;line-height:1.7';
+    body.textContent = m.body || '(пустое письмо)';
+    inner.appendChild(body);
+
+  } catch(e){
+    inner.innerHTML = '<div style="color:#f87171;padding:20px">Ошибка: '+e.message+'</div>';
+  }
+}
+
+async function addGmailPdfAsInvoice(msgId, attId){
+  showNotif('Добавляю счёт из Gmail...','info');
+  try {
+    var r = await fetch('/api/gmail/add-as-invoice',{
+      method:'POST',credentials:'include',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({msg_id:msgId,att_id:attId})
+    }).then(function(r){return r.json();});
+    if(r.ok){
+      showNotif('✅ Счёт добавлен: '+(r.invoice.vendor||'?')+' '+r.invoice.amount+'€','ok');
+      await loadAll();
+    } else {
+      showNotif('❌ '+r.error,'err');
+    }
+  } catch(e){ showNotif('❌ '+e.message,'err'); }
+}
+
+async function scanGmail(){
+  showNotif('🤖 Сканирую Gmail...','info');
+  try {
+    var r = await fetch('/api/gmail/scan',{method:'POST',credentials:'include'}).then(function(r){return r.json();});
+    showNotif('✅ Gmail: просмотрено '+r.scanned+', найдено '+r.found+' счетов','ok');
+    await loadAll();
+  } catch(e){ showNotif('❌ '+e.message,'err'); }
 }
 
 </script>
