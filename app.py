@@ -447,30 +447,71 @@ def _ask_cohere(prompt):
     return r.json()["generations"][0]["text"]
 
 def ask_ai(prompt):
-    """Call AI provider with auto-fallback chain."""
-    # Try configured providers first
-    for attempt in range(4):
-        provider = _active_provider()
-        if not provider:
-            break
+    """
+    Full rotation chain:
+    Gemini key1→key2→key3 → Groq key1→key2 → OpenAI → Claude → keywords
+    Each provider tried with ALL its keys before moving to next.
+    """
+    errors = []
+
+    # ── 1. Gemini (all keys × all models) ─────────────────────────────────────
+    if _gemini_pool.keys:
+        orig_failed = set(_gemini_model_failed)
+        _gemini_model_failed.clear()
+        for _attempt in range(len(_gemini_pool.keys) * len(_GEMINI_MODELS)):
+            try:
+                return _ask_gemini(prompt)
+            except Exception as ex:
+                err = str(ex)
+                errors.append(f"Gemini: {err[:60]}")
+                if "нет ключей" in err or "ALL keys" in err.lower():
+                    break  # all keys exhausted
+                if "invalid" in err.lower() or "billing" in err.lower():
+                    _provider_blocked.add("gemini"); break
+                # quota → already rotated inside _ask_gemini, try again
+        log.info(f"Gemini exhausted ({len(errors)} attempts) → trying Groq")
+
+    # ── 2. Groq (all keys) ────────────────────────────────────────────────────
+    if _groq_pool.keys:
+        for _attempt in range(max(1, len(_groq_pool.keys))):
+            try:
+                return _ask_groq(prompt)
+            except Exception as ex:
+                err = str(ex)
+                errors.append(f"Groq: {err[:60]}")
+                if "нет доступных" in err or "ALL keys" in err.lower():
+                    break
+                if "invalid" in err.lower() or "billing" in err.lower():
+                    _provider_blocked.add("groq"); break
+        log.info("Groq exhausted → trying OpenAI")
+
+    # ── 3. OpenAI ─────────────────────────────────────────────────────────────
+    if _openai_pool.keys:
+        for _attempt in range(max(1, len(_openai_pool.keys))):
+            try:
+                return _ask_openai(prompt)
+            except Exception as ex:
+                err = str(ex)
+                errors.append(f"OpenAI: {err[:60]}")
+                if "invalid" in err.lower() or "billing" in err.lower():
+                    _provider_blocked.add("openai"); break
+        log.info("OpenAI exhausted → trying Claude")
+
+    # ── 4. Claude ─────────────────────────────────────────────────────────────
+    if API_KEY and len(API_KEY) > 20:
         try:
-            log.debug(f"ask_ai: trying {provider}")
-            if provider == "gemini":  return _ask_gemini(prompt)
-            if provider == "claude":  return _ask_claude(prompt)
-            if provider == "groq":    return _ask_groq(prompt)
-            if provider == "openai":  return _ask_openai(prompt)
+            return _ask_claude(prompt)
         except Exception as ex:
-            err = str(ex).lower()
-            if any(k in err for k in ["billing","credit","unauthorized","invalid_api_key"]):
-                _provider_blocked.add(provider)
-            # Don't block on 429 - model rotation handles it
-    # Final fallback: HuggingFace free public models
+            errors.append(f"Claude: {str(ex)[:60]}")
+            log.info("Claude failed → keyword fallback")
+
+    # ── 5. HuggingFace (free, no key) ─────────────────────────────────────────
     try:
-        log.info("ask_ai: trying HuggingFace free inference")
         return _ask_huggingface(prompt)
     except Exception as ex:
-        log.warning(f"HuggingFace failed: {ex}")
-    raise ValueError("Все AI провайдеры недоступны — используется анализ ключевых слов")
+        errors.append(f"HuggingFace: {str(ex)[:40]}")
+
+    raise ValueError("Все AI провайдеры недоступны — используются ключевые слова")
 
 _gemini_last_call = [0.0]
 
@@ -580,20 +621,33 @@ def _ask_groq(prompt):
     raise Exception("Groq: все ключи исчерпаны")
 
 def _ask_openai(prompt):
-    """OpenAI GPT — paid."""
-    r = requests.post(
-        "https://api.openai.com/v1/chat/completions",
-        headers={"Authorization": f"Bearer {OPENAI_KEY}",
-                 "Content-Type": "application/json"},
-        json={"model": "gpt-4o-mini", "max_tokens": 1000, "temperature": 0.1,
-              "messages": [
-                  {"role": "system", "content": CLAUDE_SYSTEM},
-                  {"role": "user",   "content": prompt},
-              ]},
-        timeout=30,
-    )
-    r.raise_for_status()
-    return r.json()["choices"][0]["message"]["content"]
+    """OpenAI GPT — tries all keys in pool."""
+    for _attempt in range(max(1, len(_openai_pool.keys))):
+        key = _openai_pool.current()
+        if not key:
+            raise Exception("OpenAI: нет ключей")
+        try:
+            r = requests.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {key}",
+                         "Content-Type": "application/json"},
+                json={"model": "gpt-4o-mini", "max_tokens": 512, "temperature": 0.1,
+                      "messages": [
+                          {"role": "system", "content": CLAUDE_SYSTEM},
+                          {"role": "user",   "content": prompt},
+                      ]},
+                timeout=30,
+            )
+            if r.status_code == 429:
+                _openai_pool.rotate(key)
+                continue
+            r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+        except requests.HTTPError as ex:
+            if "401" in str(ex) or "403" in str(ex):
+                _openai_pool.rotate(key)
+            raise
+    raise Exception("OpenAI: все ключи исчерпаны")
 
 # backward compat alias
 def ask_claude(prompt):
