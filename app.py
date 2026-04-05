@@ -4623,6 +4623,58 @@ def api_syn_link_invoice():
 
 _bg_started = False
 
+# Marker file — written after the one-time cleanup runs so it never repeats
+_CLEANUP_MARKER = _DATA_DIR / "cleanup_dates_v1.done"
+
+
+def _auto_cleanup_bad_dates():
+    """
+    One-time startup task: remove invoices whose issue_date equals their
+    added_at date (scan date was used instead of the actual document date —
+    bug present in scans run on 2026-04-04 and 2026-04-05).
+    After cleanup, triggers a full re-scan from 2025-01-01 so all those
+    emails are re-processed with the corrected date-extraction logic.
+    Returns number of invoices removed.
+    """
+    if _CLEANUP_MARKER.exists():
+        return 0  # already ran
+
+    invs   = load_invoices()
+    before = len(invs)
+
+    # Bad invoices: added during the buggy scan AND issue_date == scan date
+    # (meaning the date was never extracted from the document)
+    BAD_SCAN_DATES = {"2026-04-04", "2026-04-05"}
+
+    def _is_bad(i):
+        added   = (i.get("added_at") or "")[:10]
+        issued  = (i.get("issue_date") or "")[:10]
+        if i.get("status") == "paid":
+            return False                     # never delete paid invoices
+        if added not in BAD_SCAN_DATES:
+            return False                     # not from the buggy scan
+        return issued == added               # issue_date == scan date → bad
+
+    cleaned = [i for i in invs if not _is_bad(i)]
+    removed = before - len(cleaned)
+
+    if removed > 0:
+        save_invoices(cleaned)
+        log.info(f"Auto-cleanup: removed {removed} invoices with scan-date as issue_date "
+                 f"({before} → {len(cleaned)})")
+    else:
+        log.info("Auto-cleanup: no bad-dated invoices found — nothing removed")
+
+    # Write marker (prevents re-run on next deploy)
+    _CLEANUP_MARKER.write_text(
+        json.dumps({"done": datetime.now().isoformat(),
+                    "removed": removed, "before": before},
+                   ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return removed
+
+
 def _start_background():
     global _bg_started
     if _bg_started:
@@ -4630,8 +4682,17 @@ def _start_background():
     _bg_started = True
     check_notifications()
     log.info("PayCalendar started")
-    # Auto-resume scan if it was running before deploy/restart
+
+    # ── One-time cleanup of invoices with wrong dates ─────────────────────────
+    removed = 0
+    try:
+        removed = _auto_cleanup_bad_dates()
+    except Exception as ex:
+        log.error(f"Auto-cleanup error: {ex}")
+
+    # ── Auto-resume OR trigger full re-scan after cleanup ─────────────────────
     if PENDING_FILE.exists():
+        # A scan was already in progress before this deploy — resume it
         try:
             pending = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
             fd = pending.get("from_date")
@@ -4646,6 +4707,14 @@ def _start_background():
             _thr.Thread(target=_delayed_resume, daemon=True, name="scan-auto-resume").start()
         except Exception as ex:
             log.error(f"Auto-resume failed: {ex}")
+    elif removed > 0:
+        # Bad invoices were deleted → schedule a full re-scan from 2025-01-01
+        import time as _tm2, threading as _thr2
+        def _delayed_rescan():
+            _tm2.sleep(8)
+            log.info(f"Auto-rescan: full scan from 2025-01-01 after cleanup of {removed} invoices")
+            start_bg_scan(from_date="2025-01-01", to_date=None, quick=False)
+        _thr2.Thread(target=_delayed_rescan, daemon=True, name="scan-post-cleanup").start()
 
 # Auto-start when imported (gunicorn)
 # Auto-fix wrong IMAP host (mail.zone.ee → imap.zone.eu)
