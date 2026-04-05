@@ -1459,7 +1459,7 @@ function renderTopbar(){
   function fmtShort(n){if(n>=1e6)return (n/1e6).toFixed(1).replace('.0','')+' M€';if(n>=1e3)return (n/1e3).toFixed(1).replace('.0','')+' k€';return fmtAmt(n);}
   let h="";
   if(ov.length)h+=`<div class="stat-pill pill-red" onclick="setView('overdue')" title="Просроченные: ${ov.length} шт.">⚠ <span class="pv">${ov.length}</span></div>`;
-  if(ug.length)h+=`<div class="stat-pill pill-amber" title="Срочно: ${ug.length} шт.">🔥 <span class="pv">${ug.length}</span></div>`;
+  if(ug.length)h+=`<div class="stat-pill pill-amber" onclick="openInvoiceList('🔥 Срочные (до 3 дней)',S.invoices.filter(i=>stOf(i)==='urgent'&&!isContract(i)),true)" title="Срочно: ${ug.length} шт.">🔥 <span class="pv">${ug.length}</span></div>`;
   h+=`<div class="stat-pill pill-blue" onclick="openPendingDocs()" title="К оплате: ${fmtAmt(sp)} — нажми для списка">💳 <span class="pv">${fmtShort(sp)}</span></div>`;
   // Count offers
   var ofKW=['offer','quote','quotation','proposal','предложение','hinnapakkumine'];
