@@ -1866,16 +1866,19 @@ def scan_imap(emit, from_date=None, to_date=None):
         emit(f"📬 {len(ids_sorted)} писем для анализа" + (f" (лимит {SCAN_LIMIT})" if not date_terms else " (все в диапазоне)"), "ok")
         ids = set(ids_sorted)
 
-        # Fetch headers
+        # Fetch headers one-by-one with progress every 200
         emails_raw = []
-        for uid in list(ids):
+        ids_list   = list(ids)
+        total_ids  = len(ids_list)
+        for _hi, uid in enumerate(ids_list):
             try:
                 _, data = mail.fetch(uid, "(RFC822.HEADER)")
                 if not data or not data[0]: continue
-                msg = email.message_from_bytes(data[0][1])
+                msg  = email.message_from_bytes(data[0][1])
                 subj = decode_header(msg.get("Subject",""))
                 sndr = decode_header(msg.get("From",""))
-                att  = False  # will check separately
+                ct   = msg.get("Content-Type","").lower()
+                att  = "multipart/mixed" in ct or "multipart/related" in ct or "application/" in ct
                 try:
                     ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
                 except Exception:
@@ -1883,10 +1886,12 @@ def scan_imap(emit, from_date=None, to_date=None):
                 uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
                 emails_raw.append({
                     "id": uid_s, "subject": subj, "from": sndr,
-                    "body": "", "date": ds, "has_attachment": False,
+                    "body": "", "date": ds, "has_attachment": att,
                 })
             except Exception as ex:
                 emit(f"Ошибка заголовка {uid}: {ex}", "err")
+            if (_hi + 1) % 200 == 0 or _hi + 1 == total_ids:
+                emit(f"  📥 Заголовки: {_hi+1}/{total_ids}...", "info")
 
         # Hook for PDF fetching - pass mail connection
         _pending_pdfs = {}  # uid_str -> {filename, bytes, parsed}
@@ -2493,14 +2498,18 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
         ids = set(ids_sorted[:SCAN_LIMIT])
         emit(f"  Писем для анализа: {len(ids)}", "info")
 
-        emails_raw = []
-        for uid in list(ids):
+        emails_raw  = []
+        ids_list_ac = list(ids)
+        total_ac    = len(ids_list_ac)
+        for _hi_ac, uid in enumerate(ids_list_ac):
             try:
                 _, data = mail.fetch(uid, "(RFC822.HEADER)")
                 if not data or not data[0]: continue
-                msg = email.message_from_bytes(data[0][1])
+                msg  = email.message_from_bytes(data[0][1])
                 subj = decode_header(msg.get("Subject",""))
                 sndr = decode_header(msg.get("From",""))
+                ct   = msg.get("Content-Type","").lower()
+                att  = "multipart/mixed" in ct or "multipart/related" in ct or "application/" in ct
                 try:
                     ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
                 except Exception:
@@ -2509,11 +2518,13 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
                 emails_raw.append({
                     "id": f"{account['id']}_{uid_s}",
                     "subject": subj, "from": sndr,
-                    "body": "", "date": ds, "has_attachment": False,
+                    "body": "", "date": ds, "has_attachment": att,
                     "account": account["email"],
                 })
             except Exception as ex:
                 emit(f"  Header error {uid}: {ex}", "err")
+            if (_hi_ac + 1) % 200 == 0 or _hi_ac + 1 == total_ac:
+                emit(f"  📥 Заголовки: {_hi_ac+1}/{total_ac}...", "info")
 
         def _fetch_pdf(uid_str):
             try:
