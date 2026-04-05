@@ -106,6 +106,8 @@ input,select{font-family:'DM Sans',sans-serif}
 .sb-w2::after{background:linear-gradient(90deg,var(--orange),transparent)}
 .sb-w3::after{background:linear-gradient(90deg,var(--teal),transparent)}
 .sb:last-child{border-right:none}
+.sb[onclick]{cursor:pointer;transition:background .15s}
+.sb[onclick]:hover{background:var(--bg3)}
 .sb-lbl{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text4);margin-bottom:1px}
 .sb-val{font-family:'DM Mono',monospace;font-size:16px;font-weight:500;letter-spacing:-.5px;line-height:1.1}
 .sb-sub{font-size:10px;color:var(--text4);margin-top:1px}
@@ -786,6 +788,74 @@ async function deleteInv(id){
   await loadAll();
 }
 
+/* ─── Generic invoice list modal ───────────────────────────────────────── */
+function openInvoiceList(title, invoices, canPay){
+  if(!invoices||!invoices.length){showNotif('Нет счетов','info');return;}
+  var list=invoices.slice().sort(function(a,b){return (a.due_date||'').localeCompare(b.due_date||'');});
+  var total=list.reduce(function(s,i){return s+(parseFloat(i.amount)||0);},0);
+  var modal=document.createElement('div');
+  modal.style.cssText='position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,.75);display:flex;align-items:center;justify-content:center;padding:16px';
+  modal.onclick=function(e){if(e.target===modal)modal.remove();};
+  function rows(){
+    return list.map(function(inv){
+      var od=inv.due_date&&inv.due_date<toISO(new Date())&&inv.status!=='paid';
+      var pdfBtn=inv.has_pdf?'<button onclick="openPdf(\''+esc(inv.id)+'\')" style="background:none;border:1px solid #38bdf8;color:#38bdf8;border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer">PDF</button>':'';
+      var gdBtn=inv.gdrive_link?'<a href="'+esc(inv.gdrive_link)+'" target="_blank" style="border:1px solid #60a5fa;color:#60a5fa;border-radius:4px;padding:2px 6px;font-size:11px;text-decoration:none">☁</a>':'';
+      var statusBadge=inv.status==='paid'
+        ?'<span style="color:#4ade80;font-size:11px">✓ Оплачен</span>'
+        :(od?'<span style="color:#f87171;font-size:11px">⚠ Просрочен</span>':'<span style="color:#fbbf24;font-size:11px">⏳ Ожидает</span>');
+      var payBtn=canPay&&inv.status!=='paid'
+        ?'<button data-id="'+esc(inv.id)+'" class="il-pay-btn" style="background:none;border:1px solid #34d399;color:#34d399;border-radius:4px;padding:2px 8px;font-size:11px;cursor:pointer">✓ Оплачен</button>'
+        :'';
+      return '<tr style="border-bottom:1px solid rgba(255,255,255,.05)" data-row-id="'+esc(inv.id)+'">'
+        +'<td style="padding:8px 10px;font-size:12px;white-space:nowrap;color:'+(od?'#f87171':inv.status==='paid'?'#4ade80':'var(--text)')+'">'+(inv.due_date||'—')+'</td>'
+        +'<td style="padding:8px 10px;font-size:12px;font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc(inv.vendor||'—')+'</td>'
+        +'<td style="padding:8px 10px;font-size:11px;color:var(--text3);max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc((inv.description||'').slice(0,60))+'</td>'
+        +'<td style="padding:8px 10px;font-size:13px;font-weight:700;text-align:right;white-space:nowrap">'+fmtAmt(inv.amount,inv.currency)+'</td>'
+        +'<td style="padding:8px 8px;white-space:nowrap">'+pdfBtn+' '+gdBtn+'</td>'
+        +'<td style="padding:8px 8px">'+statusBadge+'</td>'
+        +(canPay?'<td style="padding:8px 8px">'+payBtn+'</td>':'')
+        +'</tr>';
+    }).join('');
+  }
+  modal.innerHTML='<div style="background:var(--bg);border-radius:14px;max-width:920px;width:100%;max-height:88vh;display:flex;flex-direction:column;overflow:hidden;border:1px solid var(--border2)">'
+    +'<div style="display:flex;align-items:center;justify-content:space-between;padding:14px 18px;border-bottom:1px solid var(--border);flex-shrink:0;background:var(--bg2)">'
+      +'<div id="il-title" style="font-size:15px;font-weight:700">'+title+' · <span style="color:#f59e0b">'+fmtAmt(total)+'</span></div>'
+      +'<button onclick="this.closest(\'div[style*=fixed]\').remove()" style="background:none;border:none;color:var(--text3);font-size:24px;cursor:pointer;padding:0 4px;line-height:1">×</button>'
+    +'</div>'
+    +'<div style="overflow-y:auto;flex:1"><table style="width:100%;border-collapse:collapse">'
+      +'<thead><tr style="background:var(--bg2);position:sticky;top:0">'
+        +'<th style="padding:7px 10px;font-size:11px;text-align:left;color:var(--text3);font-weight:600">Срок</th>'
+        +'<th style="padding:7px 10px;font-size:11px;text-align:left;color:var(--text3);font-weight:600">Вендор</th>'
+        +'<th style="padding:7px 10px;font-size:11px;text-align:left;color:var(--text3);font-weight:600">Описание</th>'
+        +'<th style="padding:7px 10px;font-size:11px;text-align:right;color:var(--text3);font-weight:600">Сумма</th>'
+        +'<th style="padding:7px 10px;font-size:11px;color:var(--text3);font-weight:600">PDF</th>'
+        +'<th style="padding:7px 10px;font-size:11px;color:var(--text3);font-weight:600">Статус</th>'
+        +(canPay?'<th style="padding:7px 10px;font-size:11px;color:var(--text3);font-weight:600">Действие</th>':'')
+      +'</tr></thead>'
+      +'<tbody id="il-tbody">'+rows()+'</tbody>'
+    +'</table></div>'
+  +'</div>';
+  document.body.appendChild(modal);
+  if(canPay){
+    modal.addEventListener('click',function(e){
+      var btn=e.target.closest('.il-pay-btn');
+      if(!btn)return;
+      var id=btn.dataset.id;
+      apiPost('/api/invoices/'+id+'/paid',{}).then(function(){
+        list=list.filter(function(i){return i.id!==id;});
+        S.invoices=S.invoices.map(function(i){return i.id===id?Object.assign({},i,{status:'paid'}):i;});
+        var row=modal.querySelector('tr[data-row-id="'+id+'"]');
+        if(row)row.remove();
+        var t=list.reduce(function(s,i){return s+(parseFloat(i.amount)||0);},0);
+        var tEl=modal.querySelector('#il-title');
+        if(tEl)tEl.innerHTML=title+' · <span style="color:#f59e0b">'+fmtAmt(t)+'</span>';
+        renderSumBar();
+      });
+    });
+  }
+}
+
 /* ─── Pending docs modal ────────────────────────────────────────────────── */
 function openPendingDocs(){
   var pending=S.invoices.filter(function(i){return i.status!=='paid'&&!isContract(i);});
@@ -1415,27 +1485,48 @@ function renderSumBar(){
   const ms=monthStats(),ws=weekStats();
   const mon=MONTHS[S.month.getMonth()];
   const yr=S.month.getFullYear();
+  const y=S.month.getFullYear(),m=S.month.getMonth();
+  // Pre-compute invoice sets for click handlers
+  // Pre-compute lists and stash globally so onclick attrs can call them
+  const _wd=weekDays(),_ws=toISO(_wd[0]),_we=toISO(_wd[6]);
+  window._sb={
+    mAll  :S.invoices.filter(i=>{if(!i.due_date||isContract(i))return false;const d=new Date(i.due_date);return d.getFullYear()===y&&d.getMonth()===m}),
+    wAll  :S.invoices.filter(i=>i.due_date&&i.due_date>=_ws&&i.due_date<=_we&&!isContract(i)),
+  };
+  window._sb.mPend=_sb.mAll.filter(i=>i.status!=='paid');
+  window._sb.mPaid=_sb.mAll.filter(i=>i.status==='paid');
+  window._sb.mOver=_sb.mAll.filter(i=>stOf(i)==='overdue');
+  window._sb.mEe  =_sb.mAll.filter(i=>i.vat_rate==24||i.vat_rate==='24');
+  window._sb.wPend=_sb.wAll.filter(i=>i.status!=='paid');
+  window._sb.wPaid=_sb.wAll.filter(i=>i.status==='paid');
+  const sh='cursor:pointer;user-select:none';
+  const hov='onmouseover="this.style.background=\'var(--bg3)\'" onmouseout="this.style.background=\'\'"';
   document.getElementById("sum-bar").innerHTML=`
     <div class="sep-lbl">${mon.slice(0,3).toUpperCase()} ${yr}</div>
 
-    <div class="sb sb-total">
+    <div class="sb sb-total" style="${sh}" ${hov}
+      onclick="openInvoiceList('📅 ${mon} ${yr} · все счета',_sb.mAll,false)">
       <div class="sb-lbl">ИТОГО МЕСЯЦ</div>
       <div class="sb-val" style="color:var(--blue)">${fmtAmt(ms.st)}</div>
       <div class="sb-sub">${ms.total} счетов</div>
     </div>
 
-    <div class="sb sb-m2">
+    <div class="sb sb-m2" style="${sh}" ${hov}
+      onclick="openInvoiceList('💳 К оплате · ${mon} ${yr}',_sb.mPend,true)">
       <div class="sb-lbl">К оплате</div>
       <div class="sb-val" style="color:${ms.sp>0?"var(--red)":"var(--green)"}">${fmtAmt(ms.sp)}</div>
       <div class="sb-sub">${ms.pending} не опл.${ms.overdue?` · <b style="color:#f87171">${ms.overdue} просроч.</b>`:""}</div>
     </div>
 
-    ${ms.overdue>0?`<div class="sb sb-overdue">
+    ${ms.overdue>0?`<div class="sb sb-overdue" style="${sh}" ${hov}
+      onclick="setView('overdue')">
       <div class="sb-lbl">⚠ Просрочено</div>
       <div class="sb-val" style="color:#f87171">${fmtAmt(ms.sOver)}</div>
       <div class="sb-sub">${ms.overdue} счетов · не оплачено</div>
     </div>`:""}
-    <div class="sb sb-m3">
+
+    <div class="sb sb-m3" style="${sh}" ${hov}
+      onclick="openInvoiceList('✅ Оплачено · ${mon} ${yr}',_sb.mPaid,false)">
       <div class="sb-lbl">Оплачено</div>
       <div class="sb-val" style="color:var(--green)">${fmtAmt(ms.sd)}</div>
       <div class="sb-sub">${ms.paid} платежей · ${ms.pct}%</div>
@@ -1443,7 +1534,8 @@ function renderSumBar(){
 
     ${ms.eeCnt>0?`
     <div class="sb-div"></div>
-    <div class="sb sb-ee">
+    <div class="sb sb-ee" style="${sh}" ${hov}
+      onclick="openInvoiceList('🇪🇪 Эстония · ${mon} ${yr}',_sb.mEe,true)">
       <div class="sb-lbl">🇪🇪 Эстония · ${ms.eeCnt} сч.</div>
       <div class="sb-val" style="color:var(--blue)">${fmtAmt(ms.eeTotal)}</div>
       <div class="sb-sub">Без НДС: ${fmtAmt(Math.round(ms.eeNet*100)/100)}</div>
@@ -1456,17 +1548,20 @@ function renderSumBar(){
 
     <div class="sb-div"></div>
     <div class="sep-lbl">НЕДЕЛЯ</div>
-    <div class="sb sb-w1">
+    <div class="sb sb-w1" style="${sh}" ${hov}
+      onclick="openInvoiceList('📅 Неделя ${ws.rng}',_sb.wAll,false)">
       <div class="sb-lbl">Неделя · всего</div>
       <div class="sb-val" style="color:var(--purple)">${fmtAmt(ws.st)}</div>
       <div class="sb-sub">${ws.rng} · ${ws.total} сч.</div>
     </div>
-    <div class="sb sb-w2">
+    <div class="sb sb-w2" style="${sh}" ${hov}
+      onclick="openInvoiceList('💳 К оплате · неделя',_sb.wPend,true)">
       <div class="sb-lbl">К оплате</div>
       <div class="sb-val" style="color:${ws.sp>0?"var(--orange)":"var(--green)"}">${fmtAmt(ws.sp)}</div>
       <div class="sb-sub">${ws.pending} счетов</div>
     </div>
-    <div class="sb sb-w3">
+    <div class="sb sb-w3" style="${sh}" ${hov}
+      onclick="openInvoiceList('✅ Оплачено · неделя',_sb.wPaid,false)">
       <div class="sb-lbl">Оплачено</div>
       <div class="sb-val" style="color:var(--teal)">${fmtAmt(ws.sd)}</div>
       <div class="sb-prog"><div class="sb-prog-fill" style="width:${ws.pct}%;background:linear-gradient(90deg,var(--teal),var(--blue))"></div></div>
