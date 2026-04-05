@@ -110,6 +110,12 @@ input,select{font-family:'DM Sans',sans-serif}
 .sb[onclick]:hover{background:var(--bg3)}
 
 /* ── Custom tooltip ──────────────────────────────────────────────────────── */
+/* Invoice card grid: 4 cols desktop, 1 col mobile */
+.inv-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+@media(max-width:1200px){.inv-grid{grid-template-columns:repeat(3,1fr)}}
+@media(max-width:860px) {.inv-grid{grid-template-columns:repeat(2,1fr)}}
+@media(max-width:560px) {.inv-grid{grid-template-columns:1fr}}
+
 #tip-box{
   position:fixed;z-index:99999;pointer-events:none;
   background:rgba(10,14,20,.95);color:#e0eaff;
@@ -1083,7 +1089,7 @@ function renderOffers(){
   h += '</div>';
 
   // ── Grid ──────────────────────────────────────────────────────────────────
-  h += '<div style="padding:0 20px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px">';
+  h += '<div class="inv-grid" style="padding:0 20px 20px">';
 
   offers.forEach(function(inv){
     var amt = parseFloat(inv.amount||0);
@@ -1230,7 +1236,7 @@ function renderOverdue(){
 
     } else {
       // ── Card grid view ───────────────────────────────────────────────────
-      h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px">';
+      h+='<div class="inv-grid">';
       sorted.forEach(function(inv,n){
         var dl=Math.round((today-new Date(inv.due_date+'T00:00:00'))/86400000);
         var bc=dl<=7?'#fbbf24':'#f87171';
