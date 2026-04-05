@@ -2692,7 +2692,25 @@ def api_invoices_cleanup():
 
 @app.route("/api/invoices", methods=["GET"])
 def api_get_invoices():
-    return jsonify(load_invoices())
+    invs = load_invoices()
+    # Dynamically check PDF existence on disk + Drive link
+    # so invoices scanned before PDF feature also show correct status
+    for inv in invs:
+        inv_id = inv.get("id","")
+        if inv_id:
+            # Check local PDF
+            path = get_pdf_path(inv_id)
+            if path:
+                inv["has_pdf"] = True
+                if not inv.get("pdf_filename"):
+                    inv["pdf_filename"] = path.name
+            else:
+                inv["has_pdf"] = False
+            # Check Drive link
+            gdrive = get_gdrive_link(inv_id)
+            if gdrive:
+                inv["gdrive_link"] = gdrive
+    return jsonify(invs)
 
 @app.route("/api/invoices", methods=["POST"])
 def api_save_invoices_route():
