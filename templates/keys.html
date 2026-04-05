@@ -109,8 +109,13 @@ input:focus{border-color:#38bdf8}
 <!-- GOOGLE DRIVE -->
 <div class="card">
   <div class="card-title">📁 Google Drive</div>
-  <div class="hint">PDF счетов сохраняются в Drive: <code>PayCalendar/2026/03-March/</code><br>
-  Нужен Google Cloud проект с Drive API. <a href="https://console.cloud.google.com" target="_blank" style="color:#60a5fa">console.cloud.google.com</a></div>
+  <div class="hint">PDF счетов сохраняются в Drive: <code>PayCalendar/Счета/2026/</code><br>
+  Один Google аккаунт — и Drive и Gmail. <a href="https://console.cloud.google.com" target="_blank" style="color:#60a5fa">console.cloud.google.com</a></div>
+
+  <!-- Gmail status -->
+  <div id="gmail-status" style="margin-bottom:12px;padding:10px;border-radius:8px;background:#111820;border:1px solid #1e2d45;font-size:12px">
+    <span style="color:#5a7a9a">📨 Gmail: проверяю...</span>
+  </div>
 
   <div id="gdrive-status" style="margin-bottom:12px;padding:10px;border-radius:8px;background:#111820;border:1px solid #1e2d45;font-size:13px">
     <span style="color:#5a7a9a">Проверяю подключение...</span>
@@ -327,6 +332,23 @@ loadImapStatus();
 loadGDriveStatus();
 
 // Listen for OAuth popup message
+// Load Gmail status
+async function loadGmailStatus(){
+  try {
+    var r = await api('/api/gmail/status?ts='+Date.now());
+    var el = document.getElementById('gmail-status');
+    if(!el) return;
+    if(r.connected){
+      el.innerHTML = '📨 Gmail: <span style="color:#4ade80">✅ '+esc(r.email)+'</span> · '+
+        (r.total_messages||0)+' писем · <span style="color:#5a7a9a">сканирую с '+r.cutoff+'</span>';
+      el.style.borderColor='rgba(74,222,128,.2)';
+    } else {
+      el.innerHTML = '📨 Gmail: <span style="color:#f59e0b">⚠ Не активен</span> — подключи Drive выше, Gmail использует тот же токен';
+    }
+  } catch(e){}
+}
+loadGmailStatus();
+
 window.addEventListener('message', function(e){
   if(e.data && e.data.gdrive === 'connected'){
     log('gLog','✅ Подключено: '+e.data.email,'ok');

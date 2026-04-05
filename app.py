@@ -1988,18 +1988,35 @@ def scan_email(emit=None, quick=False, from_date=None, to_date=None):
                     emitter(f"Аккаунт {acc['email']}: {ex}", "warn")
             return all_results
 
-        # Single account - original logic
-        emitter(f"Checking IMAP {IMAP_HOST}:{IMAP_PORT}...")
-        try:
-            with socket.create_connection((IMAP_HOST, IMAP_PORT), timeout=5):
-                emitter("IMAP reachable", "ok")
-                result = scan_imap(emitter, from_date=from_date, to_date=to_date)
-                if result is not None:
-                    return result
-                # scan_imap returned None → fall through to webmail
-        except Exception as ex:
-            emitter(f"IMAP blocked ({type(ex).__name__}) — пробуем другие серверы", "warn")
-            return []
+        # Smart routing: Zone IMAP (history) + Gmail API (new)
+        all_results = []
+        cutoff = GMAIL_CUTOFF  # 2026-04-05
+
+        # ── Zone IMAP: historical emails (before cutoff) ──────────────
+        if not from_date or from_date < cutoff:
+            imap_to_date = min(to_date, cutoff) if to_date else cutoff
+            emitter(f"📧 Zone IMAP (до {imap_to_date})...", "info")
+            try:
+                with socket.create_connection((IMAP_HOST, IMAP_PORT), timeout=8):
+                    imap_r = scan_imap(emitter,
+                        from_date=from_date, to_date=imap_to_date)
+                    if imap_r:
+                        all_results.extend(imap_r)
+                        emitter(f"✅ Zone: {len(imap_r)} счетов", "ok")
+            except Exception as ex:
+                emitter(f"Zone IMAP: {type(ex).__name__}", "warn")
+
+        # ── Gmail API: new emails (from cutoff onwards) ───────────────
+        gmail_from = max(from_date or cutoff, cutoff)
+        if not to_date or to_date >= cutoff:
+            emitter(f"📨 Gmail (с {gmail_from})...", "info")
+            gmail_r = scan_gmail(emitter,
+                from_date=gmail_from, to_date=to_date)
+            if gmail_r:
+                all_results.extend(gmail_r)
+                emitter(f"✅ Gmail: {len(gmail_r)} счетов", "ok")
+
+        return all_results
     finally:
         SCAN_LIMIT = orig_limit  # always restore
 
@@ -3916,6 +3933,233 @@ def api_gmail_scan():
 
     result = process_emails(emails_raw, emit, fetch_body=fetch_gmail_body, source="gmail")
     return jsonify({"ok": True, "found": len(result), "scanned": len(emails_raw)})
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  GMAIL API SCANNER
+#  Reads Gmail for emails from 2026-04-05 onwards (after forwarding setup)
+#  Zone.eu IMAP handles everything before 2026-04-05
+# ═══════════════════════════════════════════════════════════════════════════════
+
+GMAIL_CUTOFF = "2026-04-05"  # Zone → before this date, Gmail → from this date
+
+
+def _get_gmail_service():
+    """Build Gmail service using same OAuth token as Drive."""
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+        import json
+
+        token_data = c("gdrive", "token", "") or os.environ.get("GDRIVE_TOKEN", "")
+        if not token_data:
+            return None
+        token = json.loads(token_data)
+        creds = Credentials(
+            token=token.get("access_token"),
+            refresh_token=token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=token.get("client_id"),
+            client_secret=token.get("client_secret"),
+        )
+        if creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            token["access_token"] = creds.token
+            save_config_value("gdrive", "token", json.dumps(token))
+
+        return build("gmail", "v1", credentials=creds, cache_discovery=False)
+    except Exception as ex:
+        log.debug(f"Gmail service init: {ex}")
+        return None
+
+
+def _gmail_get_body(service, msg_id: str) -> tuple[str, list]:
+    """
+    Fetch full message. Returns (body_text, attachments_list).
+    attachments = [{filename, mime_type, data: bytes}]
+    """
+    import base64 as _b64
+    msg = service.users().messages().get(
+        userId="me", id=msg_id, format="full"
+    ).execute()
+
+    body_text   = ""
+    attachments = []
+
+    def _walk(parts):
+        nonlocal body_text
+        for part in parts:
+            mime = part.get("mimeType","")
+            fn   = part.get("filename","")
+            body = part.get("body",{})
+
+            if part.get("parts"):
+                _walk(part["parts"])
+            elif mime == "text/plain" and not fn:
+                data = body.get("data","")
+                if data:
+                    body_text += _b64.urlsafe_b64decode(data + "==").decode("utf-8", errors="replace")
+            elif fn and body.get("attachmentId"):
+                # Download attachment
+                try:
+                    att = service.users().messages().attachments().get(
+                        userId="me", messageId=msg_id,
+                        id=body["attachmentId"]
+                    ).execute()
+                    att_data = _b64.urlsafe_b64decode(att["data"] + "==")
+                    attachments.append({"filename": fn, "mime_type": mime, "data": att_data})
+                except Exception:
+                    pass
+            elif fn and body.get("data"):
+                att_data = _b64.urlsafe_b64decode(body["data"] + "==")
+                attachments.append({"filename": fn, "mime_type": mime, "data": att_data})
+
+    _walk(msg.get("payload",{}).get("parts", [msg.get("payload",{})]))
+    return body_text, attachments
+
+
+def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
+    """
+    Scan Gmail for invoice emails.
+    from_date defaults to GMAIL_CUTOFF (2026-04-05) — only new emails.
+    """
+    service = _get_gmail_service()
+    if not service:
+        emit("Gmail не подключён — пропускаем", "warn")
+        return []
+
+    start = from_date or GMAIL_CUTOFF
+    emit(f"📨 Gmail: письма с {start}...", "info")
+
+    # Build Gmail query
+    query_parts = [f"after:{start.replace('-','/')}"]
+    if to_date:
+        query_parts.append(f"before:{to_date.replace('-','/')}")
+
+    # Search for invoice-related emails
+    inv_query = " OR ".join([
+        "subject:arve", "subject:invoice", "subject:счёт", "subject:rechnung",
+        "subject:faktura", "has:attachment filename:pdf"
+    ])
+    query = "(" + " ".join(query_parts) + ") (" + inv_query + ")"
+
+    try:
+        resp = service.users().messages().list(
+            userId="me", q=query, maxResults=500
+        ).execute()
+        msgs = resp.get("messages", [])
+        emit(f"📨 Gmail: найдено {len(msgs)} писем", "ok")
+    except Exception as ex:
+        emit(f"Gmail поиск: {ex}", "err")
+        return []
+
+    if not msgs:
+        return []
+
+    # Fetch headers for all messages
+    emails_raw = []
+    import email.header as _eh2
+    from email.utils import parsedate_to_datetime as _pdt2
+
+    for msg_stub in msgs:
+        try:
+            hdr = service.users().messages().get(
+                userId="me", id=msg_stub["id"],
+                format="metadata",
+                metadataHeaders=["Subject","From","Date"]
+            ).execute()
+            headers = {h["name"]: h["value"] for h in hdr.get("payload",{}).get("headers",[])}
+            raw_subj = headers.get("Subject","")
+            try:
+                parts = _eh2.decode_header(raw_subj)
+                subj = "".join(
+                    (p.decode(enc or "utf-8", errors="replace") if isinstance(p,bytes) else p)
+                    for p,enc in parts)
+            except Exception:
+                subj = raw_subj
+
+            frm = headers.get("From","")
+            try:
+                ds = _pdt2(headers.get("Date","")).strftime("%Y-%m-%d")
+            except Exception:
+                ds = date.today().isoformat()
+
+            # Check for PDF attachments
+            has_att = any(
+                p.get("filename","").lower().endswith(".pdf")
+                for p in hdr.get("payload",{}).get("parts",[])
+            )
+
+            emails_raw.append({
+                "id":            f"gmail_{msg_stub['id']}",
+                "_gmail_id":     msg_stub["id"],
+                "subject":       subj,
+                "from":          frm,
+                "body":          "",
+                "date":          ds,
+                "has_attachment": has_att,
+            })
+        except Exception as ex:
+            log.debug(f"Gmail header {msg_stub['id']}: {ex}")
+
+    emit(f"📨 Gmail: {len(emails_raw)} заголовков загружено", "ok")
+
+    # Fetch body+PDFs for candidates (after keyword pre-filter)
+    _gmail_svc_ref = service  # capture for closure
+
+    def _fetch_gmail_body(uid_str):
+        gmail_id = uid_str.replace("gmail_", "")
+        try:
+            body_text, attachments = _gmail_get_body(_gmail_svc_ref, gmail_id)
+            pdf_texts = []
+            for att in attachments:
+                fn = att["filename"].lower()
+                if fn.endswith(".pdf") or "pdf" in att["mime_type"]:
+                    pt = extract_pdf_text(att["data"], max_chars=4000)
+                    if pt:
+                        pdf_texts.append(f"[PDF: {att['filename']}]\n{pt}")
+                    # Save to Drive
+                    try:
+                        clean = re.sub(r"[^a-zA-Z0-9._\-]","_",att["filename"])[:80]
+                        gdrive_upload_pdf(att["data"], clean, None)
+                    except Exception:
+                        pass
+            result = body_text
+            if pdf_texts:
+                result += "\n\n--- PDF ---\n" + "\n".join(pdf_texts)
+            return result
+        except Exception as ex:
+            log.debug(f"Gmail body {uid_str}: {ex}")
+            return ""
+
+    # Process through standard pipeline
+    result = process_emails(emails_raw, emit,
+                            fetch_body=_fetch_gmail_body,
+                            source="gmail")
+    emit(f"✅ Gmail: найдено {len(result)} счетов", "ok")
+    return result
+
+
+
+@app.route("/api/gmail/status")
+def api_gmail_status():
+    """Check Gmail API connection."""
+    svc = _get_gmail_service()
+    if not svc:
+        return jsonify({"ok": False, "connected": False,
+                        "error": "Подключи Google Drive в /keys — Gmail использует тот же токен"})
+    try:
+        profile = svc.users().getProfile(userId="me").execute()
+        return jsonify({
+            "ok": True, "connected": True,
+            "email":         profile.get("emailAddress",""),
+            "total_messages": profile.get("messagesTotal", 0),
+            "cutoff":        GMAIL_CUTOFF,
+        })
+    except Exception as ex:
+        return jsonify({"ok": False, "connected": False, "error": str(ex)[:100]})
 
 
 _bg_started = False
