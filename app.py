@@ -175,7 +175,7 @@ _cfg_imap = c("email", "imap_host", "imap.zone.eu")
 IMAP_HOST  = "imap.zone.eu" if _cfg_imap in ("", "mail.zone.ee") else _cfg_imap
 IMAP_PORT      = int(c("email", "imap_port", "993"))
 IMAP_FOLDER    = c("email", "imap_folder", "INBOX")
-SCAN_LIMIT       = int(c("email", "scan_last_emails", "2000"))
+SCAN_LIMIT       = int(c("email", "scan_last_emails", "5000"))
 QUICK_SCAN_LIMIT = int(c("email", "quick_scan_emails", "100"))
 AUTO_SCAN      = int(c("email", "auto_scan_minutes", "60"))
 API_KEY        = c("claude", "api_key")
@@ -224,6 +224,11 @@ French/Spanish/Italian: facture/factura/fattura
 
 If email has attachments it is LIKELY an invoice — set is_invoice=true.
 IMPORTANT: Extract the ACTUAL amount from the text. Do NOT leave amount as 0 if the total/sum is mentioned anywhere in the text.
+IMPORTANT: Extract issue_date and due_date ONLY from the document body text.
+- issue_date: look for "invoice date", "arve kuupäev", "дата счёта", "Rechnungsdatum", "date of invoice" etc. in the body.
+- due_date: look for "due date", "pay by", "maksetähtaeg", "tasuda hiljemalt", "срок оплаты", "оплатить до" etc. in the body.
+- Do NOT use the email header "Date: {date}" as issue_date. Leave issue_date empty ("") if the document body does not contain an invoice date.
+- Leave due_date empty ("") if the document body does not contain a payment due date.
 
 If invoice: {{"is_invoice":true,"vendor":"NAME","invoice_number":"INV-XXX","amount":TOTAL_AMOUNT,
 "currency":"EUR","due_date":"YYYY-MM-DD","issue_date":"YYYY-MM-DD",
@@ -1164,7 +1169,23 @@ def parse_pdf_invoice(pdf_text: str, filename: str = "") -> dict:
                 pass
         return None
 
-    # Due date (English first)
+    # Issue date — look for labeled date first (uses global ISSUE_DATE_PATTERNS at runtime)
+    _issue_pats = [
+        r"(?:invoice\s*date|date\s*of\s*invoice|issue\s*date|billed\s*date)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+        r"(?:invoice\s*date|issue\s*date)[:\s]+([\d]{4}-[\d]{2}-[\d]{2})",
+        r"(?:arve\s*kuupäev|arve\s*kp|väljastamise\s*kuupäev|koostatud)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+        r"(?:дата\s*(?:счёта|счета|выставления|документа))[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+        r"(?:rechnungsdatum|ausstellungsdatum)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+    ]
+    for ip in _issue_pats:
+        m = _re.search(ip, pdf_text, _re.IGNORECASE)
+        if m:
+            d = pd(m.group(1))
+            if d:
+                result["issue_date"] = d
+                break
+
+    # Due date — look for labeled date
     for due_pat in [
         r"(?:due\s*date|payment\s*due|pay\s*by|due\s*by)\s*[:\-]?\s*(\d{1,2}[./\-]\d{1,2}[./\-]\d{2,4})",
         r"(?:due\s*date|payment\s*due)\s*[:\-]?\s*(\d{4}-\d{2}-\d{2})",
@@ -1179,7 +1200,7 @@ def parse_pdf_invoice(pdf_text: str, filename: str = "") -> dict:
                 result["due_date"] = d
                 break
 
-    # All dates
+    # Collect all dates for fallback (if labeled dates not found)
     all_dates = []
     for dp in [r"\d{2}\.\d{2}\.\d{4}", r"\d{2}/\d{2}/\d{4}", r"\d{4}-\d{2}-\d{2}", r"\d{2}-\d{2}-\d{4}"]:
         for m in _re.finditer(dp, pdf_text):
@@ -1188,7 +1209,8 @@ def parse_pdf_invoice(pdf_text: str, filename: str = "") -> dict:
                 all_dates.append(d)
     if all_dates:
         all_dates.sort()
-        result["issue_date"] = all_dates[0]
+        if not result.get("issue_date"):
+            result["issue_date"] = all_dates[0]
         if not result.get("due_date") and len(all_dates) > 1:
             result["due_date"] = all_dates[-1]
 
@@ -1246,11 +1268,43 @@ VENDOR_PATTERNS = [
 ]
 
 DUE_DATE_PATTERNS = [
-    r"(?:due|tähtaeg|fällig|срок|eräpäivä|vencimiento|échéance)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+    r"(?:due\s*date|payment\s*due|pay\s*by|due\s*by|tasuda\s*(?:hiljemalt)?|maksetähtaeg|срок\s*оплаты|оплатить\s*до|fällig\s*am?|eräpäivä|vencimiento|échéance)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+    r"(?:due|tähtaeg|fällig|срок|eräpäivä)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
     r"(?:pay by|maksta|bezahlen bis|оплатить до)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
-    r"([\d]{2}[.][\d]{2}[.][\d]{4})",  # DD.MM.YYYY
-    r"([\d]{4}-[\d]{2}-[\d]{2})",      # YYYY-MM-DD
+    r"(?:due\s*date|payment\s*due)[:\s]+([\d]{4}-[\d]{2}-[\d]{2})",
 ]
+
+ISSUE_DATE_PATTERNS = [
+    # English
+    r"(?:invoice\s*date|date\s*of\s*invoice|issue\s*date|billed\s*date|bill\s*date)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+    r"(?:invoice\s*date|issue\s*date)[:\s]+([\d]{4}-[\d]{2}-[\d]{2})",
+    # Estonian
+    r"(?:arve\s*kuupäev|arve\s*kp|väljastamise\s*kuupäev|koostatud)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+    # Russian
+    r"(?:дата\s*(?:счёта|счета|выставления|документа|арве)|выставлен)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+    # German
+    r"(?:rechnungsdatum|ausstellungsdatum)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+    # Finnish/Nordic
+    r"(?:laskupäivä|fakturadatum)[:\s]+([\d]{1,2}[./-][\d]{1,2}[./-][\d]{2,4})",
+]
+
+
+def extract_issue_date(text):
+    """Extract invoice issue date from document body text. Returns '' if not found."""
+    for pat in ISSUE_DATE_PATTERNS:
+        m = re.search(pat, text, re.IGNORECASE)
+        if m:
+            raw = m.group(1)
+            for fmt in ["%d.%m.%Y", "%d/%m/%Y", "%Y-%m-%d", "%d-%m-%Y",
+                        "%d.%m.%y", "%m/%d/%Y"]:
+                try:
+                    d = datetime.strptime(raw, fmt).date()
+                    today = date.today()
+                    if date(today.year - 5, 1, 1) <= d <= date(today.year + 1, 12, 31):
+                        return str(d)
+                except Exception:
+                    pass
+    return ""
 
 
 # extract_amount moved to new implementation above
@@ -1343,25 +1397,26 @@ def extract_vendor(subject, sender, body):
     return clean_subj[:40] if clean_subj else "Неизвестно"
 
 
-def extract_due_date(text, email_date):
-    """Extract due date from email text."""
+def extract_due_date(text, email_date, fallback=True):
+    """Extract due date from document text.
+    If fallback=False, returns '' when not found (instead of email_date+30d)."""
     for pat in DUE_DATE_PATTERNS:
         m = re.search(pat, text, re.IGNORECASE)
         if m:
             raw = m.group(1)
-            # Try to parse
             for fmt in ["%d.%m.%Y","%d/%m/%Y","%Y-%m-%d","%d-%m-%Y",
                         "%d.%m.%y","%m/%d/%Y"]:
                 try:
                     from datetime import datetime as _dt
                     d = _dt.strptime(raw, fmt).date()
-                    # Sanity check - within 2 years
                     from datetime import date as _d2
                     today = _d2.today()
-                    if _d2(today.year-1, 1, 1) <= d <= _d2(today.year+2, 12, 31):
+                    if _d2(today.year-2, 1, 1) <= d <= _d2(today.year+2, 12, 31):
                         return str(d)
                 except Exception:
                     pass
+    if not fallback:
+        return ""
     # Default: email date + 30 days
     try:
         from datetime import date as _d3, timedelta
@@ -1518,7 +1573,12 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         body = str(em.get("text") or em.get("intro") or em.get("body") or "")[:2000]
         att  = bool(em.get("hasAttachments") or em.get("has_attachment") or em.get("attachments"))
         try:
-            ds = parsedate_to_datetime(str(em.get("date") or "")).strftime("%Y-%m-%d")
+            raw_date = str(em.get("date") or "")
+            # Already ISO-formatted (YYYY-MM-DD) — use directly
+            if re.match(r'^\d{4}-\d{2}-\d{2}', raw_date):
+                ds = raw_date[:10]
+            else:
+                ds = parsedate_to_datetime(raw_date).strftime("%Y-%m-%d")
         except Exception:
             ds = date.today().isoformat()
 
@@ -1615,10 +1675,13 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                 amount  = extract_amount(search_text)
                 vendor  = extract_vendor(subj, frm, combined)
                 if amount > 0 or score >= 90:
+                    _fp_issue = extract_issue_date(search_text) or ds[:10]
+                    _fp_due   = extract_due_date(search_text, ds, fallback=False) or ""
                     inv = build_invoice({
                         "is_invoice": True, "vendor": vendor, "amount": amount,
                         "currency": extract_currency(search_text),
-                        "due_date": extract_due_date(combined + " " + subj, ds),
+                        "due_date": _fp_due,
+                        "issue_date": _fp_issue,
                         "invoice_number": None, "description": subj,
                     }, uid, subj, frm, ds, att, source)
                     emit(f"✓ [KW-FAST] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
@@ -1642,6 +1705,16 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                     if fb_amount > 0:
                         obj["amount"] = fb_amount
                         obj["currency"] = obj.get("currency") or extract_currency(search_text)
+                # Fallback: extract dates from document text if AI left them empty
+                # User requirement: "дату бери из документа" — dates must come from document body
+                if not obj.get("issue_date"):
+                    doc_issue = extract_issue_date(combined)
+                    if doc_issue:
+                        obj["issue_date"] = doc_issue
+                if not obj.get("due_date"):
+                    doc_due = extract_due_date(combined + " " + subj, ds, fallback=False)
+                    if doc_due:
+                        obj["due_date"] = doc_due
                 inv = build_invoice(obj, uid, subj, frm, ds, att, source)
                 prov = _active_provider() or "AI"
                 emit(f"✓ [{prov.upper()}] {inv['vendor']} "
@@ -1664,13 +1737,16 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                 elif amount == 0 and score < 40:
                     log.debug(f"KW skip (no amount, score={score}): {subj[:50]}")
                 else:
+                    _kw_text = subj + " " + body + " " + pdf_text
+                    _kw_issue = extract_issue_date(_kw_text) or ds[:10]
+                    _kw_due   = extract_due_date(_kw_text, ds, fallback=False) or ""
                     inv = build_invoice({
                         "is_invoice": True,
                         "vendor":   vendor,
                         "amount":   amount,
                         "currency": extract_currency(subj + " " + body[:300]),
-                        "due_date": extract_due_date(body + " " + subj, ds),
-                        "issue_date": ds[:10],
+                        "due_date": _kw_due,
+                        "issue_date": _kw_issue,
                         "description": subj[:100],
                         "category": guess_category(subj, body, frm),
                         "invoice_number": "",
@@ -1991,7 +2067,9 @@ def scan_imap(emit, from_date=None, to_date=None):
                         inv["pdf_filename"] = pdf_info["filename"]
                         
                         # Enrich invoice with PDF-extracted data if missing
+                        # User requirement: "дату бери из документа" — prefer PDF dates
                         parsed = pdf_info.get("parsed", {})
+                        pdf_text_raw = pdf_info.get("text", "")
                         if parsed.get("is_invoice"):
                             if not inv.get("amount") or float(inv.get("amount",0)) == 0:
                                 if parsed.get("amount"):
@@ -1999,6 +2077,18 @@ def scan_imap(emit, from_date=None, to_date=None):
                                     log.info(f"PDF amount: {parsed['amount']} for {inv['id']}")
                             if not inv.get("due_date") and parsed.get("due_date"):
                                 inv["due_date"] = parsed["due_date"]
+                            # Enrich issue_date from PDF if missing or equals email envelope date
+                            if parsed.get("issue_date") and (
+                                not inv.get("issue_date") or
+                                inv.get("issue_date") == inv.get("added_at","")[:10]
+                            ):
+                                inv["issue_date"] = parsed["issue_date"]
+                                log.info(f"PDF issue_date: {parsed['issue_date']} for {inv['id']}")
+                            # If still no due_date, try extracting from raw PDF text
+                            if not inv.get("due_date") and pdf_text_raw:
+                                doc_due = extract_due_date(pdf_text_raw, inv.get("issue_date",""), fallback=False)
+                                if doc_due:
+                                    inv["due_date"] = doc_due
                             if not inv.get("invoice_number") and parsed.get("invoice_number"):
                                 inv["invoice_number"] = parsed["invoice_number"]
                             if parsed.get("vendor") and not inv.get("vendor"):
@@ -2519,7 +2609,17 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
             date_terms.append(f"BEFORE {before_dt.strftime('%d-%b-%Y')}".encode())
 
         ids = set()
-        # ALL emails strategy — bypasses case-sensitive IMAP SUBJECT search on zone.eu
+        # If date range given — use IMAP SINCE/BEFORE (no limit, fetch all in range)
+        if date_terms:
+            try:
+                _, data = mail.search(None, *date_terms)
+                for uid in (data[0].split() if data and data[0] else []):
+                    ids.add(uid)
+                emit(f"  📬 {len(ids)} писем в диапазоне дат", "ok")
+            except Exception as ex:
+                emit(f"  ⚠ Дата-фильтр: {ex}", "warn")
+
+        # ALL emails strategy — get last SCAN_LIMIT regardless of date
         try:
             _, _ad = mail.search(None, b"ALL")
             _all_uids = _ad[0].split() if (_ad and _ad[0]) else []
@@ -2529,9 +2629,11 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
                     reverse=True)
             except Exception:
                 _sorted = list(reversed(_all_uids))
-            for uid in _sorted[:SCAN_LIMIT]:
+            # If no date filter — apply limit; otherwise take all date-matched + last SCAN_LIMIT
+            limit = SCAN_LIMIT if not date_terms else min(SCAN_LIMIT, len(_all_uids))
+            for uid in _sorted[:limit]:
                 ids.add(uid)
-            emit(f"  📬 {len(ids)}/{len(_all_uids)} писем", "ok")
+            emit(f"  📬 {len(ids)}/{len(_all_uids)} писем всего", "ok")
         except Exception as ex:
             emit(f"  ⚠ ALL: {ex} — fallback keyword", "warn")
             for term in IMAP_SUBJECTS:
@@ -2542,7 +2644,9 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
                 except Exception: pass
 
         ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x,bytes) else x), reverse=True)
-        ids = set(ids_sorted[:SCAN_LIMIT])
+        # Don't apply limit if we have a date filter (already bounded by date range)
+        if not date_terms:
+            ids_sorted = ids_sorted[:SCAN_LIMIT]
         emit(f"  Писем для анализа: {len(ids)}", "info")
         # Reset progress bar to 0 for this account's header-loading phase
         emit("__progress__ 0 0 0 0", "progress")
@@ -2835,6 +2939,24 @@ def api_invoices_cleanup():
     save_invoices(cleaned)
     removed = before - len(cleaned)
     log.info(f"Cleanup: removed {removed} empty invoices")
+    return jsonify({"ok": True, "removed": removed, "remaining": len(cleaned)})
+
+@app.route("/api/invoices/delete-scan-date", methods=["POST"])
+def api_delete_scan_date_invoices():
+    """Delete invoices where issue_date equals the scan date (wrong dates from date-parsing bug)."""
+    data      = request.json or {}
+    scan_date = data.get("scan_date", "2026-04-05")  # date of the bad scan
+    invs      = load_invoices()
+    before    = len(invs)
+    # Keep: paid invoices, invoices with issue_date != scan_date, older invoices with correct dates
+    cleaned = [i for i in invs if (
+        i.get("status") == "paid" or
+        i.get("issue_date","")[:10] != scan_date or
+        i.get("added_at","")[:10] not in ("2026-04-04", "2026-04-05")
+    )]
+    removed = before - len(cleaned)
+    save_invoices(cleaned)
+    log.info(f"Deleted {removed} invoices with scan-date issue_date={scan_date}")
     return jsonify({"ok": True, "removed": removed, "remaining": len(cleaned)})
 
 @app.route("/api/invoices/fix-amounts", methods=["POST"])
