@@ -752,7 +752,7 @@ _PDF_DIR = _DATA_DIR / "pdfs"
 _PDF_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def save_pdf(inv_id: str, pdf_bytes: bytes, filename: str = "", invoice_date: str = None) -> Path:
+def save_pdf(inv_id: str, pdf_bytes: bytes, filename: str = "", invoice_date: str = None, is_offer: bool = False) -> Path:
     """Save PDF to local Volume + upload to Google Drive. Returns local path."""
     _PDF_DIR.mkdir(parents=True, exist_ok=True)
     safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", inv_id)[:80]
@@ -765,7 +765,7 @@ def save_pdf(inv_id: str, pdf_bytes: bytes, filename: str = "", invoice_date: st
         clean_name = re.sub(r"[^a-zA-Z0-9._\-]", "_", filename or inv_id)[:80]
         if not clean_name.endswith(".pdf"):
             clean_name += ".pdf"
-        gdrive_result = gdrive_upload_pdf(pdf_bytes, clean_name, invoice_date)
+        gdrive_result = gdrive_upload_pdf(pdf_bytes, clean_name, invoice_date, is_offer=is_offer)
         if gdrive_result:
             # Store Drive link for quick access
             _link_file = _PDF_DIR / f"{safe_id}.gdrive"
@@ -858,9 +858,12 @@ def _gdrive_get_or_create_folder(service, name: str, parent_id: str = None) -> s
     return folder["id"]
 
 
-def gdrive_upload_pdf(pdf_bytes: bytes, filename: str, invoice_date: str = None) -> dict | None:
+def gdrive_upload_pdf(pdf_bytes: bytes, filename: str, invoice_date: str = None,
+                      is_offer: bool = False) -> dict | None:
     """
-    Upload PDF to Google Drive: PayCalendar/YYYY/MM/filename.pdf
+    Upload PDF to Google Drive.
+    Invoices: PayCalendar/Счета/2026/03-March/
+    Offers:   PayCalendar/Предложения/2026/03-March/
     Returns: {id, webViewLink} or None
     """
     service = _get_gdrive_service()
@@ -877,11 +880,13 @@ def gdrive_upload_pdf(pdf_bytes: bytes, filename: str, invoice_date: str = None)
         except Exception:
             dt = _dt.now()
         year_str  = dt.strftime("%Y")
-        month_str = dt.strftime("%m-%B")  # e.g. "03-March"
+        month_str = dt.strftime("%m.%B")  # e.g. "03.Март" → use English for compatibility
 
-        # Build folder path: PayCalendar/2026/03-March
+        # Build folder: PayCalendar / Счета or Предложения / 2026 / 03-March
         root_id  = _gdrive_get_or_create_folder(service, "PayCalendar")
-        year_id  = _gdrive_get_or_create_folder(service, year_str,  root_id)
+        cat_name = "Предложения" if is_offer else "Счета"
+        cat_id   = _gdrive_get_or_create_folder(service, cat_name, root_id)
+        year_id  = _gdrive_get_or_create_folder(service, year_str,  cat_id)
         month_id = _gdrive_get_or_create_folder(service, month_str, year_id)
 
         # Check if file already exists
@@ -1876,7 +1881,9 @@ def scan_imap(emit, from_date=None, to_date=None):
                 if uid in _pending_pdfs:
                     pdf_info = _pending_pdfs[uid]
                     try:
-                        save_pdf(inv["id"], pdf_info["bytes"], pdf_info["filename"])
+                        save_pdf(inv["id"], pdf_info["bytes"], pdf_info["filename"],
+                                     invoice_date=inv.get("issue_date",""),
+                                     is_offer=bool(inv.get("is_offer")))
                         inv["has_pdf"]      = True
                         inv["pdf_filename"] = pdf_info["filename"]
                         
@@ -3464,7 +3471,7 @@ def api_gdrive_upload_existing():
             pdf_bytes = path.read_bytes()
             fn        = inv.get("pdf_filename") or f"{inv_id}.pdf"
             dt        = inv.get("issue_date") or inv.get("date","")
-            result    = gdrive_upload_pdf(pdf_bytes, fn, dt)
+            result    = gdrive_upload_pdf(pdf_bytes, fn, dt, is_offer=bool(inv.get("is_offer")))
             if result:
                 link_file = _PDF_DIR / f"{re.sub(r'[^a-zA-Z0-9_-]','_',inv_id)[:80]}.gdrive"
                 link_file.write_text(result.get("webViewLink",""))
