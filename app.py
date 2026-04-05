@@ -1339,7 +1339,7 @@ def extract_vendor(subject, sender, body):
 
     # 4. Use subject (clean up Re:/RE: prefixes)
     clean_subj = re.sub(r'^(Re:|RE:|Fwd:|FW:|\s)+', '', subject, flags=re.I).strip()
-    return clean_subj[:40] if clean_subj else "Unknown"
+    return clean_subj[:40] if clean_subj else "Неизвестно"
 
 
 def extract_due_date(text, email_date):
@@ -1621,7 +1621,14 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                         "invoice_number": None, "description": subj,
                     }, uid, subj, frm, ds, att, source)
                     emit(f"✓ [KW-FAST] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
-                    return inv
+                    with lock:
+                        done[0] += 1
+                        cur = done[0]
+                        elapsed = max(0.1, _t.time() - t0)
+                        spd = cur / elapsed
+                        eta = int((total - cur) / spd) if spd > 0 else 0
+                        emit(f"__progress__ {cur} {total} {spd:.1f} {eta}", "progress")
+                    return uid, ds, inv
 
             prompt = CLAUDE_TMPL.format(subject=subj, sender=frm,
                                         date=ds, has_att=att, body=combined[:3000])
@@ -2610,7 +2617,7 @@ def api_setup_zone():
     log.info("Zone.ee IMAP host fixed: imap.zone.eu")
     return jsonify({
         "ok": True,
-        "message": "IMAP host set to imap.zone.eu",
+        "message": "IMAP хост установлен: imap.zone.eu",
         "imap_host": IMAP_HOST
     })
 
@@ -2699,7 +2706,7 @@ def require_auth():
     skip = ("/api/auth-check", "/api/stats", "/health", "/api/test-scan", "/api/diagnose", "/api/setup-zone", "/api/keys", "/api/keys/add", "/api/version")
     if request.path.startswith("/api/") and request.path not in skip:
         if not _check_token():
-            return jsonify({"error": "unauthorized"}), 401
+            return jsonify({"error": "Не авторизован"}), 401
 
 @app.route("/api/auth-check", methods=["POST"])
 def api_auth_check():
@@ -3382,7 +3389,7 @@ def api_keys_add():
     provider = data.get("provider", "").lower()
     key      = data.get("key", "").strip()
     if not key or len(key) < 10:
-        return jsonify({"ok": False, "error": "Key too short"})
+        return jsonify({"ok": False, "error": "Ключ слишком короткий"})
 
     if provider == "gemini":
         _gemini_pool.add(key)
@@ -3417,7 +3424,7 @@ def api_keys_add():
         log.info("Claude API key saved to Volume config")
         return jsonify({"ok": True, "provider": "claude"})
 
-    return jsonify({"ok": False, "error": f"Unknown provider: {provider}"})
+    return jsonify({"ok": False, "error": f"Неизвестный провайдер: {provider}"})
 
 
 

@@ -1795,23 +1795,15 @@ function doResetScan(){
 }
 
 function doRefresh() {
-  const btn = document.getElementById('refreshBtn');
+  var btn = document.getElementById('refreshBtn');
   if (!btn || btn.disabled) return;
   btn.disabled = true;
   btn.innerHTML = '<span class="pulse">🔄</span> Проверяю...';
-  const es = new EventSource('/api/refresh/stream');
-  es.onmessage = e => {
-    const d = JSON.parse(e.data);
-    if (d.done) {
-      es.close();
-      loadAll();
-      btn.disabled = false;
-      btn.textContent = '🔄 Обновить';
-      if(d.count > 0) showNotif(`📬 +${d.count} новых счетов`, 'ok');
-      resetAutoTimer();
-    }
-  };
-  es.onerror = () => { es.close(); btn.disabled=false; btn.textContent='🔄 Обновить'; };
+  _runScanUrl('/api/refresh/stream', function() {
+    btn.disabled = false;
+    btn.textContent = '🔄 Обновить';
+    resetAutoTimer();
+  });
 }
 
 // ── Auto-scan timer display ───────────────────────────────────────────────────
@@ -1826,26 +1818,10 @@ function startAutoTimer(minutesFromNow) {
     if (left <= 0) {
       document.getElementById('autoScanTimer').textContent = '🔄 сканирую...';
       clearInterval(autoScanInterval);
-      // Trigger quick scan
-      fetch('/api/refresh/stream').then(r => {
-        const reader = r.body.getReader();
-        const read = () => reader.read().then(({done, value}) => {
-          if (done) { loadInvoices(); startAutoTimer(60); return; }
-          try {
-            const text = new TextDecoder().decode(value);
-            text.split('\n').forEach(line => {
-              if (line.startsWith('data:')) {
-                const d = JSON.parse(line.slice(5));
-                if (d.done && d.count > 0) {
-                  showNotif(`📬 +${d.count} новых счетов`, 'ok');
-                }
-              }
-            });
-          } catch(e) {}
-          read();
-        }).catch(()=>{startAutoTimer(60);});
-        read();
-      }).catch(()=>{ startAutoTimer(60); });
+      // Trigger quick scan via background scan API
+      _runScanUrl('/api/refresh/stream', function() {
+        startAutoTimer(60);
+      });
     } else {
       const m = Math.floor(left / 60000);
       const s = Math.floor((left % 60000) / 1000);
