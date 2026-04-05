@@ -451,10 +451,15 @@ body {
 @keyframes fadeIn  { from{opacity:0} to{opacity:1} }>
 
 .chip-pdf {
-  font-size: 10px; cursor: pointer; margin-left: 2px;
-  opacity: .8; transition: opacity .15s; vertical-align: middle;
+  cursor: pointer; margin-left: 2px; opacity: .9;
+  transition: opacity .15s; vertical-align: middle;
+  display:inline-flex;align-items:center;gap:2px;font-size:10px;
 }
-.chip-pdf:hover { opacity: 1; transform: scale(1.2); }
+.chip-pdf:hover { opacity: 1; transform: scale(1.1); }
+.chip-drive { cursor:pointer; margin-left:2px; vertical-align:middle;
+  opacity:.9; transition:opacity .15s; text-decoration:none;
+  display:inline-flex;align-items:center;gap:2px;font-size:10px; }
+.chip-drive:hover { opacity:1; transform:scale(1.1); }
 .chip-drive {
   font-size: 10px; margin-left: 2px; vertical-align: middle;
   opacity: .8; transition: opacity .15s; text-decoration: none; display: inline;
@@ -938,6 +943,8 @@ function renderOffers(){
           +(inv.due_date?'<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#7c3aed22;color:#8b5cf6">до '+inv.due_date+'</span>':'')
           +'<button class="of-btn" data-acc-id="'+inv.id+'" onclick="markOfferAccepted(this.dataset.accId)">✅ В счета</button>'
           +'<button class="of-btn of-btn-del" data-del-id="'+inv.id+'" onclick="deleteInv(this.dataset.delId)">✕</button>'
+          +(inv.has_pdf?'<button class="of-btn" onclick="openPdf(\''+inv.id+'\')" style="color:#60a5fa;border-color:rgba(96,165,250,.3)">📄 PDF</button>':'')
+          +(inv.gdrive_link?'<a href="'+inv.gdrive_link+'" target="_blank" class="of-btn" style="text-decoration:none;color:#34d399;border-color:rgba(52,211,153,.25)">☁️ Drive</a>':'')
         +'</div>'
       +'</div>';
     });
@@ -1016,6 +1023,9 @@ function renderOverdue(){
       h+='<div style="font-size:16px;font-weight:700;color:'+(urg?"#fbbf24":"#f87171")+'">'+fmtAmt(inv.amount,inv.currency)+'</div>';
       h+='<div style="font-size:11px;font-weight:700;padding:2px 7px;border-radius:4px;margin-top:4px;background:'+(urg?"rgba(251,191,36,.15)":"rgba(248,113,113,.15)")+';color:'+(urg?"#fbbf24":"#f87171")+'">'+dl+' дн.</div>';
       if(inv.vat_amount) h+='<div style="font-size:10px;color:var(--text3);margin-top:4px">НДС: '+fmtAmt(inv.vat_amount,inv.currency)+'</div>';
+      // PDF + Drive icons
+      if(inv.has_pdf) h+='<button onclick="openPdf(\''+inv.id+'\')" style="margin-top:6px;display:block;width:100%;padding:4px 6px;border-radius:6px;border:1px solid rgba(96,165,250,.3);background:rgba(96,165,250,.1);color:#60a5fa;font-size:11px;cursor:pointer">📄 PDF</button>';
+      if(inv.gdrive_link) h+='<a href="'+inv.gdrive_link+'" target="_blank" onclick="event.stopPropagation()" style="margin-top:4px;display:block;width:100%;padding:4px 6px;border-radius:6px;border:1px solid rgba(52,211,153,.25);background:rgba(52,211,153,.08);color:#34d399;font-size:11px;text-decoration:none;text-align:center">☁️ Drive</a>';
       h+='</div></div>';
     });
     h+='</div>';
@@ -1263,7 +1273,7 @@ function renderSP(){
           </select>
           <button class="btn btn-sm btn-edit" onclick="openEdit('${inv.id}')">✎</button>
           <button class="btn btn-sm btn-del" onclick="deleteInv('${inv.id}')">✕</button>
-          ${inv.has_pdf?`<button class="btn btn-sm" onclick="openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">📄 PDF</button>`:""}
+          ${inv.has_pdf?`<button class="btn btn-sm" onclick="openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">"+pdfIcon(14)+" PDF</button>`:""}
           ${inv.gdrive_link?`<a href="${inv.gdrive_link}" target="_blank" class="btn btn-sm" style="text-decoration:none;background:rgba(52,211,153,.12);color:#34d399;border:1px solid rgba(52,211,153,.25)">☁️ Drive</a>`:""}
         </div>
       </div>`;
@@ -1877,6 +1887,17 @@ document.addEventListener('click', function(e){
 loadAll();
 setInterval(()=>loadAll(),5*60*1000); // refresh every 5 min
 startAutoTimer(60); // auto-scan countdown
+
+
+function pdfIcon(size){
+  size = size||16;
+  return '<svg width="'+size+'" height="'+size+'" viewBox="0 0 24 28" xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle;flex-shrink:0">'
+    +'<path d="M4 0h11l7 7v19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2z" fill="#f7f7f7" stroke="#ccc" stroke-width="1"/>'
+    +'<path d="M15 0l7 7h-7V0z" fill="#ddd"/>'
+    +'<rect x="2" y="14" width="20" height="9" rx="1" fill="#e53e3e"/>'
+    +'<text x="12" y="21.5" font-family="Arial,sans-serif" font-size="6.5" font-weight="900" fill="#fff" text-anchor="middle" letter-spacing="0.3">PDF</text>'
+    +'</svg>';
+}
 
 // ── SEARCH ───────────────────────────────────────────────────────────────────
 var _searchFilter = 'all';
