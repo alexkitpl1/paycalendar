@@ -61,11 +61,19 @@ input,select{font-family:'DM Sans',sans-serif}
 #month-label{font-family:'Playfair Display',serif;font-size:17px;font-weight:600;color:var(--white);min-width:180px;text-align:center;letter-spacing:-.3px}
 .nav-btn{width:27px;height:27px;border-radius:6px;border:1px solid var(--border2);background:transparent;color:var(--text3);font-size:14px;display:flex;align-items:center;justify-content:center;transition:all .15s}
 .nav-btn:hover{border-color:var(--border3);color:var(--text);background:var(--bg2)}
-.stat-pill{display:flex;align-items:center;gap:5px;padding:4px 10px;border-radius:16px;border:1px solid var(--border2);background:var(--bg3);font-family:'DM Mono',monospace;font-size:10px;color:var(--text3);white-space:nowrap}
-.stat-pill .pv{font-weight:500}
-.pill-red{border-color:rgba(248,113,113,.3);background:rgba(248,113,113,.06)}.pill-red .pv{color:var(--red)}
-.pill-amber{border-color:rgba(251,191,36,.3);background:rgba(251,191,36,.06)}.pill-amber .pv{color:var(--amber)}
-.pill-blue{border-color:rgba(56,189,248,.2);background:rgba(56,189,248,.05)}.pill-blue .pv{color:var(--blue)}
+.stat-pill{display:inline-flex;align-items:center;gap:5px;padding:5px 12px;border-radius:20px;border:1px solid var(--border2);background:var(--bg3);font-family:'DM Mono',monospace;font-size:11px;font-weight:600;color:var(--text2);white-space:nowrap;cursor:pointer;transition:all .15s;box-shadow:0 1px 2px rgba(0,0,0,.06)}
+.stat-pill:hover{filter:brightness(1.15);box-shadow:0 2px 6px rgba(0,0,0,.12);transform:translateY(-1px)}
+.stat-pill:active{transform:scale(.96)}
+.stat-pill .pv{font-weight:700}
+.pill-red{border-color:rgba(248,113,113,.4);background:rgba(248,113,113,.12);color:var(--red)}
+.pill-amber{border-color:rgba(251,191,36,.4);background:rgba(251,191,36,.12);color:var(--amber)}
+.pill-blue{border-color:rgba(56,189,248,.3);background:rgba(56,189,248,.1);color:var(--blue)}
+.pill-purple{border-color:rgba(139,92,246,.3);background:rgba(139,92,246,.1);color:#8b5cf6}
+[data-theme="white"] .stat-pill{background:#fff;border-color:#d1d5db;color:#374151;box-shadow:0 1px 3px rgba(0,0,0,.1)}
+[data-theme="white"] .pill-red{background:#fef2f2;border-color:#fca5a5;color:#dc2626}
+[data-theme="white"] .pill-amber{background:#fffbeb;border-color:#fcd34d;color:#b45309}
+[data-theme="white"] .pill-blue{background:#eff6ff;border-color:#93c5fd;color:#1d4ed8}
+[data-theme="white"] .pill-purple{background:#f5f3ff;border-color:#c4b5fd;color:#7c3aed}
 
 /* BUTTONS */
 .btn{display:inline-flex;align-items:center;gap:5px;padding:6px 13px;border-radius:7px;border:none;font-size:12px;font-weight:600;transition:all .18s;white-space:nowrap}
@@ -315,21 +323,7 @@ body {
   font-family:'Playfair Display',serif; font-size:16px; font-weight:600;
   color:var(--white); min-width:160px; text-align:center; letter-spacing:-.2px;
 }
-.stat-pills-wrap { display:flex; gap:6px; align-items:center; }
-.stat-pill {
-  padding:3px 10px; border-radius:16px;
-  border:1px solid var(--border2); background:var(--bg3);
-  font-family:'DM Mono',monospace; font-size:10px; color:var(--text3);
-  white-space:nowrap; cursor:pointer; transition:all .15s;
-}
-.stat-pill:hover  { border-color:var(--border3); }
-.stat-pill .pv    { font-weight:600; }
-.pill-red  { border-color:rgba(248,113,113,.3); background:rgba(248,113,113,.06); }
-.pill-red .pv  { color:var(--red); }
-.pill-amber{ border-color:rgba(251,191,36,.3);  background:rgba(251,191,36,.06); }
-.pill-amber .pv{ color:var(--amber); }
-.pill-blue { border-color:rgba(56,189,248,.2);  background:rgba(56,189,248,.05); }
-.pill-blue .pv { color:var(--blue); }
+.stat-pills-wrap { display:flex; gap:6px; align-items:center; flex-wrap:wrap; }
 
 /* Right side: view tabs + scan buttons + theme */
 .topbar-right {
@@ -418,9 +412,7 @@ body {
   .m-tabs { display:flex;width:100%;border-top:1px solid var(--border); }
   .vtab { flex:1;padding:8px 2px;border:none;border-bottom:2.5px solid transparent;background:transparent;color:var(--text3);font-size:11px;font-weight:500;cursor:pointer;white-space:nowrap; }
   .vtab.active { color:#f59e0b;border-bottom-color:#f59e0b;font-weight:700; }
-  .stat-pill { padding:3px 10px;border-radius:20px;font-size:11px;font-weight:600;background:var(--bg3);border:1px solid var(--border);color:var(--text2);white-space:nowrap;cursor:pointer; }
-  .stat-pill.overdue { background:#fff1f2;border-color:#fca5a5;color:#dc2626; }
-  [data-theme="dark"] .stat-pill.overdue { background:#2d0b0b; }
+  .stat-pill { padding:4px 10px;font-size:11px; }
   #sum-bar { flex-shrink:0;overflow-x:auto;scrollbar-width:none; }
   #sum-bar::-webkit-scrollbar { display:none; }
   #content-wrap { flex:1;display:flex;flex-direction:column;overflow:hidden;min-height:0; }
@@ -1466,9 +1458,9 @@ function renderTopbar(){
   const sp=S.invoices.filter(i=>i.status!=="paid"&&!isContract(i)).reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
   function fmtShort(n){if(n>=1e6)return (n/1e6).toFixed(1).replace('.0','')+' M€';if(n>=1e3)return (n/1e3).toFixed(1).replace('.0','')+' k€';return fmtAmt(n);}
   let h="";
-  if(ov.length)h+=`<div class="stat-pill pill-red" onclick="setView('overdue')" style="cursor:pointer" title="Просроченные: ${ov.length} шт.">⚠ ${ov.length}</div>`;
-  if(ug.length)h+=`<div class="stat-pill pill-amber" title="Срочно: ${ug.length} шт.">🔥 ${ug.length}</div>`;
-  h+=`<div class="stat-pill pill-blue" onclick="openPendingDocs()" style="cursor:pointer" title="К оплате: ${fmtAmt(sp)} — нажми для списка">💳 <span class="pv">${fmtShort(sp)}</span></div>`;
+  if(ov.length)h+=`<div class="stat-pill pill-red" onclick="setView('overdue')" title="Просроченные: ${ov.length} шт.">⚠ <span class="pv">${ov.length}</span></div>`;
+  if(ug.length)h+=`<div class="stat-pill pill-amber" title="Срочно: ${ug.length} шт.">🔥 <span class="pv">${ug.length}</span></div>`;
+  h+=`<div class="stat-pill pill-blue" onclick="openPendingDocs()" title="К оплате: ${fmtAmt(sp)} — нажми для списка">💳 <span class="pv">${fmtShort(sp)}</span></div>`;
   // Count offers
   var ofKW=['offer','quote','quotation','proposal','предложение','hinnapakkumine'];
   var invKW=['arve','invoice','rechnung','счёт','счет','lasku','faktura','bill'];
@@ -1483,7 +1475,7 @@ function renderTopbar(){
     if(ofSeen[norm]) return false;
     ofSeen[norm]=true; return true;
   }).length;
-  if(ofCount)h+=`<div class="stat-pill" style="border-color:#8b5cf655;color:#8b5cf6;cursor:pointer" onclick="setView('offers')">💼 Офферы <span class="pv">${ofCount}</span></div>`;
+  if(ofCount)h+=`<div class="stat-pill pill-purple" onclick="setView('offers')">💼 Офферы <span class="pv">${ofCount}</span></div>`;
   setStatPills(h);
   fetch('/api/email-accounts',{credentials:'include'})
     .then(function(r){return r.json();})
