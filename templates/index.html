@@ -360,7 +360,7 @@ body {
   display:grid; grid-template-columns:repeat(7,1fr);
   gap:0; align-content:stretch;
 }
-#overdue-area,#offers-area { flex:1; overflow-y:auto; padding:16px 20px; display:none; }
+#overdue-area,#offers-area { flex:1; overflow-y:auto; overflow-x:hidden; padding:16px 20px; display:none; position:relative; }
 #legend { display:flex !important; flex-shrink:0; }
 
 /* ═══════════════════════════════════════════════════
@@ -413,7 +413,7 @@ body {
   .day.today { border-color:#f59e0b; }
   .day.today::before { display:none; }
   .dn { width:18px;height:18px;font-size:10px; }
-  #overdue-area,#offers-area { flex:1;overflow-y:auto;padding:10px 12px;display:none; }
+  #overdue-area,#offers-area { flex:1;overflow-y:auto;overflow-x:hidden;padding:10px 12px;display:none;position:relative; }
   #sp { position:fixed !important;bottom:0 !important;left:0 !important;right:0 !important;top:auto !important;width:100% !important;min-width:0 !important;max-height:74vh !important;border-radius:22px 22px 0 0 !important;border-left:none !important;border-top:1px solid var(--border2) !important;box-shadow:0 -8px 32px rgba(0,0,0,.2) !important;z-index:85 !important;overflow-y:auto !important;padding-bottom:env(safe-area-inset-bottom) !important;animation:slideUp .25s cubic-bezier(.22,.68,0,1.2); }
   #fab-scan { position:fixed;bottom:24px;right:18px;z-index:90;width:52px;height:52px;border-radius:50%;border:none;background:linear-gradient(145deg,#f59e0b,#d97706);color:#fff;font-size:20px;cursor:pointer;box-shadow:0 4px 18px rgba(245,158,11,.5);align-items:center;justify-content:center;transition:transform .15s; }
   #fab-scan:active { transform:scale(.92); }
@@ -959,13 +959,11 @@ function renderOffers(){
   var el = document.getElementById('offers-area');
   if(!el) return;
 
-  // Pure offer keywords — NOT invoice keywords
   var offerKW   = ['offer','quote','quotation','proposal','offre','angebot',
                    'предложение','прайс','hinnapakkumine','kokkulepe'];
   var invoiceKW = ['arve','invoice','bill','rechnung','счёт','счет','lasku',
                    'faktura','payment due','amount due','tasuda'];
 
-  // Only show if it has OFFER keywords AND no invoice keywords
   var offers = S.invoices.filter(function(inv){
     var d = (inv.description||'').toLowerCase();
     var v = (inv.vendor||'').toLowerCase();
@@ -974,7 +972,6 @@ function renderOffers(){
     return (hasOffer && !hasInvoice) || inv.is_offer === true;
   });
 
-  // Deduplicate by normalised description (remove Re:/RE: prefix)
   var seen = {};
   offers = offers.filter(function(inv){
     var norm = (inv.description||'').replace(/^(Re:|RE:|Fwd:|FW:\s*)+/gi,'').trim().toLowerCase().slice(0,60);
@@ -983,42 +980,67 @@ function renderOffers(){
     return true;
   });
 
-  var html2 = '<div style="padding:14px">';
+  offers.sort(function(a,b){ return (b.issue_date||'')>(a.issue_date||'')?1:-1; });
+
+  var totAmt = offers.reduce(function(s,i){ return s+(parseFloat(i.amount)||0); }, 0);
 
   if(offers.length === 0){
-    html2 += '<div class="ov-empty" style="text-align:center;padding:40px 0;color:var(--text3)">'
-      +'Предложений нет.<br><span style="font-size:12px">Письма с "offer", "quote", "proposal" появятся здесь.</span></div>';
-  } else {
-    html2 += '<div class="ov-title">💼 Предложения · '+offers.length+'</div>';
-    offers.sort(function(a,b){ return (b.issue_date||'')>(a.issue_date||'')?1:-1; });
-    offers.forEach(function(inv){
-      var amt = parseFloat(inv.amount||0);
-      var amtStr = amt>0 ? fmtAmt(amt,inv.currency) : '<span style="color:var(--text3);font-style:italic">цена не указана</span>';
-      var remind = inv.reminder_count>1
-        ? '<span class="ic-remind">🔔 ×'+inv.reminder_count+'</span>' : '';
-      html2 += '<div class="ov-card of-card" style="border-left-color:#8b5cf6;margin-bottom:8px;background:var(--inv-bg);border:1px solid var(--border2);border-radius:8px;padding:10px;border-left:3px solid #8b5cf6">'
-        +'<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:8px">'
-          +'<div style="min-width:0;flex:1">'
-            +'<div style="font-size:13px;font-weight:600;color:var(--text)">'+esc(inv.vendor||'—')+'</div>'
-            +'<div style="font-size:11px;color:var(--text3);margin-top:2px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'+esc((inv.description||'').replace(/^(Re:|RE:|Fwd:|FW:\s*)+/gi,'').trim().slice(0,60))+'</div>'
-          +'</div>'
-          +'<div style="text-align:right;flex-shrink:0">'
-            +'<div style="font-size:14px;font-weight:700;color:#8b5cf6">'+amtStr+'</div>'
-            +'<div style="font-size:11px;color:var(--text3)">'+(inv.issue_date||'')+'</div>'
-          +'</div>'
-        +'</div>'
-        +'<div style="display:flex;gap:6px;align-items:center;margin-top:8px;flex-wrap:wrap">'
-          +remind
-          +(inv.due_date?'<span style="font-size:11px;padding:2px 8px;border-radius:10px;background:#7c3aed22;color:#8b5cf6">до '+inv.due_date+'</span>':'')
-          +'<button class="of-btn" data-acc-id="'+inv.id+'" onclick="markOfferAccepted(this.dataset.accId)">✅ В счета</button>'
-          +'<button class="of-btn of-btn-del" data-del-id="'+inv.id+'" onclick="deleteInv(this.dataset.delId)">✕</button>'
-        +'</div>'
-      +'</div>';
-    });
+    el.innerHTML = '<div style="text-align:center;padding:60px 0;color:var(--text3)">'
+      +'<div style="font-size:48px;margin-bottom:14px">💼</div>'
+      +'<div style="font-size:15px;font-weight:600">Предложений нет</div>'
+      +'<div style="font-size:12px;margin-top:6px">Письма с «offer», «quote», «proposal» появятся здесь</div></div>';
+    return;
   }
 
-  html2 += '</div>';
-  el.innerHTML = html2;
+  // ── Sticky top bar ────────────────────────────────────────────────────────
+  var h = '<div style="position:sticky;top:0;z-index:10;background:var(--bg);'
+    +'border-bottom:2px solid var(--border2);padding:12px 20px;'
+    +'display:flex;align-items:center;gap:16px;margin:-16px -20px 20px">';
+  h += '<div style="font-size:16px;font-weight:800;color:var(--white)">💼 Офферы</div>';
+  h += '<div style="font-family:monospace;font-size:13px;font-weight:700;color:#8b5cf6">'+offers.length+' шт.</div>';
+  if(totAmt>0)h += '<div style="font-family:monospace;font-size:14px;font-weight:800;color:#8b5cf6">'+fmtAmt(totAmt)+'</div>';
+  h += '</div>';
+
+  // ── Grid ──────────────────────────────────────────────────────────────────
+  h += '<div style="padding:0 20px 20px;display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px">';
+
+  offers.forEach(function(inv){
+    var amt = parseFloat(inv.amount||0);
+    var amtStr = amt>0 ? fmtAmt(amt,inv.currency)
+      : '<span style="color:var(--text3);font-style:italic">цена не указана</span>';
+    var remind = inv.reminder_count>1
+      ? '<div style="font-size:11px;color:#fbbf24;margin-bottom:6px">🔔 ×'+inv.reminder_count+' напоминаний</div>' : '';
+    var descClean = (inv.description||'').replace(/^(Re:|RE:|Fwd:|FW:\s*)+/gi,'').trim();
+
+    h += '<div style="display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--border2);'
+      +'border-top:3px solid #8b5cf6;border-radius:12px;padding:16px;transition:box-shadow .15s"'
+      +' onmouseover="this.style.boxShadow=\'0 4px 20px rgba(139,92,246,.15)\'"'
+      +' onmouseout="this.style.boxShadow=\'none\'">';
+    // vendor
+    h += '<div style="font-size:14px;font-weight:700;word-break:break-word;line-height:1.35;'
+      +'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:6px">'+esc(inv.vendor||'—')+'</div>';
+    // description
+    if(descClean)h += '<div style="font-size:11px;color:var(--text3);word-break:break-word;line-height:1.4;'
+      +'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:6px">'+esc(descClean.slice(0,80))+'</div>';
+    // date
+    if(inv.issue_date)h += '<div style="font-size:10px;color:var(--text4);margin-bottom:6px">📅 '+inv.issue_date+'</div>';
+    h += '<div style="flex:1"></div>';
+    // amount
+    h += '<div style="font-size:18px;font-weight:900;color:#8b5cf6;margin-bottom:4px;font-family:monospace">'+amtStr+'</div>';
+    // remind & deadline
+    h += remind;
+    if(inv.due_date)h += '<div style="font-size:11px;padding:3px 9px;border-radius:9px;background:#7c3aed22;color:#8b5cf6;display:inline-block;margin-bottom:10px">до '+inv.due_date+'</div>';
+    else h += '<div style="margin-bottom:10px"></div>';
+    // actions
+    h += '<div style="display:flex;gap:6px;flex-wrap:wrap">';
+    h += '<button class="of-btn" data-acc-id="'+esc(inv.id)+'" onclick="markOfferAccepted(this.dataset.accId)" style="flex:1">✅ В счета</button>';
+    h += '<button class="of-btn of-btn-del" data-del-id="'+esc(inv.id)+'" onclick="deleteInv(this.dataset.delId)">✕</button>';
+    h += '</div>';
+    h += '</div>';
+  });
+
+  h += '</div>';
+  el.innerHTML = h;
 }
 
 
@@ -1042,8 +1064,9 @@ function renderOverdue(){
   var today=new Date();today.setHours(0,0,0,0);
   var todayISO=toISO(today);
   var ov=S.invoices.filter(function(i){return i.status!=='paid'&&i.due_date&&i.due_date<todayISO&&!isContract(i);});
-  if(!ov.length){el.innerHTML='<div style="text-align:center;padding:48px 0;color:var(--text3)">'+
-    '<div style="font-size:40px;margin-bottom:12px">'+String.fromCodePoint(0x2705)+'</div>Нет просроченных счетов</div>';return;}
+  if(!ov.length){el.innerHTML='<div style="text-align:center;padding:60px 0;color:var(--text3)">'
+    +'<div style="font-size:48px;margin-bottom:14px">✅</div>'
+    +'<div style="font-size:15px;font-weight:600">Нет просроченных счетов</div></div>';return;}
   var MN=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
   var grp={};
   ov.forEach(function(inv){
@@ -1055,117 +1078,127 @@ function renderOverdue(){
   var keys=Object.keys(grp).sort().reverse();
   var tot=ov.reduce(function(s,i){return s+(parseFloat(i.amount)||0);},0);
   var PRI={high:0,medium:1,low:2,none:3};
-  var _ovView=window._ovView||'cards'; // 'cards' or 'rows'
-  var h='<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0 12px;'
-    +'border-bottom:1px solid var(--border2);margin-bottom:16px">';
-  h+='<div style="font-size:15px;font-weight:700">⚠ Просрочено</div>';
-  h+='<div style="display:flex;align-items:center;gap:12px">'
-    +'<div style="color:#f87171;font-weight:700">'+ov.length+' сч. · '+fmtAmt(tot)+'</div>'
-    +'<div style="display:flex;gap:4px">'
-      +'<button onclick="window._ovView=\'cards\';renderOverdue()" title="Карточки" style="background:'+(_ovView==='cards'?'var(--bg3)':'none')+';border:1px solid var(--border2);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:14px">⊞</button>'
-      +'<button onclick="window._ovView=\'rows\';renderOverdue()" title="Строки" style="background:'+(_ovView==='rows'?'var(--bg3)':'none')+';border:1px solid var(--border2);border-radius:6px;padding:4px 8px;cursor:pointer;font-size:14px">☰</button>'
-    +'</div>'
-  +'</div></div>';
+  var _ovView=window._ovView||'cards';
+
+  // ── Sticky top bar ────────────────────────────────────────────────────────
+  var h='<div style="position:sticky;top:0;z-index:10;background:var(--bg);'
+    +'border-bottom:2px solid var(--border2);padding:12px 20px;'
+    +'display:flex;align-items:center;justify-content:space-between;gap:12px;margin:-16px -20px 20px">';
+  h+='<div style="display:flex;align-items:center;gap:14px">';
+  h+='<div style="font-size:16px;font-weight:800;color:var(--white)">⚠ Просрочено</div>';
+  h+='<div style="font-family:monospace;font-size:13px;font-weight:700;color:#f87171">'+ov.length+' сч.</div>';
+  h+='<div style="font-family:monospace;font-size:14px;font-weight:800;color:#f87171">'+fmtAmt(tot)+'</div>';
+  h+='</div>';
+  h+='<div style="display:flex;gap:5px">';
+  h+='<button onclick="window._ovView=\'cards\';renderOverdue()" title="Карточки"'
+    +' style="background:'+(_ovView==='cards'?'var(--bg3)':'transparent')+';border:1px solid var(--border2);'
+    +'border-radius:7px;padding:6px 10px;cursor:pointer;font-size:15px;color:var(--text2)">⊞</button>';
+  h+='<button onclick="window._ovView=\'rows\';renderOverdue()" title="Строки"'
+    +' style="background:'+(_ovView==='rows'?'var(--bg3)':'transparent')+';border:1px solid var(--border2);'
+    +'border-radius:7px;padding:6px 10px;cursor:pointer;font-size:15px;color:var(--text2)">☰</button>';
+  h+='</div></div>';
+
+  // ── Groups ────────────────────────────────────────────────────────────────
+  h+='<div style="padding:0 20px 20px">';
   keys.forEach(function(key){
     var g=grp[key];
     var sorted=g.items.slice().sort(function(a,b){
       var pa=PRI[a.priority||'none']||3,pb=PRI[b.priority||'none']||3;
       return pa!==pb?pa-pb:b.due_date.localeCompare(a.due_date);
     });
-    h+='<div style="margin-bottom:24px">';
-    h+='<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;'
-      +'padding:5px 0 8px;border-bottom:1px solid var(--border2);margin-bottom:10px;'
-      +'display:flex;justify-content:space-between">'+g.label
-      +'<span style="color:#f87171">'+fmtAmt(Math.round(g.total*100)/100)+'</span></div>';
+    h+='<div style="margin-bottom:28px">';
+    h+='<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;letter-spacing:1px;'
+      +'padding:8px 0;border-bottom:1px solid var(--border2);margin-bottom:14px;'
+      +'display:flex;justify-content:space-between;align-items:center">'+g.label
+      +'<span style="color:#f87171;font-size:13px;font-weight:800">'+fmtAmt(Math.round(g.total*100)/100)+'</span></div>';
+
     if(_ovView==='rows'){
-      // ── Row view ──────────────────────────────────────────────────────────
-      h+='<table style="width:100%;border-collapse:collapse;margin-bottom:16px">'
-        +'<thead><tr style="background:var(--bg2)">'
-        +'<th style="padding:6px 10px;font-size:11px;text-align:left;color:var(--text3)">#</th>'
-        +'<th style="padding:6px 10px;font-size:11px;text-align:left;color:var(--text3)">Срок</th>'
-        +'<th style="padding:6px 10px;font-size:11px;text-align:left;color:var(--text3)">Вендор</th>'
-        +'<th style="padding:6px 10px;font-size:11px;text-align:left;color:var(--text3)">Описание</th>'
-        +'<th style="padding:6px 10px;font-size:11px;text-align:right;color:var(--text3)">Сумма</th>'
-        +'<th style="padding:6px 10px;font-size:11px;color:var(--text3)">PDF</th>'
-        +'<th style="padding:6px 10px;font-size:11px;color:var(--text3)">Статус</th>'
+      // ── Row view ────────────────────────────────────────────────────────
+      h+='<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;min-width:700px">'
+        +'<thead><tr style="background:var(--bg2);border-radius:8px">'
+        +'<th style="padding:8px 12px;font-size:11px;text-align:left;color:var(--text3);font-weight:600">#</th>'
+        +'<th style="padding:8px 12px;font-size:11px;text-align:left;color:var(--text3);font-weight:600">Срок</th>'
+        +'<th style="padding:8px 12px;font-size:11px;text-align:left;color:var(--text3);font-weight:600">Вендор</th>'
+        +'<th style="padding:8px 12px;font-size:11px;text-align:left;color:var(--text3);font-weight:600">Описание</th>'
+        +'<th style="padding:8px 12px;font-size:11px;text-align:right;color:var(--text3);font-weight:600">Сумма</th>'
+        +'<th style="padding:8px 12px;font-size:11px;color:var(--text3);font-weight:600">Файлы</th>'
+        +'<th style="padding:8px 12px;font-size:11px;color:var(--text3);font-weight:600">Действие</th>'
         +'</tr></thead><tbody>';
       sorted.forEach(function(inv,n){
         var dl=Math.round((today-new Date(inv.due_date+'T00:00:00'))/86400000);
         var bc=dl<=7?'#fbbf24':'#f87171';
         var num=String(n+1).padStart(2,'0');
-        var pdfB=inv.has_pdf?'<button data-id="'+esc(inv.id)+'" onclick="event.stopPropagation();openPdf(this.dataset.id)" style="background:none;border:1px solid #38bdf8;color:#38bdf8;border-radius:4px;padding:2px 6px;font-size:11px;cursor:pointer">PDF</button>':'';
-        var gdB=inv.gdrive_link?'<a href="'+inv.gdrive_link+'" target="_blank" style="border:1px solid #60a5fa;color:#60a5fa;border-radius:4px;padding:2px 6px;font-size:11px;text-decoration:none">☁</a>':'';
-        h+='<tr style="border-bottom:1px solid rgba(255,255,255,.05)">'
-          +'<td style="padding:7px 10px;font-size:12px;font-weight:800;color:'+bc+';font-family:monospace">#'+num+'</td>'
-          +'<td style="padding:7px 10px;font-size:12px;white-space:nowrap;color:'+bc+'">'+inv.due_date+'<br><span style="font-size:10px;color:var(--text3)">+'+dl+'дн</span></td>'
-          +'<td style="padding:7px 10px;font-size:13px;font-weight:700">'+esc(inv.vendor||'—')+'</td>'
-          +'<td style="padding:7px 10px;font-size:11px;color:var(--text3);max-width:240px">'+esc((inv.description||'').slice(0,80))+'</td>'
-          +'<td style="padding:7px 10px;font-size:14px;font-weight:800;text-align:right;color:#f87171;white-space:nowrap">'+fmtAmt(inv.amount,inv.currency)+'</td>'
-          +'<td style="padding:7px 8px;white-space:nowrap">'+pdfB+' '+gdB+'</td>'
-          +'<td style="padding:7px 8px"><button class="ic-btn ic-btn-pay" data-inv="'+esc(inv.id)+'" onclick="event.stopPropagation();markPaidOv(this.dataset.inv)">✓ Оплачен</button></td>'
+        var pdfB=inv.has_pdf?'<button data-id="'+esc(inv.id)+'" onclick="event.stopPropagation();openPdf(this.dataset.id)"'
+          +' style="background:none;border:1px solid #38bdf8;color:#38bdf8;border-radius:5px;padding:3px 8px;font-size:11px;cursor:pointer">PDF</button>':'';
+        var gdB=inv.gdrive_link?'<a href="'+inv.gdrive_link+'" target="_blank"'
+          +' style="border:1px solid #60a5fa;color:#60a5fa;border-radius:5px;padding:3px 8px;font-size:11px;text-decoration:none">☁</a>':'';
+        var rowBg=n%2===0?'transparent':'rgba(255,255,255,.02)';
+        h+='<tr style="border-bottom:1px solid rgba(255,255,255,.04);background:'+rowBg+'">'
+          +'<td style="padding:10px 12px;font-size:13px;font-weight:800;color:'+bc+';font-family:monospace">#'+num+'</td>'
+          +'<td style="padding:10px 12px;font-size:12px;white-space:nowrap;color:'+bc+'">'+inv.due_date
+            +'<br><span style="font-size:10px;color:var(--text3)">+'+dl+' дн</span></td>'
+          +'<td style="padding:10px 12px;font-size:13px;font-weight:700;max-width:160px">'+esc(inv.vendor||'—')+'</td>'
+          +'<td style="padding:10px 12px;font-size:11px;color:var(--text3);max-width:220px">'+esc((inv.description||'').slice(0,80))+'</td>'
+          +'<td style="padding:10px 12px;font-size:14px;font-weight:800;text-align:right;color:#f87171;white-space:nowrap">'+fmtAmt(inv.amount,inv.currency)+'</td>'
+          +'<td style="padding:10px 10px;white-space:nowrap;display:flex;gap:4px;flex-wrap:wrap">'+pdfB+' '+gdB+'</td>'
+          +'<td style="padding:10px 10px"><button class="ic-btn ic-btn-pay" data-inv="'+esc(inv.id)+'"'
+            +' onclick="event.stopPropagation();markPaidOv(this.dataset.inv)">✓ Оплачен</button></td>'
           +'</tr>';
       });
-      h+='</tbody></table>';
+      h+='</tbody></table></div>';
+
     } else {
-    // ── Card view ─────────────────────────────────────────────────────────
-    h+='<div style="display:flex;flex-wrap:wrap;gap:10px;padding-bottom:8px;align-items:stretch">';
-    sorted.forEach(function(inv,n){
-      var dl=Math.round((today-new Date(inv.due_date+'T00:00:00'))/86400000);
-      var bc=dl<=7?'#fbbf24':'#f87171';
-      var num=String(n+1).padStart(2,'0');
-      var clickable=inv.has_pdf||inv.gdrive_link;
-      var cardClick=clickable?'style="cursor:pointer"':'style="cursor:default"';
-      h+='<div '+cardClick+' data-inv-id="'+esc(inv.id)+'"'
-        +' style="flex:0 0 200px;min-width:180px;display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--border2);'
-        +'border-top:3px solid '+bc+';border-radius:10px;padding:12px;position:relative">';
-      // header: number + date
-      h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-      h+='<span style="font-size:17px;font-weight:800;color:'+bc+';font-family:monospace">#'+num+'</span>';
-      h+='<span style="font-size:10px;color:var(--text3);background:var(--bg);padding:2px 7px;'
-        +'border-radius:8px;border:1px solid var(--border)">до '+inv.due_date+'</span></div>';
-      // vendor — allow wrap, 2 lines max
-      h+='<div style="font-size:13px;font-weight:700;word-break:break-word;'
-        +'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:3px">'+esc(inv.vendor||'—')+'</div>';
-      if(inv.description)h+='<div style="font-size:10px;color:var(--text3);word-break:break-word;'
-        +'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:3px">'+esc(inv.description)+'</div>';
-      if(inv.invoice_number)h+='<div style="font-size:10px;color:var(--text3);margin-bottom:4px">№ '+esc(inv.invoice_number)+'</div>';
-      // spacer pushes bottom content down
-      h+='<div style="flex:1"></div>';
-      // amount + overdue days
-      h+='<div style="font-size:16px;font-weight:800;color:#f87171;margin-bottom:2px">'+fmtAmt(inv.amount,inv.currency)+'</div>';
-      h+='<div style="font-size:10px;color:'+bc+';font-weight:600;margin-bottom:10px">просрочен '+dl+' дн.</div>';
-      // PDF + Drive icons row
-      h+='<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">';
-      if(inv.has_pdf){
-        h+='<button class="ic-btn" data-id="'+esc(inv.id)+'" onclick="event.stopPropagation();openPdf(this.dataset.id)"'
-          +' style="display:flex;align-items:center;gap:4px;padding:5px 8px;font-size:11px;font-weight:600">'+pdfIcon(14)+' PDF</button>';
-      }
-      if(inv.gdrive_link){
-        h+='<a href="'+inv.gdrive_link+'" target="_blank" onclick="event.stopPropagation()"'
-          +' class="ic-btn" style="display:flex;align-items:center;gap:4px;padding:5px 8px;'
-          +'font-size:11px;font-weight:600;text-decoration:none;color:#34d399">☁️ Drive</a>';
-      }
-      if(!inv.has_pdf&&!inv.gdrive_link){
-        h+='<span style="font-size:10px;color:var(--text3);padding:5px 0">'+String.fromCodePoint(0x1F4CE)+' PDF не загружен</span>';
-      }
+      // ── Card grid view ───────────────────────────────────────────────────
+      h+='<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(240px,1fr));gap:14px">';
+      sorted.forEach(function(inv,n){
+        var dl=Math.round((today-new Date(inv.due_date+'T00:00:00'))/86400000);
+        var bc=dl<=7?'#fbbf24':'#f87171';
+        var num=String(n+1).padStart(2,'0');
+        h+='<div data-inv-id="'+esc(inv.id)+'" style="cursor:'+(inv.has_pdf||inv.gdrive_link?'pointer':'default')+';'
+          +'display:flex;flex-direction:column;background:var(--bg2);border:1px solid var(--border2);'
+          +'border-top:3px solid '+bc+';border-radius:12px;padding:16px;transition:box-shadow .15s"'
+          +' onmouseover="this.style.boxShadow=\'0 4px 20px rgba(248,113,113,.15)\'"'
+          +' onmouseout="this.style.boxShadow=\'none\'">';
+        // header
+        h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">';
+        h+='<span style="font-size:18px;font-weight:900;color:'+bc+';font-family:monospace">#'+num+'</span>';
+        h+='<span style="font-size:10px;color:var(--text3);background:var(--bg);padding:3px 9px;'
+          +'border-radius:9px;border:1px solid var(--border)">до '+inv.due_date+'</span></div>';
+        // vendor
+        h+='<div style="font-size:14px;font-weight:700;word-break:break-word;line-height:1.35;'
+          +'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:4px">'+esc(inv.vendor||'—')+'</div>';
+        // description
+        if(inv.description)h+='<div style="font-size:11px;color:var(--text3);word-break:break-word;line-height:1.4;'
+          +'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;margin-bottom:4px">'+esc(inv.description)+'</div>';
+        if(inv.invoice_number)h+='<div style="font-size:10px;color:var(--text4);margin-bottom:5px">№ '+esc(inv.invoice_number)+'</div>';
+        h+='<div style="flex:1"></div>';
+        // amount
+        h+='<div style="font-size:18px;font-weight:900;color:#f87171;margin-bottom:2px;font-family:monospace">'+fmtAmt(inv.amount,inv.currency)+'</div>';
+        h+='<div style="font-size:11px;color:'+bc+';font-weight:600;margin-bottom:12px">просрочен '+dl+' дн.</div>';
+        // files
+        h+='<div style="display:flex;gap:6px;margin-bottom:10px;flex-wrap:wrap">';
+        if(inv.has_pdf)h+='<button class="ic-btn" data-id="'+esc(inv.id)+'" onclick="event.stopPropagation();openPdf(this.dataset.id)"'
+          +' style="display:flex;align-items:center;gap:4px;padding:5px 10px;font-size:11px;font-weight:600">'+pdfIcon(13)+' PDF</button>';
+        if(inv.gdrive_link)h+='<a href="'+inv.gdrive_link+'" target="_blank" onclick="event.stopPropagation()"'
+          +' class="ic-btn" style="display:flex;align-items:center;gap:4px;padding:5px 10px;font-size:11px;font-weight:600;text-decoration:none;color:#34d399">☁️ Drive</a>';
+        if(!inv.has_pdf&&!inv.gdrive_link)h+='<span style="font-size:10px;color:var(--text4);padding:5px 0">📎 PDF не загружен</span>';
+        h+='</div>';
+        // actions
+        h+='<div style="display:grid;grid-template-columns:1fr auto;gap:6px;align-items:center">';
+        h+='<button class="ic-btn ic-btn-pay" data-inv="'+esc(inv.id)+'" onclick="event.stopPropagation();markPaidOv(this.dataset.inv)" style="width:100%">✓ Оплачен</button>';
+        h+='<select data-inv="'+esc(inv.id)+'" onchange="event.stopPropagation();setPriority(this.dataset.inv,this.value)" class="ic-btn" style="cursor:pointer;font-size:10px;padding:5px 4px">';
+        h+='<option value="none"'+(!inv.priority||inv.priority==="none"?' selected':'')+'>Приоритет</option>';
+        h+='<option value="high"'+(inv.priority==="high"?' selected':'')+'>🔴 Срочно</option>';
+        h+='<option value="medium"'+(inv.priority==="medium"?' selected':'')+'>🟡 Важно</option>';
+        h+='<option value="low"'+(inv.priority==="low"?' selected':'')+'>🟢 Обычный</option>';
+        h+='</select></div>';
+        h+='</div>';
+      });
       h+='</div>';
-      // action buttons
-      h+='<div style="display:flex;flex-direction:column;gap:5px">';
-      h+='<button class="ic-btn ic-btn-pay" data-inv="'+esc(inv.id)+'" onclick="event.stopPropagation();markPaidOv(this.dataset.inv)">✓ Оплачен</button>';
-      h+='<select data-inv="'+esc(inv.id)+'" onchange="event.stopPropagation();setPriority(this.dataset.inv,this.value)" class="ic-btn" style="cursor:pointer;font-size:10px">';
-      h+='<option value="none"'+(!inv.priority||inv.priority==="none"?' selected':'')+'Приоритет</option>';
-      h+='<option value="high"'+(inv.priority==="high"?' selected':'')+'>'+String.fromCodePoint(0x1F534)+' Срочно</option>';
-      h+='<option value="medium"'+(inv.priority==="medium"?' selected':'')+'>'+String.fromCodePoint(0x1F7E1)+' Важно</option>';
-      h+='<option value="low"'+(inv.priority==="low"?' selected':'')+'>'+String.fromCodePoint(0x1F7E2)+' Обычный</option>';
-      h+='</select></div>';
-      // click card to open PDF
-      h+='</div>';
-    });
-    h+='</div>';  // close card flex row
-    h+='</div>';  // close month group (else branch)
-    }            // end if rows/cards
-    h+='</div>'; // close margin-bottom div
+    }
+    h+='</div>';
   });
+  h+='</div>';
   el.innerHTML=h;
   // card click → open PDF or Drive
   el.querySelectorAll('[data-inv-id]').forEach(function(card){
