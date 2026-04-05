@@ -360,11 +360,6 @@ body {
   display:grid; grid-template-columns:repeat(7,1fr);
   gap:0; align-content:stretch;
 }
-.day {
-  min-height:0; border-right:1px solid var(--border); border-bottom:1px solid var(--border);
-  cursor:pointer; transition:background .1s; position:relative;
-}
-.day:hover { background:rgba(255,255,255,.015); }
 #overdue-area,#offers-area { flex:1; overflow-y:auto; padding:16px 20px; display:none; }
 #legend { display:flex !important; flex-shrink:0; }
 
@@ -858,6 +853,18 @@ function evOnDay(date){
   }
   return S.invoices.filter(i=>i.due_date===ds);
 }
+function pdfIcon(sz){
+  sz=sz||16;
+  var s='<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 24 28" ';
+  s+='xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">';
+  s+='<path d="M4 0h11l7 7v19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2z" fill="#f7f7f7" stroke="#ccc" stroke-width="1"/>';
+  s+='<path d="M15 0l7 7h-7V0z" fill="#ddd"/>';
+  s+='<rect x="2" y="14" width="20" height="9" rx="1" fill="#e53e3e"/>';
+  s+='<text x="12" y="21.5" font-family="Arial" font-size="6.5" font-weight="900" fill="#fff" text-anchor="middle">PDF</text>';
+  s+='</svg>';
+  return s;
+}
+
 function dayHTML(date){
   const invs=evOnDay(date);
   const total=invs.filter(i=>i.status!=="paid").reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
@@ -955,18 +962,6 @@ function markOfferAccepted(id){
   showNotif('✅ Перемещено в счета','ok');
   loadInvoices();
   setView('month');
-}
-
-function pdfIcon(sz){
-  sz=sz||16;
-  var s='<svg width="'+sz+'" height="'+sz+'" viewBox="0 0 24 28" ';
-  s+='xmlns="http://www.w3.org/2000/svg" style="vertical-align:middle">';
-  s+='<path d="M4 0h11l7 7v19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V2a2 2 0 0 1 2-2z" fill="#f7f7f7" stroke="#ccc" stroke-width="1"/>';
-  s+='<path d="M15 0l7 7h-7V0z" fill="#ddd"/>';
-  s+='<rect x="2" y="14" width="20" height="9" rx="1" fill="#e53e3e"/>';
-  s+='<text x="12" y="21.5" font-family="Arial" font-size="6.5" font-weight="900" fill="#fff" text-anchor="middle">PDF</text>';
-  s+='</svg>';
-  return s;
 }
 
 function renderOverdue(){
