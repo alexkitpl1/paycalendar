@@ -798,6 +798,13 @@ async function markPaid(id){
   await apiPost(`/api/invoices/${id}/paid`,{});
   await loadAll();
 }
+async function markPaidOv(id){
+  await apiPost(`/api/invoices/${id}/paid`,{});
+  S.invoices = S.invoices.map(i => i.id===id ? {...i, status:'paid'} : i);
+  renderOverdue();
+  renderSumBar();
+  showNotif('✅ Оплачен','ok');
+}
 async function deleteInv(id){
   if(!confirm("Удалить счёт?"))return;
   await apiDelete(`/api/invoices/${id}`);
