@@ -3259,7 +3259,7 @@ def api_gdrive_auth_url():
     client_secret = c("gdrive","client_secret","") or os.environ.get("GDRIVE_CLIENT_SECRET","")
     if not client_id or not client_secret:
         return jsonify({"ok":False,"error":"Нужны Client ID и Client Secret от Google Cloud Console"})
-    redirect_uri = request.host_url.rstrip("/") + "/api/gdrive/callback"
+    redirect_uri = "https://paycalendar-production.up.railway.app/api/gdrive/callback"
     from urllib.parse import urlencode
     params = {
         "client_id":     client_id,
@@ -3282,7 +3282,7 @@ def api_gdrive_callback():
         return f"<h2>Ошибка: {error}</h2><a href='/keys'>← Назад</a>"
     client_id     = c("gdrive","client_id","")     or os.environ.get("GDRIVE_CLIENT_ID","")
     client_secret = c("gdrive","client_secret","") or os.environ.get("GDRIVE_CLIENT_SECRET","")
-    redirect_uri  = request.host_url.rstrip("/") + "/api/gdrive/callback"
+    redirect_uri  = "https://paycalendar-production.up.railway.app/api/gdrive/callback"
     try:
         r = requests.post("https://oauth2.googleapis.com/token", data={
             "code":          code,
