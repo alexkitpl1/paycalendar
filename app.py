@@ -698,14 +698,28 @@ _PDF_DIR = _DATA_DIR / "pdfs"
 _PDF_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def save_pdf(inv_id: str, pdf_bytes: bytes, filename: str = "") -> Path:
-    """Save PDF bytes to disk. Returns path."""
+def save_pdf(inv_id: str, pdf_bytes: bytes, filename: str = "", invoice_date: str = None) -> Path:
+    """Save PDF to local Volume + upload to Google Drive. Returns local path."""
     _PDF_DIR.mkdir(parents=True, exist_ok=True)
-    # Sanitize inv_id for filename
     safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", inv_id)[:80]
     path = _PDF_DIR / f"{safe_id}.pdf"
     path.write_bytes(pdf_bytes)
-    log.info(f"PDF saved: {path.name} ({len(pdf_bytes)//1024}KB) fn={filename}")
+    log.info(f"PDF saved: {path.name} ({len(pdf_bytes)//1024}KB)")
+
+    # Upload to Google Drive (non-blocking best-effort)
+    try:
+        clean_name = re.sub(r"[^a-zA-Z0-9._\-]", "_", filename or inv_id)[:80]
+        if not clean_name.endswith(".pdf"):
+            clean_name += ".pdf"
+        gdrive_result = gdrive_upload_pdf(pdf_bytes, clean_name, invoice_date)
+        if gdrive_result:
+            # Store Drive link for quick access
+            _link_file = _PDF_DIR / f"{safe_id}.gdrive"
+            _link_file.write_text(gdrive_result.get("webViewLink",""), encoding="utf-8")
+            log.info(f"GDrive: {clean_name} → {gdrive_result.get('id','')[:20]}")
+    except Exception as _ge:
+        log.debug(f"GDrive upload skipped: {_ge}")
+
     return path
 
 
@@ -715,10 +729,138 @@ def get_pdf_path(inv_id: str) -> Path | None:
     path = _PDF_DIR / f"{safe_id}.pdf"
     return path if path.exists() else None
 
+def get_gdrive_link(inv_id: str) -> str:
+    """Get Google Drive view link for invoice PDF. Empty string if not uploaded."""
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", inv_id)[:80]
+    link_file = _PDF_DIR / f"{safe_id}.gdrive"
+    return link_file.read_text(encoding="utf-8").strip() if link_file.exists() else ""
+
 
 def pdf_count() -> int:
     """Count stored PDFs."""
     return len(list(_PDF_DIR.glob("*.pdf"))) if _PDF_DIR.exists() else 0
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  GOOGLE DRIVE INTEGRATION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_gdrive_service = None
+
+def _get_gdrive_service():
+    """Build Google Drive service from stored credentials."""
+    global _gdrive_service
+    if _gdrive_service:
+        return _gdrive_service
+    try:
+        from google.oauth2.credentials import Credentials
+        from googleapiclient.discovery import build
+        import json
+
+        token_data = c("gdrive", "token", "") or os.environ.get("GDRIVE_TOKEN", "")
+        if not token_data:
+            return None
+        token = json.loads(token_data)
+        creds = Credentials(
+            token=token.get("access_token"),
+            refresh_token=token.get("refresh_token"),
+            token_uri="https://oauth2.googleapis.com/token",
+            client_id=token.get("client_id"),
+            client_secret=token.get("client_secret"),
+        )
+        # Auto-refresh if expired
+        if creds.expired and creds.refresh_token:
+            from google.auth.transport.requests import Request
+            creds.refresh(Request())
+            # Save refreshed token
+            token["access_token"] = creds.token
+            save_config_value("gdrive", "token", json.dumps(token))
+
+        _gdrive_service = build("drive", "v3", credentials=creds, cache_discovery=False)
+        return _gdrive_service
+    except Exception as ex:
+        log.warning(f"Google Drive init: {ex}")
+        return None
+
+
+def _gdrive_get_or_create_folder(service, name: str, parent_id: str = None) -> str:
+    """Get or create a folder in Drive. Returns folder ID."""
+    q = f"name='{name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"
+    if parent_id:
+        q += f" and '{parent_id}' in parents"
+    try:
+        res = service.files().list(q=q, fields="files(id,name)").execute()
+        if res.get("files"):
+            return res["files"][0]["id"]
+    except Exception:
+        pass
+    # Create folder
+    meta = {"name": name, "mimeType": "application/vnd.google-apps.folder"}
+    if parent_id:
+        meta["parents"] = [parent_id]
+    folder = service.files().create(body=meta, fields="id").execute()
+    return folder["id"]
+
+
+def gdrive_upload_pdf(pdf_bytes: bytes, filename: str, invoice_date: str = None) -> dict | None:
+    """
+    Upload PDF to Google Drive: PayCalendar/YYYY/MM/filename.pdf
+    Returns: {id, webViewLink} or None
+    """
+    service = _get_gdrive_service()
+    if not service:
+        return None
+    try:
+        from googleapiclient.http import MediaIoBaseUpload
+        import io
+        from datetime import datetime as _dt
+
+        # Parse date for folder structure
+        try:
+            dt = _dt.fromisoformat(invoice_date) if invoice_date else _dt.now()
+        except Exception:
+            dt = _dt.now()
+        year_str  = dt.strftime("%Y")
+        month_str = dt.strftime("%m-%B")  # e.g. "03-March"
+
+        # Build folder path: PayCalendar/2026/03-March
+        root_id  = _gdrive_get_or_create_folder(service, "PayCalendar")
+        year_id  = _gdrive_get_or_create_folder(service, year_str,  root_id)
+        month_id = _gdrive_get_or_create_folder(service, month_str, year_id)
+
+        # Check if file already exists
+        q = f"name='{filename}' and '{month_id}' in parents and trashed=false"
+        existing = service.files().list(q=q, fields="files(id,webViewLink)").execute()
+        if existing.get("files"):
+            f = existing["files"][0]
+            return {"id": f["id"], "webViewLink": f.get("webViewLink", "")}
+
+        # Upload
+        media = MediaIoBaseUpload(io.BytesIO(pdf_bytes), mimetype="application/pdf")
+        file_meta = {"name": filename, "parents": [month_id]}
+        uploaded = service.files().create(
+            body=file_meta, media_body=media,
+            fields="id,webViewLink"
+        ).execute()
+
+        # Make it publicly readable (anyone with link)
+        service.permissions().create(
+            fileId=uploaded["id"],
+            body={"type": "anyone", "role": "reader"}
+        ).execute()
+
+        log.info(f"GDrive: uploaded {filename} → {uploaded.get('webViewLink','')[:60]}")
+        return {"id": uploaded["id"], "webViewLink": uploaded.get("webViewLink", "")}
+
+    except Exception as ex:
+        log.error(f"GDrive upload {filename}: {ex}")
+        return None
+
+
+def gdrive_get_link(file_id: str) -> str:
+    """Get view link for a Drive file ID."""
+    return f"https://drive.google.com/file/d/{file_id}/view" if file_id else ""
 
 
 # ── PDF Attachment Parser ─────────────────────────────────────────────────────
@@ -2911,11 +3053,28 @@ def api_serve_pdf(inv_id):
 def api_pdf_info(inv_id):
     """Check if PDF exists for invoice."""
     path = get_pdf_path(inv_id)
+    gdrive = get_gdrive_link(inv_id)
     return jsonify({
-        "has_pdf": path is not None,
-        "size":    path.stat().st_size if path else 0,
-        "name":    path.name if path else None,
+        "has_pdf":      path is not None,
+        "size":         path.stat().st_size if path else 0,
+        "name":         path.name if path else None,
+        "gdrive_link":  gdrive,
+        "has_gdrive":   bool(gdrive),
     })
+
+@app.route("/api/invoice/<inv_id>/gdrive-link")
+def api_gdrive_link(inv_id):
+    """Redirect to Google Drive file or return link."""
+    link = get_gdrive_link(inv_id)
+    if link:
+        from flask import redirect as _redirect
+        return _redirect(link)
+    # Try to get from invoice data
+    invs = load_invoices()
+    inv = next((i for i in invs if i.get("id") == inv_id), None)
+    if inv and inv.get("gdrive_link"):
+        return _redirect(inv["gdrive_link"])
+    return jsonify({"error": "Google Drive ссылка не найдена"}), 404
 
 @app.route("/api/pdfs/stats")
 def api_pdfs_stats():
@@ -3088,6 +3247,130 @@ def api_save_config():
         return jsonify({"ok": True})
     except Exception as ex:
         return jsonify({"ok": False, "error": str(ex)})
+
+
+
+# ── Google Drive OAuth Routes ─────────────────────────────────────────────────
+
+@app.route("/api/gdrive/auth-url")
+def api_gdrive_auth_url():
+    """Generate Google OAuth URL for Drive access."""
+    client_id     = c("gdrive","client_id","")     or os.environ.get("GDRIVE_CLIENT_ID","")
+    client_secret = c("gdrive","client_secret","") or os.environ.get("GDRIVE_CLIENT_SECRET","")
+    if not client_id or not client_secret:
+        return jsonify({"ok":False,"error":"Нужны Client ID и Client Secret от Google Cloud Console"})
+    redirect_uri = request.host_url.rstrip("/") + "/api/gdrive/callback"
+    from urllib.parse import urlencode
+    params = {
+        "client_id":     client_id,
+        "redirect_uri":  redirect_uri,
+        "response_type": "code",
+        "scope":         "https://www.googleapis.com/auth/drive.file",
+        "access_type":   "offline",
+        "prompt":        "consent",
+    }
+    url = "https://accounts.google.com/o/oauth2/v2/auth?" + urlencode(params)
+    return jsonify({"ok":True,"url":url})
+
+
+@app.route("/api/gdrive/callback")
+def api_gdrive_callback():
+    """Handle OAuth callback, exchange code for token."""
+    code  = request.args.get("code","")
+    error = request.args.get("error","")
+    if error:
+        return f"<h2>Ошибка: {error}</h2><a href='/keys'>← Назад</a>"
+    client_id     = c("gdrive","client_id","")     or os.environ.get("GDRIVE_CLIENT_ID","")
+    client_secret = c("gdrive","client_secret","") or os.environ.get("GDRIVE_CLIENT_SECRET","")
+    redirect_uri  = request.host_url.rstrip("/") + "/api/gdrive/callback"
+    try:
+        r = requests.post("https://oauth2.googleapis.com/token", data={
+            "code":          code,
+            "client_id":     client_id,
+            "client_secret": client_secret,
+            "redirect_uri":  redirect_uri,
+            "grant_type":    "authorization_code",
+        }, timeout=15)
+        token = r.json()
+        token["client_id"]     = client_id
+        token["client_secret"] = client_secret
+        save_config_value("gdrive", "token", json.dumps(token))
+        # Reset cached service
+        global _gdrive_service
+        _gdrive_service = None
+        return """<html><body style="font-family:sans-serif;background:#0f1117;color:#e2e8f0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+        <div style="text-align:center">
+        <div style="font-size:50px">✅</div>
+        <h2>Google Drive подключён!</h2>
+        <p style="color:#6b7280">Все PDF счетов будут автоматически сохраняться в Drive</p>
+        <a href="/keys" style="color:#60a5fa">← Вернуться в настройки</a>
+        </div></body></html>"""
+    except Exception as ex:
+        return f"<h2>Ошибка: {ex}</h2><a href='/keys'>← Назад</a>"
+
+
+@app.route("/api/gdrive/save-credentials", methods=["POST"])
+def api_gdrive_save_credentials():
+    """Save Google API credentials."""
+    data = request.json or {}
+    cid  = data.get("client_id","").strip()
+    csec = data.get("client_secret","").strip()
+    if not cid or not csec:
+        return jsonify({"ok":False,"error":"Client ID и Client Secret обязательны"})
+    save_config_value("gdrive","client_id",cid)
+    save_config_value("gdrive","client_secret",csec)
+    return jsonify({"ok":True})
+
+
+@app.route("/api/gdrive/status")
+def api_gdrive_status():
+    """Check Google Drive connection status."""
+    service = _get_gdrive_service()
+    if not service:
+        return jsonify({"ok":False,"connected":False})
+    try:
+        about = service.about().get(fields="user,storageQuota").execute()
+        user  = about.get("user",{})
+        return jsonify({
+            "ok":True,"connected":True,
+            "email":   user.get("emailAddress",""),
+            "name":    user.get("displayName",""),
+        })
+    except Exception as ex:
+        return jsonify({"ok":False,"connected":False,"error":str(ex)})
+
+
+@app.route("/api/gdrive/upload-existing", methods=["POST"])
+def api_gdrive_upload_existing():
+    """Upload all existing local PDFs to Google Drive."""
+    service = _get_gdrive_service()
+    if not service:
+        return jsonify({"ok":False,"error":"Google Drive не подключён"})
+    invs = load_invoices()
+    uploaded = 0; failed = 0
+    for inv in invs:
+        inv_id = inv.get("id","")
+        path   = get_pdf_path(inv_id)
+        if not path: continue
+        if get_gdrive_link(inv_id): continue  # already uploaded
+        try:
+            pdf_bytes = path.read_bytes()
+            fn        = inv.get("pdf_filename") or f"{inv_id}.pdf"
+            dt        = inv.get("issue_date") or inv.get("date","")
+            result    = gdrive_upload_pdf(pdf_bytes, fn, dt)
+            if result:
+                link_file = _PDF_DIR / f"{re.sub(r'[^a-zA-Z0-9_-]','_',inv_id)[:80]}.gdrive"
+                link_file.write_text(result.get("webViewLink",""))
+                inv["gdrive_link"] = result.get("webViewLink","")
+                uploaded += 1
+            else:
+                failed += 1
+        except Exception as ex:
+            log.error(f"Upload existing {inv_id}: {ex}")
+            failed += 1
+    if uploaded:
+        save_invoices(invs)
+    return jsonify({"ok":True,"uploaded":uploaded,"failed":failed,"total":uploaded+failed})
 
 
 _bg_started = False

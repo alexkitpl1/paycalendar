@@ -105,6 +105,33 @@ input:focus{border-color:#38bdf8}
   <div class="log" id="resetLog"></div>
 </div>
 
+
+<!-- GOOGLE DRIVE -->
+<div class="card">
+  <div class="card-title">📁 Google Drive</div>
+  <div class="hint">PDF счетов сохраняются в Drive: <code>PayCalendar/2026/03-March/</code><br>
+  Нужен Google Cloud проект с Drive API. <a href="https://console.cloud.google.com" target="_blank" style="color:#60a5fa">console.cloud.google.com</a></div>
+
+  <div id="gdrive-status" style="margin-bottom:12px;padding:10px;border-radius:8px;background:#111820;border:1px solid #1e2d45;font-size:13px">
+    <span style="color:#5a7a9a">Проверяю подключение...</span>
+  </div>
+
+  <div id="gdrive-setup" style="display:none">
+    <label>Client ID</label>
+    <input type="text" id="gClientId" placeholder="123456789-abc.apps.googleusercontent.com" autocomplete="off">
+    <label style="margin-top:8px">Client Secret</label>
+    <input type="password" id="gClientSecret" placeholder="GOCSPX-..." autocomplete="off">
+    <button class="btn btn1" style="margin-top:10px" onclick="saveGCreds()">💾 Сохранить и подключить</button>
+  </div>
+
+  <div id="gdrive-connected" style="display:none">
+    <button class="btn btn2" onclick="uploadExisting()" id="uploadBtn">☁️ Загрузить все существующие PDF</button>
+    <button class="btn btn2" style="margin-top:6px;color:#f87171;border-color:rgba(248,113,113,.2)" onclick="disconnectDrive()">✕ Отключить</button>
+  </div>
+
+  <div class="log" id="gLog"></div>
+</div>
+
 </div><!-- .wrap -->
 
 <script>
@@ -288,6 +315,61 @@ async function doAction(path, method, data, logId, msg){
 loadAiStatus();
 loadAccounts();
 loadImapStatus();
+loadGDriveStatus();
+
+async function loadGDriveStatus(){
+  try {
+    var r = await api('/api/gdrive/status');
+    var el = document.getElementById('gdrive-status');
+    var setup = document.getElementById('gdrive-setup');
+    var connected = document.getElementById('gdrive-connected');
+    if(r.connected){
+      el.innerHTML = '<span style="color:#4ade80">✅ Подключено: '+esc(r.name)+' ('+esc(r.email)+')</span>';
+      el.style.borderColor='rgba(74,222,128,.3)';
+      setup.style.display='none';
+      connected.style.display='block';
+    } else {
+      el.innerHTML = '<span style="color:#f59e0b">⚠ Не подключено</span> — введи Client ID и Secret ниже';
+      setup.style.display='block';
+      connected.style.display='none';
+    }
+  } catch(e){ document.getElementById('gdrive-status').textContent='Ошибка: '+e.message; }
+}
+
+async function saveGCreds(){
+  var cid  = document.getElementById('gClientId').value.trim();
+  var csec = document.getElementById('gClientSecret').value.trim();
+  if(!cid||!csec){ log('gLog','Введи Client ID и Client Secret','err'); return; }
+  try {
+    var r = await api('/api/gdrive/save-credentials',{client_id:cid,client_secret:csec});
+    if(!r.ok){ log('gLog','❌ '+r.error,'err'); return; }
+    log('gLog','Credentials сохранены. Открываю Google авторизацию...','info');
+    var a = await api('/api/gdrive/auth-url');
+    if(!a.ok){ log('gLog','❌ '+a.error,'err'); return; }
+    window.open(a.url,'_blank','width=600,height=700');
+    log('gLog','✅ Разрешите доступ в открывшемся окне, затем вернитесь сюда','ok');
+    setTimeout(loadGDriveStatus, 5000);
+  } catch(e){ log('gLog','❌ '+e.message,'err'); }
+}
+
+async function uploadExisting(){
+  var btn = document.getElementById('uploadBtn');
+  btn.disabled=true; btn.textContent='☁️ Загружаю...';
+  log('gLog','Загружаю все PDF в Google Drive...','info');
+  try {
+    var r = await api('/api/gdrive/upload-existing',{});
+    log('gLog','✅ Загружено: '+r.uploaded+' | Ошибок: '+r.failed,'ok');
+  } catch(e){ log('gLog','❌ '+e.message,'err'); }
+  btn.disabled=false; btn.textContent='☁️ Загрузить все существующие PDF';
+}
+
+async function disconnectDrive(){
+  if(!confirm('Отключить Google Drive?')) return;
+  await api('/api/save-config',{section:'gdrive',key:'token',value:''});
+  log('gLog','Google Drive отключён','warn');
+  loadGDriveStatus();
+}
+
 </script>
 </body>
 </html>

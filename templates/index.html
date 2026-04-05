@@ -455,6 +455,11 @@ body {
   opacity: .8; transition: opacity .15s; vertical-align: middle;
 }
 .chip-pdf:hover { opacity: 1; transform: scale(1.2); }
+.chip-drive {
+  font-size: 10px; margin-left: 2px; vertical-align: middle;
+  opacity: .8; transition: opacity .15s; text-decoration: none; display: inline;
+}
+.chip-drive:hover { opacity: 1; transform: scale(1.2); }
 </style>
 </head>
 <body>
@@ -790,7 +795,7 @@ function dayHTML(date){
     const st=stOf(inv),cat=CAT[inv.category]||CAT.other;
     h+=`<div class="chip" style="background:${cat.b};border-left-color:${SC[st]};color:${cat.c}" onclick="event.stopPropagation();selDay('${toISO(dc.date)}')">
       <span class="chip-d"></span><span class="chip-n">${esc(inv.vendor||"Счёт")}</span>
-      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.has_pdf?`<span class="chip-pdf" onclick="event.stopPropagation();openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">📄</span>`:""}${inv.reminder_count>1?"<span class='chip-remind'>🔔"+inv.reminder_count+"</span>":""}${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
+      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.has_pdf?(`<span class="chip-pdf" onclick="event.stopPropagation();openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">📄</span>`+(inv.gdrive_link?`<a href="${inv.gdrive_link}" target="_blank" class="chip-drive">☁</a>`:"")):""}${inv.reminder_count>1?"<span class='chip-remind'>🔔"+inv.reminder_count+"</span>":""}${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
   }
   if(extra>0)h+=`<div class="more">+${extra}</div>`;
   return{h,total};
@@ -1181,6 +1186,8 @@ function renderSP(){
           </select>
           <button class="btn btn-sm btn-edit" onclick="openEdit('${inv.id}')">✎</button>
           <button class="btn btn-sm btn-del" onclick="deleteInv('${inv.id}')">✕</button>
+          ${inv.has_pdf?`<button class="btn btn-sm" onclick="openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">📄 PDF</button>`:""}
+          ${inv.gdrive_link?`<a href="${inv.gdrive_link}" target="_blank" class="btn btn-sm" style="text-decoration:none;background:rgba(52,211,153,.12);color:#34d399;border:1px solid rgba(52,211,153,.25)">☁️ Drive</a>`:""}
         </div>
       </div>`;
     }
