@@ -2099,7 +2099,7 @@ def _run_bg_scan(task_id, from_date=None, to_date=None, quick=False):
             _bg_emit(f"✅ Скан завершён: {found} новых счетов", "ok")
         finally:
             SCAN_LIMIT = orig_limit
-            scan_lock.release()
+            if scan_lock.locked(): scan_lock.release()
     except Exception as ex:
         _bg_emit(f"❌ Ошибка: {ex}", "err")
         with _scan_state_lock:
@@ -2826,23 +2826,25 @@ def api_debug_clear():
 @app.route("/api/scan-status")
 def api_scan_status():
     """Poll-based scan progress - works even after browser reconnect."""
-    # Try live state first
-    with _scan_state_lock:
-        state = dict(_scan_state_live)
-        state["log"] = list(_scan_state_live["log"])
+    try:
+        with _scan_state_lock:
+            state = dict(_scan_state_live)
+            state["log"] = list(_scan_state_live.get("log") or [])
 
-    # If not running, check persisted state
-    if not state["running"] and not state["started"]:
-        try:
-            pf = _DATA_DIR / "scan_progress.json"
-            if pf.exists():
-                with open(pf, encoding="utf-8") as f:
-                    state = json.load(f)
-        except Exception:
-            pass
+        if not state.get("running") and not state.get("started"):
+            try:
+                pf = _DATA_DIR / "scan_progress.json"
+                if pf.exists():
+                    with open(pf, encoding="utf-8") as f:
+                        state = json.load(f)
+                        state["log"] = state.get("log") or []
+            except Exception:
+                pass
 
-    state["invoices_total"] = len(load_invoices())
-    return jsonify(state)
+        state["invoices_total"] = len(load_invoices())
+        return jsonify(state)
+    except Exception as ex:
+        return jsonify({"running": False, "error": str(ex), "log": [], "pct": 0})
 
 @app.route("/api/scan-start", methods=["POST"])
 def api_scan_start():
@@ -2874,7 +2876,7 @@ def api_scan_start():
 def api_scan_stop():
     """Stop running scan."""
     try:
-        scan_lock.release()
+        if scan_lock.locked(): scan_lock.release()
     except Exception:
         pass
     with _scan_state_lock:
@@ -3570,7 +3572,7 @@ def api_search():
 # ── Gmail API ─────────────────────────────────────────────────────────────────
 _gmail_service = None
 
-def _get_gmail_service(force_refresh=False):
+def _get_gmail_service():
     """Build Gmail service from stored credentials (same token as Drive)."""
     global _gmail_service
     if _gmail_service and not force_refresh:
@@ -3708,7 +3710,7 @@ def _gmail_msg_to_dict(msg):
 
 @app.route("/api/gmail/status")
 def api_gmail_status():
-    svc = _get_gmail_service(force_refresh=True)
+    svc = _get_gmail_service()
     if not svc:
         return jsonify({"ok": False, "connected": False})
     try:
@@ -4143,23 +4145,6 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
 
 
 
-@app.route("/api/gmail/status")
-def api_gmail_status():
-    """Check Gmail API connection."""
-    svc = _get_gmail_service()
-    if not svc:
-        return jsonify({"ok": False, "connected": False,
-                        "error": "Подключи Google Drive в /keys — Gmail использует тот же токен"})
-    try:
-        profile = svc.users().getProfile(userId="me").execute()
-        return jsonify({
-            "ok": True, "connected": True,
-            "email":         profile.get("emailAddress",""),
-            "total_messages": profile.get("messagesTotal", 0),
-            "cutoff":        GMAIL_CUTOFF,
-        })
-    except Exception as ex:
-        return jsonify({"ok": False, "connected": False, "error": str(ex)[:100]})
 
 
 _bg_started = False
