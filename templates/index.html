@@ -877,7 +877,7 @@ function dayHTML(date){
     const st=stOf(inv),cat=CAT[inv.category]||CAT.other;
     h+=`<div class="chip" style="background:${cat.b};border-left-color:${SC[st]};color:${cat.c}" onclick="event.stopPropagation();selDay('${toISO(dc.date)}')">
       <span class="chip-d"></span><span class="chip-n">${esc(inv.vendor||"Счёт")}</span>
-      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.has_pdf?(`<span class="chip-pdf" onclick="event.stopPropagation();openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">📄</span>`+(inv.gdrive_link?`<a href="${inv.gdrive_link}" target="_blank" class="chip-drive">☁</a>`:"")):""}${inv.reminder_count>1?"<span class='chip-remind'>🔔"+inv.reminder_count+"</span>":""}${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
+      <span class="chip-a">${fmtAmt(inv.amount,inv.currency)}</span>${inv.has_pdf?(`<span class="chip-pdf" onclick="event.stopPropagation();openPdf('${inv.id}')" title="${esc(inv.pdf_filename||'PDF')}">${pdfIcon(13)}</span>`+(inv.gdrive_link?`<a href="${inv.gdrive_link}" target="_blank" class="chip-drive">☁</a>`:"")):""}${inv.reminder_count>1?"<span class='chip-remind'>🔔"+inv.reminder_count+"</span>":""}${inv.priority==="high"?"<span class='chip-pri'>🔴</span>":inv.priority==="medium"?"<span class='chip-pri'>🟡</span>":""}</div>`;
   }
   if(extra>0)h+=`<div class="more">+${extra}</div>`;
   return{h,total};
@@ -2050,7 +2050,7 @@ function renderSearchResults(results, q){
     if(inv.has_pdf){
       var pdfBtn = document.createElement('button');
       pdfBtn.style.cssText='margin-top:8px;padding:4px 10px;border-radius:7px;border:1px solid #1e2d45;background:#111820;color:#60a5fa;font-size:11px;cursor:pointer';
-      pdfBtn.textContent = '📄 PDF';
+      pdfBtn.innerHTML = pdfIcon(14) + ' PDF';
       pdfBtn.onclick = function(e){ e.stopPropagation(); openPdf(inv.id); };
       card.querySelector('div:last-child').appendChild(pdfBtn);
     }
