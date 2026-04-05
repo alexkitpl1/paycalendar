@@ -2011,8 +2011,10 @@ function _updateScanPanel(d){
   var speed = d.speed ? d.speed.toFixed(1)+' п/с' : '';
   var eta   = d.eta   ? ' · ~'+Math.round(d.eta)+'с' : '';
 
-  // Header-loading phase: pct=0 but scan is running and we have log messages
-  var isHeaderPhase = d.running && pct === 0 && d.total === 0;
+  // Header-loading phase: total=0 means headers are being fetched (no AI analysis yet)
+  // Also detect by last log message containing "Заголовки" or "Аккаунт"
+  var isLoadingHeaders = lastMsg && (lastMsg.includes('Заголовки') || lastMsg.includes('Аккаунт') || lastMsg.includes('подключён'));
+  var isHeaderPhase = d.running && d.total === 0 && (pct === 0 || isLoadingHeaders);
   // Analysis phase: have total count
   var isAnalysisPhase = d.running && d.total > 0;
 

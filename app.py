@@ -2524,6 +2524,8 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
         ids_sorted = sorted(ids, key=lambda x: int(x.decode() if isinstance(x,bytes) else x), reverse=True)
         ids = set(ids_sorted[:SCAN_LIMIT])
         emit(f"  Писем для анализа: {len(ids)}", "info")
+        # Reset progress bar to 0 for this account's header-loading phase
+        emit("__progress__ 0 0 0 0", "progress")
 
         emails_raw  = []
         ids_list_ac = list(ids)
