@@ -858,10 +858,19 @@ function setTheme(t){
 }
 try{setTheme(S.theme);}catch(e){}
 
+/* ─── Contract detection — excluded from all invoice/calendar views ─────── */
+var CONTRACT_KW=['contract','agreement','leping','договор','контракт','vereinbarung',
+  'raamleping','kokkulepe','соглашение','t2ic_office','освидетельств',
+  'well technology','контракт №','01-01-03-','неучастии'];
+function isContract(inv){
+  var d=(inv.description||'').toLowerCase(),v=(inv.vendor||'').toLowerCase();
+  return !!(inv.is_contract||CONTRACT_KW.some(function(k){return d.includes(k)||v.includes(k);}));
+}
+
 /* ─── Computed ──────────────────────────────────────────────────────────── */
 function monthStats(){
   const y=S.month.getFullYear(),m=S.month.getMonth();
-  const inv=S.invoices.filter(i=>{if(!i.due_date)return false;const d=new Date(i.due_date);return d.getFullYear()===y&&d.getMonth()===m});
+  const inv=S.invoices.filter(i=>{if(!i.due_date||isContract(i))return false;const d=new Date(i.due_date);return d.getFullYear()===y&&d.getMonth()===m});
   const pend=inv.filter(i=>i.status!=="paid"),paid=inv.filter(i=>i.status==="paid");
   const over=inv.filter(i=>stOf(i)==="overdue");
   const sp=pend.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
@@ -880,7 +889,7 @@ function monthStats(){
 function weekStats(){
   const wd=weekDays();
   const ws=toISO(wd[0]),we=toISO(wd[6]);
-  const inv=S.invoices.filter(i=>i.due_date&&i.due_date>=ws&&i.due_date<=we);
+  const inv=S.invoices.filter(i=>i.due_date&&i.due_date>=ws&&i.due_date<=we&&!isContract(i));
   const pend=inv.filter(i=>i.status!=="paid"),paid=inv.filter(i=>i.status==="paid");
   const sp=pend.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
   const sd=paid.reduce((s,i)=>s+(parseFloat(i.amount)||0),0);
@@ -908,12 +917,13 @@ function evOnDay(date){
   // On today: also show all overdue unpaid invoices
   if(ds===today){
     return S.invoices.filter(i=>{
+      if(isContract(i)) return false;
       if(i.due_date===ds) return true;
       if(i.status!=="paid" && i.due_date && i.due_date<ds) return true;
       return false;
     });
   }
-  return S.invoices.filter(i=>i.due_date===ds);
+  return S.invoices.filter(i=>i.due_date===ds&&!isContract(i));
 }
 function pdfIcon(sz){
   sz=sz||16;
@@ -1031,7 +1041,7 @@ function renderOverdue(){
   if(!el)return;
   var today=new Date();today.setHours(0,0,0,0);
   var todayISO=toISO(today);
-  var ov=S.invoices.filter(function(i){return i.status!=='paid'&&i.due_date&&i.due_date<todayISO;});
+  var ov=S.invoices.filter(function(i){return i.status!=='paid'&&i.due_date&&i.due_date<todayISO&&!isContract(i);});
   if(!ov.length){el.innerHTML='<div style="text-align:center;padding:48px 0;color:var(--text3)">'+
     '<div style="font-size:40px;margin-bottom:12px">'+String.fromCodePoint(0x2705)+'</div>Нет просроченных счетов</div>';return;}
   var MN=['Январь','Февраль','Март','Апрель','Май','Июнь','Июль','Август','Сентябрь','Октябрь','Ноябрь','Декабрь'];
@@ -1173,11 +1183,7 @@ function renderOverdue(){
 function renderContracts(){
   var el=document.getElementById('contracts-area');
   if(!el)return;
-  var kw=['contract','agreement','leping','\u0434\u043e\u0433\u043e\u0432\u043e\u0440','\u043a\u043e\u043d\u0442\u0440\u0430\u043a\u0442','vereinbarung','raamleping','kokkulepe','\u0441\u043e\u0433\u043b\u0430\u0448\u0435\u043d\u0438\u0435'];
-  var list=S.invoices.filter(function(inv){
-    var d=(inv.description||'').toLowerCase(),v=(inv.vendor||'').toLowerCase();
-    return inv.is_contract||kw.some(function(k){return d.includes(k)||v.includes(k);});
-  });
+  var list=S.invoices.filter(isContract);
   if(!list.length){el.innerHTML='<div style="text-align:center;padding:48px 0;color:var(--text3)"><div style="font-size:40px;margin-bottom:12px">'+String.fromCodePoint(0x1F4CB)+'</div>\u041a\u043e\u043d\u0442\u0440\u0430\u043a\u0442\u044b \u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d\u044b<br><span style="font-size:12px;color:var(--text3);\u041f\u0440\u0438\u0434\u0443\u0442 \u0430\u0432\u0442\u043e\u043c\u0430\u0442\u0438\u0447\u0435\u0441\u043a\u0438 \u043f\u0440\u0438 \u0441\u043a\u0430\u043d\u0438\u0440\u043e\u0432\u0430\u043d\u0438\u0438</span></div>';return;}
   var tot=list.reduce(function(s,i){return s+(parseFloat(i.amount)||0);},0);
   var h='<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 0 12px;border-bottom:1px solid var(--border2);margin-bottom:12px">';
