@@ -604,8 +604,8 @@ def _ask_groq(prompt):
                 "https://api.groq.com/openai/v1/chat/completions",
                 headers={"Authorization": f"Bearer {key}",
                          "Content-Type": "application/json"},
-                json={"model": "llama-3.3-70b-versatile",
-                      "max_tokens": 512, "temperature": 0.1,
+                json={"model": "llama-3.1-8b-instant",
+                      "max_tokens": 400, "temperature": 0.1,
                       "messages": [
                           {"role": "system", "content": CLAUDE_SYSTEM},
                           {"role": "user",   "content": prompt},
@@ -1553,12 +1553,14 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
     # ── Phase 2: determine workers based on available keys ────────────────────
     gem_ok  = len([k for k in _gemini_pool.keys if k not in _gemini_pool.failed])
     grq_ok  = len([k for k in _groq_pool.keys   if k not in _groq_pool.failed])
+    oai_ok  = len([k for k in _openai_pool.keys  if k not in _openai_pool.failed])
     has_cl  = 1 if (API_KEY and len(API_KEY) > 20) else 0
-    n_keys  = gem_ok + grq_ok + has_cl
-    workers = max(1, min(n_keys, 6, total))
+    n_keys  = gem_ok + grq_ok + oai_ok + has_cl
+    # Each Groq key can handle ~3 concurrent requests; allow up to 20 workers
+    workers = max(1, min(n_keys * 2, 20, total))
 
     emit(f"⚡ Параллельный анализ: {workers} потоков | "
-         f"Gemini×{gem_ok} Groq×{grq_ok} Claude×{has_cl}", "info")
+         f"Gemini×{gem_ok} Groq×{grq_ok} OpenAI×{oai_ok} Claude×{has_cl}", "info")
 
     # ETA estimate
     ai_rps  = workers * 0.8  # ~0.8 req/sec per worker conservatively
@@ -1591,6 +1593,22 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
             combined = body
             if pdf_text:
                 combined = body + "\n\n--- ВЛОЖЕНИЕ PDF ---\n" + pdf_text[:2000]
+
+            # Fast-path: very high keyword score + PDF → skip AI, use keyword extractor
+            if score >= 75 and att and not fetch_body:
+                search_text = subj + " " + combined
+                amount  = extract_amount(search_text)
+                vendor  = extract_vendor(subj, frm, combined)
+                if amount > 0 or score >= 90:
+                    inv = build_invoice({
+                        "is_invoice": True, "vendor": vendor, "amount": amount,
+                        "currency": extract_currency(search_text),
+                        "due_date": extract_due_date(combined + " " + subj, ds),
+                        "invoice_number": None, "description": subj,
+                    }, uid, subj, frm, ds, att, source)
+                    emit(f"✓ [KW-FAST] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
+                    return inv
+
             prompt = CLAUDE_TMPL.format(subject=subj, sender=frm,
                                         date=ds, has_att=att, body=combined[:3000])
             obj = extract_json(ask_ai(prompt))
