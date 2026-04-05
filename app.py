@@ -113,7 +113,8 @@ try:
     _DATA_DIR.mkdir(parents=True, exist_ok=True)
 except Exception:
     _DATA_DIR = BASE_DIR
-DATA_FILE   = _DATA_DIR / "invoices.json"
+DATA_FILE    = _DATA_DIR / "invoices.json"
+PENDING_FILE = _DATA_DIR / "scan_pending.json"
 # Use persistent dir for config on cloud, app dir on Windows
 CONFIG_FILE  = _DATA_DIR / "config.ini"
 # Copy base config.ini to DATA_DIR if not there yet
@@ -2146,6 +2147,24 @@ def _bg_emit(msg, t="info"):
     except Exception:
         pass
 
+def _save_pending_scan(from_date, to_date, quick):
+    """Write pending scan job to disk so it survives a deploy restart."""
+    try:
+        PENDING_FILE.write_text(
+            json.dumps({"from_date": from_date, "to_date": to_date, "quick": quick}),
+            encoding="utf-8",
+        )
+    except Exception:
+        pass
+
+def _clear_pending_scan():
+    """Remove pending scan file (called on completion or manual stop)."""
+    try:
+        if PENDING_FILE.exists():
+            PENDING_FILE.unlink()
+    except Exception:
+        pass
+
 def _run_bg_scan(task_id, from_date=None, to_date=None, quick=False):
     """Background scan - runs independently of HTTP connections."""
     import time as _t
@@ -2172,6 +2191,7 @@ def _run_bg_scan(task_id, from_date=None, to_date=None, quick=False):
             with _scan_state_lock:
                 _scan_state_live["found"] = found
             _bg_emit(f"✅ Скан завершён: {found} новых счетов", "ok")
+            _clear_pending_scan()
         finally:
             SCAN_LIMIT = orig_limit
             if scan_lock.locked(): scan_lock.release()
@@ -2193,10 +2213,10 @@ def start_bg_scan(from_date=None, to_date=None, quick=False):
     with _scan_state_lock:
         if _scan_state_live["running"]:
             return None  # already running
-        # Set running=True NOW (before thread starts) to prevent race condition
         _scan_state_live["running"] = True
         _scan_state_live["task_id"] = task_id
         _scan_state_live["queued"]  = False
+    _save_pending_scan(from_date, to_date, quick)
     t = threading.Thread(
         target=_run_bg_scan,
         args=(task_id, from_date, to_date, quick),
@@ -2978,6 +2998,7 @@ def api_scan_stop():
         pass
     with _scan_state_lock:
         _scan_state_live["running"] = False
+    _clear_pending_scan()
     return jsonify({"ok": True})
 
 
@@ -4417,6 +4438,22 @@ def _start_background():
     _bg_started = True
     check_notifications()
     log.info("PayCalendar started")
+    # Auto-resume scan if it was running before deploy/restart
+    if PENDING_FILE.exists():
+        try:
+            pending = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
+            fd = pending.get("from_date")
+            td = pending.get("to_date")
+            qk = pending.get("quick", False)
+            log.info(f"Auto-resuming scan after restart: from={fd} to={td} quick={qk}")
+            import time as _tm, threading as _thr
+            def _delayed_resume():
+                _tm.sleep(5)
+                log.info("Auto-resume: starting scan now")
+                start_bg_scan(from_date=fd, to_date=td, quick=qk)
+            _thr.Thread(target=_delayed_resume, daemon=True, name="scan-auto-resume").start()
+        except Exception as ex:
+            log.error(f"Auto-resume failed: {ex}")
 
 # Auto-start when imported (gunicorn)
 # Auto-fix wrong IMAP host (mail.zone.ee → imap.zone.eu)
