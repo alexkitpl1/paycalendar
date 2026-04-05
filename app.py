@@ -752,36 +752,63 @@ _PDF_DIR = _DATA_DIR / "pdfs"
 _PDF_DIR.mkdir(parents=True, exist_ok=True)
 
 
-def save_pdf(inv_id: str, pdf_bytes: bytes, filename: str = "", invoice_date: str = None, is_offer: bool = False) -> Path:
-    """Save PDF to local Volume + upload to Google Drive. Returns local path."""
-    _PDF_DIR.mkdir(parents=True, exist_ok=True)
+def save_pdf(inv_id: str, pdf_bytes: bytes, filename: str = "", invoice_date: str = None, is_offer: bool = False) -> str | None:
+    """
+    PRIMARY: Upload PDF to Google Drive.
+    FALLBACK: Save locally to Volume if Drive not connected.
+    Returns: gdrive webViewLink (primary) or local path str (fallback).
+    """
     safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", inv_id)[:80]
-    path = _PDF_DIR / f"{safe_id}.pdf"
-    path.write_bytes(pdf_bytes)
-    log.info(f"PDF saved: {path.name} ({len(pdf_bytes)//1024}KB)")
+    clean_name = re.sub(r"[^a-zA-Z0-9._-]", "_", filename or inv_id)[:80]
+    if not clean_name.endswith(".pdf"):
+        clean_name += ".pdf"
 
-    # Upload to Google Drive (non-blocking best-effort)
+    # ── Try Google Drive first (primary storage) ──────────────────────────
     try:
-        clean_name = re.sub(r"[^a-zA-Z0-9._\-]", "_", filename or inv_id)[:80]
-        if not clean_name.endswith(".pdf"):
-            clean_name += ".pdf"
         gdrive_result = gdrive_upload_pdf(pdf_bytes, clean_name, invoice_date, is_offer=is_offer)
         if gdrive_result:
-            # Store Drive link for quick access
-            _link_file = _PDF_DIR / f"{safe_id}.gdrive"
-            _link_file.write_text(gdrive_result.get("webViewLink",""), encoding="utf-8")
-            log.info(f"GDrive: {clean_name} → {gdrive_result.get('id','')[:20]}")
-    except Exception as _ge:
-        log.debug(f"GDrive upload skipped: {_ge}")
+            link = gdrive_result.get("webViewLink", "")
+            file_id = gdrive_result.get("id", "")
+            # Cache the link locally (tiny text file, not the PDF)
+            _PDF_DIR.mkdir(parents=True, exist_ok=True)
+            (_PDF_DIR / f"{safe_id}.gdrive").write_text(link, encoding="utf-8")
+            (_PDF_DIR / f"{safe_id}.gdrive_id").write_text(file_id, encoding="utf-8")
+            log.info(f"PDF → GDrive: {clean_name} ({len(pdf_bytes)//1024}KB)")
+            return link
+    except Exception as ex:
+        log.warning(f"GDrive upload failed, using local fallback: {ex}")
 
-    return path
+    # ── Fallback: local Volume storage ────────────────────────────────────
+    try:
+        _PDF_DIR.mkdir(parents=True, exist_ok=True)
+        path = _PDF_DIR / f"{safe_id}.pdf"
+        path.write_bytes(pdf_bytes)
+        log.info(f"PDF → local fallback: {path.name} ({len(pdf_bytes)//1024}KB)")
+        return str(path)
+    except Exception as ex:
+        log.error(f"PDF save failed entirely: {ex}")
+        return None
 
 
 def get_pdf_path(inv_id: str) -> Path | None:
-    """Get path to stored PDF for invoice. None if not found."""
+    """Get local path to PDF (fallback storage). None if only in Drive."""
     safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", inv_id)[:80]
     path = _PDF_DIR / f"{safe_id}.pdf"
     return path if path.exists() else None
+
+def has_pdf(inv_id: str) -> bool:
+    """True if PDF exists in Drive OR locally."""
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", inv_id)[:80]
+    return (
+        (_PDF_DIR / f"{safe_id}.gdrive").exists() or
+        (_PDF_DIR / f"{safe_id}.pdf").exists()
+    )
+
+def get_gdrive_id(inv_id: str) -> str:
+    """Get Google Drive file ID for downloading."""
+    safe_id = re.sub(r"[^a-zA-Z0-9_-]", "_", inv_id)[:80]
+    id_file = _PDF_DIR / f"{safe_id}.gdrive_id"
+    return id_file.read_text(encoding="utf-8").strip() if id_file.exists() else ""
 
 def get_gdrive_link(inv_id: str) -> str:
     """Get Google Drive view link for invoice PDF. Empty string if not uploaded."""
@@ -2699,13 +2726,11 @@ def api_get_invoices():
         inv_id = inv.get("id","")
         if inv_id:
             # Check local PDF
-            path = get_pdf_path(inv_id)
-            if path:
-                inv["has_pdf"] = True
-                if not inv.get("pdf_filename"):
-                    inv["pdf_filename"] = path.name
-            else:
-                inv["has_pdf"] = False
+            inv["has_pdf"] = has_pdf(inv_id)
+            if not inv.get("gdrive_link"):
+                gdrive = get_gdrive_link(inv_id)
+                if gdrive:
+                    inv["gdrive_link"] = gdrive
             # Check Drive link
             gdrive = get_gdrive_link(inv_id)
             if gdrive:
@@ -3141,157 +3166,46 @@ def api_reset_scan():
 
 @app.route("/api/invoice/<inv_id>/pdf")
 def api_serve_pdf(inv_id):
-    """Serve stored PDF for an invoice."""
-    path = get_pdf_path(inv_id)
-    if not path:
-        return jsonify({"error":"PDF не найден"}), 404
-    invs = load_invoices()
-    inv  = next((i for i in invs if i.get("id") == inv_id), {})
-    filename = inv.get("pdf_filename","invoice.pdf")
-    return send_from_directory(str(_PDF_DIR), path.name,
-                               mimetype="application/pdf",
-                               as_attachment=False,
-                               download_name=filename)
+    """Serve PDF: local file → Drive download → Drive redirect."""
+    # 1. Try local file (fallback storage)
+    local_path = get_pdf_path(inv_id)
+    if local_path:
+        from flask import send_file as _sf
+        return _sf(str(local_path), mimetype="application/pdf",
+                   as_attachment=False,
+                   download_name=local_path.name)
 
-@app.route("/api/invoice/<inv_id>/pdf-info")
-def api_pdf_info(inv_id):
-    """Check if PDF exists for invoice."""
-    path = get_pdf_path(inv_id)
-    gdrive = get_gdrive_link(inv_id)
-    return jsonify({
-        "has_pdf":      path is not None,
-        "size":         path.stat().st_size if path else 0,
-        "name":         path.name if path else None,
-        "gdrive_link":  gdrive,
-        "has_gdrive":   bool(gdrive),
-    })
-
-@app.route("/api/invoice/<inv_id>/gdrive-link")
-def api_gdrive_link(inv_id):
-    """Redirect to Google Drive file or return link."""
-    link = get_gdrive_link(inv_id)
-    if link:
-        from flask import redirect as _redirect
-        return _redirect(link)
-    # Try to get from invoice data
-    invs = load_invoices()
-    inv = next((i for i in invs if i.get("id") == inv_id), None)
-    if inv and inv.get("gdrive_link"):
-        return _redirect(inv["gdrive_link"])
-    return jsonify({"error": "Google Drive ссылка не найдена"}), 404
-
-@app.route("/api/pdfs/stats")
-def api_pdfs_stats():
-    return jsonify({
-        "count": pdf_count(),
-        "dir": str(_PDF_DIR),
-        "total_mb": round(sum(f.stat().st_size for f in _PDF_DIR.glob("*.pdf")) / 1024/1024, 2)
-             if _PDF_DIR.exists() else 0
-    })
-
-@app.route("/api/test-scan")
-def api_test_scan():
-    """Fast diagnostic: config + DoH DNS + IMAP + Gemini."""
-    import threading as _thr, imaplib as _il, ssl as _ssl2
-    r = {"config": {}, "imap": {}, "gemini": {}, "emails": [], "candidates": []}
-
-    # Config
-    reload_config()
-    r["config"] = {
-        "email":    EMAIL_ADDR,
-        "password": bool(EMAIL_PASS and len(EMAIL_PASS) > 3),
-        "imap":     f"{IMAP_HOST}:{IMAP_PORT}",
-        "provider": _active_provider() or "keyword-only",
-        "gemini":   bool(GEMINI_KEY),
-    }
-
-    # IMAP in thread with 12s timeout
-    imap_r = {}
-    emails = []
-
-    def _imap():
+    # 2. Try downloading from Google Drive by file ID
+    gdrive_id = get_gdrive_id(inv_id)
+    if gdrive_id:
         try:
-            ip = _resolve_host_doh(IMAP_HOST)
-            imap_r["doh_ip"] = ip
-            imap_r["doh_ok"] = ip != IMAP_HOST
-
-            alt = ["imap.zone.eu", IMAP_HOST, "mail.zone.ee"]
-            mail_conn, used_host = _try_imap_connect(alt, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
-            if not mail_conn:
-                raise Exception("Все IMAP хосты недоступны")
-            imap_r["connected_via"] = used_host
-            mail = mail_conn
-            mail.select("INBOX")
-            _, data = mail.search(None, "ALL")
-            ids = data[0].split()
-            imap_r["total"] = len(ids)
-            imap_r["ok"] = True
-
-            for uid in reversed(ids[-15:]):
-                try:
-                    _, d = mail.fetch(uid, "(BODY[HEADER.FIELDS (SUBJECT FROM DATE)])")
-                    if not d or not d[0]: continue
-                    raw = d[0][1].decode("utf-8", errors="replace")
-                    subj = frm = dt = ""
-                    for line in raw.split("\n"):
-                        ll = line.lower()
-                        if ll.startswith("subject:"):
-                            _s = line[8:].strip()
-                            try:
-                                import email.header as _eh2
-                                _parts = _eh2.decode_header(_s)
-                                subj = "".join(
-                                    (p.decode(enc or "utf-8", errors="replace") if isinstance(p,bytes) else p)
-                                    for p,enc in _parts
-                                )[:80]
-                            except Exception:
-                                subj = _s[:80]
-                        elif ll.startswith("from:"):   frm  = line[5:].strip()[:60]
-                        elif ll.startswith("date:"):   dt   = line[5:].strip()[:25]
-                    score = is_invoice_by_keywords(subj, "", frm, False)
-                    emails.append({"uid": uid.decode(), "subject": subj,
-                                   "from": frm, "date": dt,
-                                   "score": score, "invoice": score >= 50})
-                except Exception:
-                    pass
-            mail.logout()
+            from googleapiclient.http import MediaIoBaseDownload
+            import io as _io
+            svc = _get_gdrive_service()
+            if svc:
+                request = svc.files().get_media(fileId=gdrive_id)
+                buf = _io.BytesIO()
+                downloader = MediaIoBaseDownload(buf, request)
+                done = False
+                while not done:
+                    _, done = downloader.next_chunk()
+                buf.seek(0)
+                invs = load_invoices()
+                inv  = next((i for i in invs if i.get("id") == inv_id), {})
+                fname = inv.get("pdf_filename") or f"{inv_id}.pdf"
+                from flask import send_file as _sf
+                return _sf(buf, mimetype="application/pdf",
+                           as_attachment=False, download_name=fname)
         except Exception as ex:
-            imap_r["ok"] = False
-            imap_r["error"] = str(ex)[:150]
+            log.warning(f"Drive download {inv_id}: {ex}")
 
-    t = _thr.Thread(target=_imap, daemon=True)
-    t.start(); t.join(timeout=12)
+    # 3. Redirect to Drive view link
+    drive_link = get_gdrive_link(inv_id)
+    if drive_link:
+        from flask import redirect as _red
+        return _red(drive_link)
 
-    r["imap"]       = imap_r if imap_r else {"ok": False, "error": "timeout"}
-    r["emails"]     = emails
-    r["candidates"] = [e for e in emails if e["invoice"]]
-
-    # Gemini quick test
-    try:
-        gr = requests.post(
-            f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_KEY}",
-            json={"contents": [{"parts": [{"text": "Reply OK"}]}],
-                  "generationConfig": {"maxOutputTokens": 20, "temperature": 0}},
-            timeout=10
-        )
-        r["gemini"] = {"status": gr.status_code, "ok": gr.status_code == 200}
-        if gr.status_code == 200:
-            pts = gr.json().get("candidates",[{}])[0].get("content",{}).get("parts",[])
-            r["gemini"]["reply"] = "".join(p.get("text","") for p in pts)[:50]
-        else:
-            r["gemini"]["error"] = gr.text[:100]
-    except Exception as ex:
-        r["gemini"] = {"ok": False, "error": str(ex)[:100]}
-
-    r["summary"] = {
-        "emails_checked": len(emails),
-        "invoices_found": len(r["candidates"]),
-        "imap_ok": r["imap"].get("ok", False),
-        "gemini_ok": r["gemini"].get("ok", False),
-    }
-    return jsonify(r)
-
-
+    return jsonify({"error": "PDF не найден — не загружен в Drive"}), 404
 
 
 @app.route("/api/keys", methods=["GET"])
@@ -4163,6 +4077,206 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
 
 
 
+
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SYNOLOGY DRIVE INTEGRATION
+#  Reads documents from Synology NAS via WebDAV
+#  Config: config.ini → [synology] host/user/password/base_path
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _syn_cfg():
+    """Get Synology connection config."""
+    return {
+        "host":      c("synology","host","")      or os.environ.get("SYNOLOGY_HOST",""),
+        "user":      c("synology","user","")      or os.environ.get("SYNOLOGY_USER",""),
+        "password":  c("synology","password","")  or os.environ.get("SYNOLOGY_PASSWORD",""),
+        "base_path": c("synology","base_path","/QualityDesk") or "/QualityDesk",
+        "port":      int(c("synology","port","5006") or 5006),
+        "https":     c("synology","https","true").lower() == "true",
+    }
+
+def _syn_url(cfg: dict, path: str = "") -> str:
+    scheme = "https" if cfg["https"] else "http"
+    base = path.lstrip("/")
+    return f"{scheme}://{cfg['host']}:{cfg['port']}/webdav/{base}"
+
+def syn_list(path: str = "/") -> list:
+    """List files/folders on Synology via WebDAV PROPFIND."""
+    cfg = _syn_cfg()
+    if not cfg["host"]:
+        return []
+    try:
+        import xml.etree.ElementTree as ET
+        url = _syn_url(cfg, cfg["base_path"].rstrip("/") + "/" + path.lstrip("/"))
+        r = requests.request("PROPFIND", url,
+            auth=(cfg["user"], cfg["password"]),
+            headers={"Depth": "1", "Content-Type": "application/xml"},
+            data=b'''<?xml version="1.0"?><D:propfind xmlns:D="DAV:"><D:prop><D:displayname/><D:getcontentlength/><D:getlastmodified/><D:resourcetype/></D:prop></D:propfind>''',
+            verify=False, timeout=15)
+        if r.status_code not in (200, 207):
+            return []
+        ns = {"D": "DAV:"}
+        root = ET.fromstring(r.content)
+        items = []
+        for resp in root.findall("D:response", ns):
+            href = resp.findtext("D:href", "", ns)
+            name = resp.findtext(".//D:displayname", "", ns) or href.split("/")[-1]
+            is_dir = resp.find(".//D:collection", ns) is not None
+            size   = resp.findtext(".//D:getcontentlength", "0", ns)
+            mtime  = resp.findtext(".//D:getlastmodified", "", ns)
+            if name and name != path.split("/")[-1]:
+                items.append({
+                    "name":    name,
+                    "path":    href,
+                    "is_dir":  is_dir,
+                    "size":    int(size or 0),
+                    "mtime":   mtime,
+                    "ext":     name.rsplit(".",1)[-1].lower() if "." in name else "",
+                })
+        return sorted(items, key=lambda x: (not x["is_dir"], x["name"].lower()))
+    except Exception as ex:
+        log.warning(f"Synology list {path}: {ex}")
+        return []
+
+def syn_search(query: str, path: str = "/") -> list:
+    """Simple recursive search by filename on Synology."""
+    cfg = _syn_cfg()
+    if not cfg["host"] or not query:
+        return []
+    try:
+        results = []
+        q = query.lower()
+        def _recurse(p, depth=0):
+            if depth > 4: return
+            items = syn_list(p)
+            for item in items:
+                if q in item["name"].lower():
+                    results.append(item)
+                if item["is_dir"] and depth < 3:
+                    _recurse(item["path"], depth+1)
+                if len(results) >= 50: return
+        _recurse(path)
+        return results
+    except Exception as ex:
+        log.warning(f"Synology search: {ex}")
+        return []
+
+def syn_get_file(webdav_path: str) -> bytes | None:
+    """Download file from Synology."""
+    cfg = _syn_cfg()
+    if not cfg["host"]:
+        return None
+    try:
+        url = f"{'https' if cfg['https'] else 'http'}://{cfg['host']}:{cfg['port']}{webdav_path}"
+        r = requests.get(url, auth=(cfg["user"], cfg["password"]),
+                         verify=False, timeout=30)
+        if r.status_code == 200:
+            return r.content
+        return None
+    except Exception as ex:
+        log.warning(f"Synology get {webdav_path}: {ex}")
+        return None
+
+def syn_upload_file(webdav_path: str, data: bytes, filename: str) -> bool:
+    """Upload file to Synology."""
+    cfg = _syn_cfg()
+    if not cfg["host"]:
+        return False
+    try:
+        url = f"{'https' if cfg['https'] else 'http'}://{cfg['host']}:{cfg['port']}{webdav_path}/{filename}"
+        r = requests.put(url, data=data, auth=(cfg["user"], cfg["password"]),
+                         verify=False, timeout=30)
+        return r.status_code in (200, 201, 204)
+    except Exception as ex:
+        log.warning(f"Synology upload {filename}: {ex}")
+        return False
+
+def syn_status() -> dict:
+    """Check Synology connection."""
+    cfg = _syn_cfg()
+    if not cfg["host"]:
+        return {"ok": False, "connected": False, "error": "Не настроен хост Synology"}
+    try:
+        url = _syn_url(cfg, cfg["base_path"])
+        r = requests.request("PROPFIND", url,
+            auth=(cfg["user"], cfg["password"]),
+            headers={"Depth": "0"},
+            verify=False, timeout=10)
+        if r.status_code in (200, 207):
+            return {"ok": True, "connected": True, "host": cfg["host"],
+                    "base_path": cfg["base_path"]}
+        return {"ok": False, "connected": False, "error": f"HTTP {r.status_code}"}
+    except Exception as ex:
+        return {"ok": False, "connected": False, "error": str(ex)[:100]}
+
+
+
+# ── Synology Routes ───────────────────────────────────────────────────────────
+
+@app.route("/api/synology/status")
+def api_syn_status():
+    return jsonify(syn_status())
+
+@app.route("/api/synology/browse")
+def api_syn_browse():
+    """List folder contents on Synology."""
+    path = request.args.get("path", "/")
+    return jsonify({"ok": True, "items": syn_list(path), "path": path})
+
+@app.route("/api/synology/search")
+def api_syn_search():
+    """Search files on Synology by name."""
+    q    = request.args.get("q", "").strip()
+    path = request.args.get("path", "/")
+    if not q:
+        return jsonify({"ok": False, "error": "Введи поисковый запрос"})
+    return jsonify({"ok": True, "results": syn_search(q, path), "query": q})
+
+@app.route("/api/synology/file")
+def api_syn_file():
+    """Download/view file from Synology (proxy through server)."""
+    path = request.args.get("path", "")
+    if not path:
+        return jsonify({"error": "path required"}), 400
+    data = syn_get_file(path)
+    if not data:
+        return jsonify({"error": "Файл не найден на Synology"}), 404
+    ext  = path.rsplit(".", 1)[-1].lower() if "." in path else ""
+    mime = {"pdf": "application/pdf", "png": "image/png",
+            "jpg": "image/jpeg", "jpeg": "image/jpeg",
+            "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+            "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    }.get(ext, "application/octet-stream")
+    from flask import Response
+    return Response(data, mimetype=mime,
+                    headers={"Content-Disposition": f"inline; filename={path.split('/')[-1]}"})
+
+@app.route("/api/synology/save-config", methods=["POST"])
+def api_syn_save_config():
+    """Save Synology connection settings."""
+    d = request.json or {}
+    for key in ["host", "user", "password", "base_path", "port", "https"]:
+        if key in d:
+            save_config_value("synology", key, str(d[key]))
+    return jsonify({"ok": True})
+
+@app.route("/api/synology/link-to-invoice", methods=["POST"])
+def api_syn_link_invoice():
+    """Link a Synology file to an invoice (save path reference)."""
+    d       = request.json or {}
+    inv_id  = d.get("inv_id", "")
+    syn_path = d.get("synology_path", "")
+    if not inv_id or not syn_path:
+        return jsonify({"ok": False, "error": "inv_id и synology_path обязательны"})
+    invs = load_invoices()
+    for inv in invs:
+        if inv.get("id") == inv_id:
+            inv["synology_path"] = syn_path
+            save_invoices(invs)
+            return jsonify({"ok": True})
+    return jsonify({"ok": False, "error": "Счёт не найден"}), 404
 
 
 _bg_started = False

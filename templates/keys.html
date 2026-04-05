@@ -106,6 +106,36 @@ input:focus{border-color:#38bdf8}
 </div>
 
 
+
+<!-- SYNOLOGY -->
+<div class="card">
+  <div class="card-title">🗄 Synology NAS</div>
+  <div class="hint">Документы читаются прямо с NAS через WebDAV.<br>
+  Включи WebDAV в Synology: Панель управления → Службы файлов → WebDAV.</div>
+
+  <div id="syn-status" style="margin-bottom:12px;padding:10px;border-radius:8px;background:#111820;border:1px solid #1e2d45;font-size:13px">
+    <span style="color:#5a7a9a">Проверяю подключение...</span>
+  </div>
+
+  <label>Хост (IP или домен NAS)</label>
+  <input type="text" id="synHost" placeholder="192.168.1.100 или nas.welltechnology.eu" autocomplete="off">
+  <label style="margin-top:8px">Порт</label>
+  <input type="text" id="synPort" placeholder="5006 (HTTPS) или 5005 (HTTP)" value="5006" autocomplete="off">
+  <label style="margin-top:8px">Пользователь</label>
+  <input type="text" id="synUser" placeholder="qualitydesk" autocomplete="off">
+  <label style="margin-top:8px">Пароль</label>
+  <input type="password" id="synPass" autocomplete="new-password">
+  <label style="margin-top:8px">Базовая папка</label>
+  <input type="text" id="synBase" placeholder="/QualityDesk" value="/QualityDesk" autocomplete="off">
+  <div style="display:flex;align-items:center;gap:8px;margin-top:10px">
+    <input type="checkbox" id="synHttps" checked>
+    <label for="synHttps" style="font-size:13px;cursor:pointer">Использовать HTTPS</label>
+  </div>
+  <button class="btn btn1" style="margin-top:12px" onclick="saveSynConfig()">💾 Сохранить и проверить</button>
+
+  <div class="log" id="synLog"></div>
+</div>
+
 <!-- GOOGLE DRIVE -->
 <div class="card">
   <div class="card-title">📁 Google Drive</div>
@@ -330,6 +360,43 @@ loadAiStatus();
 loadAccounts();
 loadImapStatus();
 loadGDriveStatus();
+
+async function loadSynStatus(){
+  try {
+    var r = await api('/api/synology/status?ts='+Date.now());
+    var el = document.getElementById('syn-status');
+    if(r.connected){
+      el.innerHTML = '<span style="color:#4ade80">✅ Подключено: '+esc(r.host)+''+esc(r.base_path)+'</span>';
+      el.style.borderColor='rgba(74,222,128,.3)';
+      // Pre-fill fields
+      var cfg = r;
+    } else {
+      el.innerHTML = '<span style="color:#f59e0b">⚠ Не подключено</span> — '+esc(r.error||'Введи настройки ниже');
+    }
+  } catch(e){ document.getElementById('syn-status').textContent='Ошибка: '+e.message; }
+}
+
+async function saveSynConfig(){
+  var host  = document.getElementById('synHost').value.trim();
+  var port  = document.getElementById('synPort').value.trim()||'5006';
+  var user  = document.getElementById('synUser').value.trim();
+  var pass  = document.getElementById('synPass').value;
+  var base  = document.getElementById('synBase').value.trim()||'/QualityDesk';
+  var https = document.getElementById('synHttps').checked;
+  if(!host||!user||!pass){ log('synLog','Заполни хост, пользователь и пароль','err'); return; }
+  try {
+    var r = await api('/api/synology/save-config',{host,port,user,password:pass,base_path:base,https:String(https)});
+    if(!r.ok){ log('synLog','❌ '+r.error,'err'); return; }
+    log('synLog','Настройки сохранены. Проверяю подключение...','info');
+    setTimeout(async function(){
+      await loadSynStatus();
+      var st = await api('/api/synology/status');
+      log('synLog', st.connected?'✅ Synology подключён: '+st.host:'❌ Ошибка: '+(st.error||'нет соединения'), st.connected?'ok':'err');
+    }, 500);
+  } catch(e){ log('synLog','❌ '+e.message,'err'); }
+}
+loadSynStatus();
+
 
 // Listen for OAuth popup message
 // Load Gmail status
