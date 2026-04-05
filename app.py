@@ -748,11 +748,12 @@ def pdf_count() -> int:
 
 _gdrive_service = None
 
-def _get_gdrive_service():
+def _get_gdrive_service(force_refresh=False):
     """Build Google Drive service from stored credentials."""
     global _gdrive_service
-    if _gdrive_service:
+    if _gdrive_service and not force_refresh:
         return _gdrive_service
+    _gdrive_service = None  # reset on each call to pick up new tokens
     try:
         from google.oauth2.credentials import Credentials
         from googleapiclient.discovery import build
@@ -3328,13 +3329,35 @@ def api_gdrive_callback():
         # Reset cached service
         global _gdrive_service
         _gdrive_service = None
-        return """<html><body style="font-family:sans-serif;background:#0f1117;color:#e2e8f0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
-        <div style="text-align:center">
-        <div style="font-size:50px">✅</div>
-        <h2>Google Drive подключён!</h2>
-        <p style="color:#6b7280">Все PDF счетов будут автоматически сохраняться в Drive</p>
-        <a href="/keys" style="color:#60a5fa">← Вернуться в настройки</a>
-        </div></body></html>"""
+        # Verify it actually works
+        svc = _get_gdrive_service(force_refresh=True)
+        if svc:
+            try:
+                about = svc.about().get(fields="user").execute()
+                email = about.get("user",{}).get("emailAddress","")
+            except Exception:
+                email = "подключено"
+        else:
+            email = ""
+        return f"""<html>
+<head><meta charset="UTF-8">
+<script>
+  // Notify opener and close this window
+  if(window.opener) {{
+    window.opener.postMessage({{gdrive:'connected',email:'{email}'}}, '*');
+    setTimeout(function(){{ window.close(); }}, 1500);
+  }} else {{
+    setTimeout(function(){{ window.location='/keys'; }}, 2000);
+  }}
+</script>
+<body style="font-family:sans-serif;background:#0f1117;color:#e2e8f0;display:flex;align-items:center;justify-content:center;height:100vh;margin:0">
+<div style="text-align:center">
+  <div style="font-size:60px">✅</div>
+  <h2 style="margin:12px 0">Google Drive подключён!</h2>
+  <p style="color:#6b7280">{email}</p>
+  <p style="color:#4ade80;font-size:13px">Окно закроется автоматически...</p>
+  <a href="/keys" style="color:#60a5fa">← Вернуться в настройки</a>
+</div></body></html>"""
     except Exception as ex:
         return f"<h2>Ошибка: {ex}</h2><a href='/keys'>← Назад</a>"
 
@@ -3355,7 +3378,7 @@ def api_gdrive_save_credentials():
 @app.route("/api/gdrive/status")
 def api_gdrive_status():
     """Check Google Drive connection status."""
-    service = _get_gdrive_service()
+    service = _get_gdrive_service(force_refresh=True)
     if not service:
         return jsonify({"ok":False,"connected":False})
     try:

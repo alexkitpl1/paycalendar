@@ -326,9 +326,17 @@ loadAccounts();
 loadImapStatus();
 loadGDriveStatus();
 
+// Listen for OAuth popup message
+window.addEventListener('message', function(e){
+  if(e.data && e.data.gdrive === 'connected'){
+    log('gLog','✅ Подключено: '+e.data.email,'ok');
+    loadGDriveStatus();
+  }
+});
+
 async function loadGDriveStatus(){
   try {
-    var r = await api('/api/gdrive/status');
+    var r = await api('/api/gdrive/status?ts='+Date.now()); // bust cache
     var el = document.getElementById('gdrive-status');
     var setup = document.getElementById('gdrive-setup');
     var connected = document.getElementById('gdrive-connected');
@@ -356,8 +364,24 @@ async function saveGCreds(){
     var a = await api('/api/gdrive/auth-url');
     if(!a.ok){ log('gLog','❌ '+a.error,'err'); return; }
     window.open(a.url,'_blank','width=600,height=700');
-    log('gLog','✅ Разрешите доступ в открывшемся окне, затем вернитесь сюда','ok');
-    setTimeout(loadGDriveStatus, 5000);
+    log('gLog','✅ Разрешите доступ в открывшемся окне...','ok');
+    log('gLog','⏳ Жду подтверждения (обновляю каждые 3 сек)...','info');
+    // Poll until connected
+    var attempts = 0;
+    var poll = setInterval(async function(){
+      attempts++;
+      try {
+        var st = await api('/api/gdrive/status');
+        if(st.connected){
+          clearInterval(poll);
+          log('gLog','✅ Google Drive подключён: '+st.email,'ok');
+          loadGDriveStatus();
+        } else if(attempts > 20){
+          clearInterval(poll);
+          log('gLog','Обнови страницу чтобы проверить статус','warn');
+        }
+      } catch(e){}
+    }, 3000);
   } catch(e){ log('gLog','❌ '+e.message,'err'); }
 }
 
