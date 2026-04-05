@@ -488,6 +488,7 @@ body {
       <div id="sp-desktop" class="stat-pills-wrap"></div>
     </div>
     <div class="topbar-right">
+      <button class="icon-btn" onclick="toggleSearch()" title="Поиск" id="searchToggleBtn">🔍</button>
       <div class="theme-sw">
         <button class="th-btn th-dark" id="th-dark2" onclick="setTheme('dark')" title="Тёмная">🌑</button>
         <button class="th-btn th-grey" id="th-grey2" onclick="setTheme('grey')" title="Серая">🌫</button>
@@ -537,6 +538,72 @@ body {
 </div>
 
 <!-- Dropdown menu -->
+
+<!-- SEARCH PANEL -->
+<div id="searchPanel" style="display:none;position:fixed;top:0;left:0;right:0;bottom:0;z-index:500;background:rgba(12,15,20,.97);overflow-y:auto">
+  <div style="max-width:700px;margin:0 auto;padding:20px 16px">
+
+    <!-- Header -->
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:20px">
+      <button onclick="toggleSearch()" style="background:none;border:none;color:#5a7a9a;font-size:22px;cursor:pointer;flex-shrink:0">✕</button>
+      <div style="flex:1;position:relative">
+        <input id="searchInput" type="text" placeholder="Поиск по счетам, вендорам, суммам, PDF..." autocomplete="off"
+          style="width:100%;padding:14px 50px 14px 18px;border-radius:12px;border:2px solid #1e2d45;background:#111820;color:#e2e8f0;font-size:16px;outline:none"
+          oninput="searchDebounce()" onkeydown="if(event.key==='Escape')toggleSearch()">
+        <span style="position:absolute;right:16px;top:50%;transform:translateY(-50%);color:#5a7a9a;font-size:18px;pointer-events:none">🔍</span>
+      </div>
+    </div>
+
+    <!-- Filters -->
+    <div style="display:flex;gap:8px;margin-bottom:16px;flex-wrap:wrap" id="searchFilters">
+      <button class="sf active" onclick="setFilter('all',this)">Все</button>
+      <button class="sf" onclick="setFilter('invoice',this)">📄 Счета</button>
+      <button class="sf" onclick="setFilter('offer',this)">💼 Предложения</button>
+      <button class="sf" onclick="setFilter('unpaid',this)">⏳ Не оплачено</button>
+      <button class="sf" onclick="setFilter('paid',this)">✅ Оплачено</button>
+    </div>
+
+    <!-- Stats -->
+    <div id="searchStats" style="font-size:12px;color:#5a7a9a;margin-bottom:14px;min-height:18px"></div>
+
+    <!-- Results -->
+    <div id="searchResults"></div>
+
+    <!-- Empty state -->
+    <div id="searchEmpty" style="text-align:center;padding:60px 0;display:none">
+      <div style="font-size:48px;margin-bottom:12px">🔍</div>
+      <div style="font-size:15px;color:#5a7a9a">Ничего не найдено</div>
+      <div style="font-size:12px;color:#2a3a50;margin-top:6px">Попробуй другой запрос</div>
+    </div>
+
+    <!-- Hint (before search) -->
+    <div id="searchHint" style="text-align:center;padding:40px 0">
+      <div style="font-size:40px;margin-bottom:12px">🔍</div>
+      <div style="font-size:14px;color:#5a7a9a;margin-bottom:20px">Поиск по всем данным</div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;justify-content:center" id="quickSearches"></div>
+    </div>
+
+  </div>
+</div>
+
+<style>
+.sf{padding:6px 14px;border-radius:20px;border:1px solid #1e2d45;background:#111820;color:#5a7a9a;font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
+.sf.active,.sf:hover{background:#1e2d45;color:#e2e8f0;border-color:#2a3a50}
+.sr-card{background:#0f1520;border:1px solid #131e2d;border-radius:12px;padding:14px 16px;margin-bottom:10px;cursor:pointer;transition:border-color .15s;display:grid;grid-template-columns:1fr auto;gap:8px;align-items:start}
+.sr-card:hover{border-color:#2a3a50}
+.sr-vendor{font-size:14px;font-weight:700;color:#e2e8f0}
+.sr-desc{font-size:11px;color:#5a7a9a;margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:420px}
+.sr-meta{font-size:11px;color:#2a3a50;margin-top:6px;display:flex;gap:10px;flex-wrap:wrap}
+.sr-amount{font-size:18px;font-weight:800;color:#f59e0b;text-align:right;white-space:nowrap}
+.sr-status{font-size:10px;font-weight:700;text-align:right;margin-top:4px}
+.sr-badges{display:flex;gap:5px;margin-top:8px;flex-wrap:wrap}
+.sr-badge{padding:3px 8px;border-radius:12px;font-size:10px;font-weight:600}
+.hl{background:#f59e0b22;color:#f59e0b;border-radius:2px;padding:0 2px}
+#searchPanel input:focus{border-color:#60a5fa}
+.qsug{padding:8px 16px;border-radius:20px;border:1px solid #1e2d45;background:#0f1520;color:#8aa8c8;font-size:12px;cursor:pointer}
+.qsug:hover{border-color:#2a3a50;color:#e2e8f0}
+</style>
+
 <div id="top-menu" style="display:none;position:fixed;top:120px;left:12px;
   background:var(--bg2);border:1px solid var(--border2);border-radius:14px;
   padding:8px;z-index:200;min-width:210px;box-shadow:0 8px 32px rgba(0,0,0,.15)">
@@ -1803,6 +1870,189 @@ document.addEventListener('click', function(e){
 loadAll();
 setInterval(()=>loadAll(),5*60*1000); // refresh every 5 min
 startAutoTimer(60); // auto-scan countdown
+
+// ── SEARCH ───────────────────────────────────────────────────────────────────
+var _searchFilter = 'all';
+var _searchTimer  = null;
+var _searchOpen   = false;
+
+function toggleSearch(){
+  _searchOpen = !_searchOpen;
+  var p = document.getElementById('searchPanel');
+  p.style.display = _searchOpen ? 'block' : 'none';
+  if(_searchOpen){
+    document.getElementById('searchInput').focus();
+    document.getElementById('searchInput').value = '';
+    document.getElementById('searchResults').innerHTML = '';
+    document.getElementById('searchStats').textContent = '';
+    document.getElementById('searchEmpty').style.display = 'none';
+    document.getElementById('searchHint').style.display = 'block';
+    renderQuickSearches();
+  }
+}
+
+function renderQuickSearches(){
+  var vendors = {};
+  S.invoices.forEach(function(inv){
+    var v = inv.vendor||'';
+    if(v) vendors[v] = (vendors[v]||0)+1;
+  });
+  var top = Object.entries(vendors).sort(function(a,b){return b[1]-a[1];}).slice(0,8);
+  var el = document.getElementById('quickSearches');
+  el.innerHTML = '';
+  top.forEach(function(e){
+    var btn = document.createElement('button');
+    btn.className = 'qsug';
+    btn.textContent = e[0];
+    btn.onclick = function(){ quickSearch(e[0]); };
+    el.appendChild(btn);
+  });
+  ['arve','invoice','счёт','Telia'].forEach(function(q){
+    var btn = document.createElement('button');
+    btn.className = 'qsug';
+    btn.textContent = q;
+    btn.onclick = function(){ quickSearch(q); };
+    el.appendChild(btn);
+  });
+}
+function quickSearch(q){
+  document.getElementById('searchInput').value = q;
+  doSearch(q);
+}
+
+function setFilter(f, el){
+  _searchFilter = f;
+  document.querySelectorAll('.sf').forEach(function(b){ b.classList.remove('active'); });
+  el.classList.add('active');
+  var q = document.getElementById('searchInput').value.trim();
+  if(q) doSearch(q);
+}
+
+function searchDebounce(){
+  clearTimeout(_searchTimer);
+  var q = document.getElementById('searchInput').value.trim();
+  if(!q){
+    document.getElementById('searchResults').innerHTML='';
+    document.getElementById('searchStats').textContent='';
+    document.getElementById('searchEmpty').style.display='none';
+    document.getElementById('searchHint').style.display='block';
+    return;
+  }
+  document.getElementById('searchHint').style.display='none';
+  _searchTimer = setTimeout(function(){ doSearch(q); }, 280);
+}
+
+async function doSearch(q){
+  if(!q) return;
+  document.getElementById('searchStats').textContent='Ищу...';
+  try {
+    var url = '/api/search?q='+encodeURIComponent(q)+'&type='+_searchFilter+'&n=80';
+    var r = await fetch(url,{credentials:'include'});
+    var data = await r.json();
+    renderSearchResults(data.results, q);
+    var el = document.getElementById('searchEmpty');
+    if(data.results.length===0){
+      document.getElementById('searchResults').innerHTML='';
+      el.style.display='block';
+      document.getElementById('searchStats').textContent='';
+    } else {
+      el.style.display='none';
+      document.getElementById('searchStats').textContent=
+        'Найдено: '+data.total+(data.total===80?' (показаны первые 80)':'');
+    }
+  } catch(e){
+    document.getElementById('searchStats').textContent='Ошибка: '+e.message;
+  }
+}
+
+function hlText(text, q){
+  if(!text||!q) return esc(text||'');
+  var tokens = q.toLowerCase().split(/\s+/).filter(Boolean);
+  var result = esc(text);
+  tokens.forEach(function(t){
+    var re = new RegExp('('+t.replace(/[.*+?^${}()|[\]\\]/g,'\\$&')+')','gi');
+    result = result.replace(re,'<span class="hl">$1</span>');
+  });
+  return result;
+}
+
+function renderSearchResults(results, q){
+  var STATUS_COLORS = {paid:'#4ade80',pending:'#f59e0b',overdue:'#f87171',urgent:'#fbbf24'};
+  var STATUS_LABELS = {paid:'✅ Оплачен',pending:'⏳ Ожидает',overdue:'⚠️ Просрочен',urgent:'🔔 Срочно'};
+  var today = new Date(); today.setHours(0,0,0,0);
+  var container = document.getElementById('searchResults');
+  container.innerHTML = '';
+
+  results.forEach(function(inv){
+    var st = 'pending';
+    if(inv.status==='paid') st='paid';
+    else if(inv.due_date){
+      var dd=new Date(inv.due_date+'T00:00:00');
+      if(dd<today) st='overdue';
+      else if((dd-today)/86400000<=7) st='urgent';
+    }
+
+    var card = document.createElement('div');
+    card.className = 'sr-card';
+    card.dataset.id = inv.id;
+    card.onclick = function(){ openSearchResult(inv.id); };
+
+    var left = '<div>';
+    left += '<div class="sr-vendor">'+hlText(inv.vendor||'Без имени',q)+'</div>';
+    if(inv.description) left += '<div class="sr-desc">'+hlText(inv.description,q)+'</div>';
+    left += '<div class="sr-meta">';
+    if(inv.invoice_number) left += '<span>№ '+hlText(inv.invoice_number,q)+'</span>';
+    if(inv.issue_date) left += '<span>📅 '+inv.issue_date+'</span>';
+    if(inv.due_date)   left += '<span>⏰ до '+inv.due_date+'</span>';
+    left += '</div>';
+    left += '<div class="sr-badges">';
+    if(inv.has_pdf)     left += '<span class="sr-badge" style="background:rgba(96,165,250,.15);color:#60a5fa">📄 PDF</span>';
+    if(inv.gdrive_link) left += '<span class="sr-badge" style="background:rgba(52,211,153,.12);color:#34d399">☁️ Drive</span>';
+    if(inv.is_offer)    left += '<span class="sr-badge" style="background:rgba(139,92,246,.15);color:#a78bfa">💼 Оффер</span>';
+    left += '</div></div>';
+
+    var right = '<div style="text-align:right">';
+    if(inv.amount) right += '<div class="sr-amount">'+fmtAmt(inv.amount,inv.currency)+'</div>';
+    right += '<div class="sr-status" style="color:'+STATUS_COLORS[st]+'">'+STATUS_LABELS[st]+'</div>';
+    right += '</div>';
+
+    card.innerHTML = left + right;
+
+    // PDF button
+    if(inv.has_pdf){
+      var pdfBtn = document.createElement('button');
+      pdfBtn.style.cssText='margin-top:8px;padding:4px 10px;border-radius:7px;border:1px solid #1e2d45;background:#111820;color:#60a5fa;font-size:11px;cursor:pointer';
+      pdfBtn.textContent = '📄 PDF';
+      pdfBtn.onclick = function(e){ e.stopPropagation(); openPdf(inv.id); };
+      card.querySelector('div:last-child').appendChild(pdfBtn);
+    }
+    if(inv.gdrive_link){
+      var driveA = document.createElement('a');
+      driveA.href = inv.gdrive_link;
+      driveA.target = '_blank';
+      driveA.style.cssText='display:block;margin-top:5px;padding:4px 10px;border-radius:7px;border:1px solid rgba(52,211,153,.25);background:rgba(52,211,153,.08);color:#34d399;font-size:11px;text-decoration:none';
+      driveA.textContent = '☁️ Drive';
+      driveA.onclick = function(e){ e.stopPropagation(); };
+      card.querySelector('div:last-child').appendChild(driveA);
+    }
+
+    container.appendChild(card);
+  });
+}
+
+function openSearchResult(id){
+  toggleSearch();
+  // Navigate to the invoice month
+  var inv = S.invoices.find(function(i){ return i.id===id; });
+  if(!inv) return;
+  var dt = new Date((inv.due_date||inv.issue_date||'')+'T00:00:00');
+  if(isNaN(dt)) return;
+  S.month = new Date(dt.getFullYear(), dt.getMonth(), 1);
+  S.view  = 'month';
+  S.activeDay = dt;
+  render();
+}
+
 </script>
 
 <!-- PWA install banner (Android) -->

@@ -2594,11 +2594,15 @@ def api_auth_check():
 
 @app.route("/keys")
 def keys_page():
+    if not _check_token():
+        return redirect("/login-page?next=/keys")
     return send_from_directory(TMPL_DIR, "keys.html")
 
 
 @app.route("/rescan")
 def rescan_page():
+    if not _check_token():
+        return redirect("/login-page?next=/rescan")
     return send_from_directory(TMPL_DIR, "rescan.html")
 
 
@@ -2699,6 +2703,7 @@ def api_mark_paid(inv_id):
 
 @app.route("/debug-log")
 def debug_log_view():
+    if not _check_token(): return redirect("/login-page?next=/debug-log")
     level   = request.args.get("level", "all")   # all / info / error / warn
     lines_n = int(request.args.get("n", "500"))
     search  = request.args.get("q", "").lower()
@@ -3485,6 +3490,63 @@ def api_gdrive_upload_existing():
     if uploaded:
         save_invoices(invs)
     return jsonify({"ok":True,"uploaded":uploaded,"failed":failed,"total":uploaded+failed})
+
+
+
+@app.route("/api/search")
+def api_search():
+    """
+    Universal search across invoices, PDFs, vendors, descriptions.
+    Query params: q=<text> type=all|invoice|offer|paid n=<limit>
+    """
+    q     = request.args.get("q", "").strip().lower()
+    typ   = request.args.get("type", "all")
+    limit = min(int(request.args.get("n", "50")), 200)
+
+    if not q:
+        return jsonify({"results": [], "total": 0, "query": ""})
+
+    invs    = load_invoices()
+    results = []
+    tokens  = q.split()
+
+    for inv in invs:
+        # Type filter
+        if typ == "invoice" and inv.get("is_offer"):    continue
+        if typ == "offer"   and not inv.get("is_offer"): continue
+        if typ == "paid"    and inv.get("status") != "paid": continue
+        if typ == "unpaid"  and inv.get("status") == "paid": continue
+
+        # Build searchable text
+        text = " ".join(str(v) for v in [
+            inv.get("vendor",""),
+            inv.get("description",""),
+            inv.get("invoice_number",""),
+            inv.get("amount",""),
+            inv.get("currency",""),
+            inv.get("due_date",""),
+            inv.get("issue_date",""),
+            inv.get("category",""),
+            inv.get("pdf_filename",""),
+        ]).lower()
+
+        # Also search PDF text if available
+        pdf_path = get_pdf_path(inv.get("id",""))
+        if pdf_path and q in text or all(t in text for t in tokens):
+            score = sum(10 for t in tokens if t in text)
+            # Boost exact vendor match
+            if q in (inv.get("vendor","") or "").lower(): score += 30
+            if q in (inv.get("invoice_number","") or "").lower(): score += 20
+            results.append({**inv, "_score": score})
+
+    results.sort(key=lambda x: x.get("_score", 0), reverse=True)
+    results = results[:limit]
+
+    return jsonify({
+        "results": results,
+        "total":   len(results),
+        "query":   q,
+    })
 
 
 _bg_started = False
