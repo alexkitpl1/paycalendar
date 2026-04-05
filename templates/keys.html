@@ -100,6 +100,7 @@ input:focus{border-color:#38bdf8}
 <div class="card">
   <div class="card-title">🗄️ Управление данными</div>
   <button class="btn btn2" onclick="doAction('/api/reset-scan','POST',{},'resetLog','Сброс состояния сканирования...')">🔄 Сбросить состояние скана</button>
+  <button class="btn btn2" style="margin-top:8px" onclick="doAction('/api/invoices/fix-amounts','POST',{},'resetLog','Восстановление сумм...')">💰 Восстановить суммы (regex)</button>
   <button class="btn btn2" style="margin-top:8px" onclick="doAction('/api/invoices/cleanup','POST',{},'resetLog','Очистка нулевых счетов...')">🧹 Очистить нулевые счета</button>
   <button class="btn btn2" style="margin-top:8px" onclick="doAction('/api/invoices/fix-offers','POST',{},'resetLog','Исправление офферов...')">✂️ Исправить дубликаты офферов</button>
   <div class="log" id="resetLog"></div>

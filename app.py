@@ -223,10 +223,11 @@ Russian: счёт/оплата | German: Rechnung/Zahlung | Nordic: faktura/lask
 French/Spanish/Italian: facture/factura/fattura
 
 If email has attachments it is LIKELY an invoice — set is_invoice=true.
+IMPORTANT: Extract the ACTUAL amount from the text. Do NOT leave amount as 0 if the total/sum is mentioned anywhere in the text.
 
-If invoice: {{"is_invoice":true,"vendor":"","invoice_number":"","amount":0.0,
+If invoice: {{"is_invoice":true,"vendor":"NAME","invoice_number":"INV-XXX","amount":TOTAL_AMOUNT,
 "currency":"EUR","due_date":"YYYY-MM-DD","issue_date":"YYYY-MM-DD",
-"description":"","category":"utilities|software|services|rent|taxes|supplies|logistics|marketing|other"}}
+"description":"brief description","category":"utilities|software|services|rent|taxes|supplies|logistics|marketing|other"}}
 If not invoice: {{"is_invoice":false}}"""
 
 # ── Flask app ─────────────────────────────────────────────────────────────────
@@ -1634,6 +1635,13 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                                         date=ds, has_att=att, body=combined[:3000])
             obj = extract_json(ask_ai(prompt))
             if obj and obj.get("is_invoice"):
+                # Fallback: if AI didn't extract amount, use regex extractor
+                if not obj.get("amount") or float(obj.get("amount", 0)) == 0:
+                    search_text = subj + " " + combined
+                    fb_amount = extract_amount(search_text)
+                    if fb_amount > 0:
+                        obj["amount"] = fb_amount
+                        obj["currency"] = obj.get("currency") or extract_currency(search_text)
                 inv = build_invoice(obj, uid, subj, frm, ds, att, source)
                 prov = _active_provider() or "AI"
                 emit(f"✓ [{prov.upper()}] {inv['vendor']} "
@@ -2788,17 +2796,42 @@ def api_fix_offers():
 
 @app.route("/api/invoices/cleanup", methods=["POST"])
 def api_invoices_cleanup():
-    """Remove invoices with amount=0 and no useful data."""
+    """Remove invoices with amount=0, no vendor, and no useful data."""
     invs = load_invoices()
     before = len(invs)
     cleaned = [i for i in invs if (
         float(i.get("amount") or 0) > 0 or
-        i.get("status") == "paid"  # keep paid even if 0
+        i.get("status") == "paid" or  # keep paid even if 0
+        bool(i.get("vendor","").strip())  # keep if has vendor
     )]
     save_invoices(cleaned)
     removed = before - len(cleaned)
-    log.info(f"Cleanup: removed {removed} zero-amount invoices")
+    log.info(f"Cleanup: removed {removed} empty invoices")
     return jsonify({"ok": True, "removed": removed, "remaining": len(cleaned)})
+
+@app.route("/api/invoices/fix-amounts", methods=["POST"])
+def api_invoices_fix_amounts():
+    """Re-extract amounts for zero-amount invoices using regex on description/subject."""
+    invs   = load_invoices()
+    fixed  = 0
+    for inv in invs:
+        if float(inv.get("amount") or 0) > 0:
+            continue
+        # Try to extract amount from stored text fields
+        text = " ".join(filter(None, [
+            inv.get("description", ""),
+            inv.get("email_subject", ""),
+            inv.get("vendor", ""),
+            inv.get("invoice_number", ""),
+        ]))
+        amount = extract_amount(text)
+        if amount > 0:
+            inv["amount"]   = amount
+            inv["currency"] = inv.get("currency") or extract_currency(text) or "EUR"
+            fixed += 1
+    save_invoices(invs)
+    log.info(f"Fix amounts: recovered {fixed} amounts")
+    return jsonify({"ok": True, "fixed": fixed, "total": len(invs)})
 
 @app.route("/api/invoices", methods=["GET"])
 def api_get_invoices():
