@@ -492,6 +492,13 @@ body {
         <button class="nav-btn" onclick="nextP()">›</button>
       </div>
       <div id="sp-desktop" class="stat-pills-wrap"></div>
+      <div style="display:flex;gap:5px;align-items:center">
+        <button class="btn btn-gold"  id="scanThisBtn" onclick="scanSequential(1)" title="Сканировать письма за текущий месяц">📥 Этот месяц</button>
+        <button class="btn btn-glass" id="scan2Btn"    onclick="scanSequential(2)" title="Сканировать текущий + предыдущий месяц">📥 +Пред</button>
+        <button class="btn btn-glass" id="scan3Btn"    onclick="scanSequential(4)" title="Сканировать последние 4 месяца">📥 +3 мес</button>
+        <button class="btn btn-glass" id="refreshBtn"  onclick="doRefresh()"       title="Обновить список счетов из базы">🔄</button>
+        <span id="autoScanTimer" style="font-size:11px;color:var(--text3)"></span>
+      </div>
     </div>
     <div class="topbar-right">
       <div style="position:relative;display:flex;align-items:center" id="topSearchWrap"><input id="topSearchInput" type="text" placeholder="Поиск..." autocomplete="off" style="width:160px;padding:6px 30px 6px 12px;border-radius:20px;border:1px solid var(--border2);background:var(--bg2);color:var(--text);font-size:13px;outline:none;transition:width .2s" oninput="liveSearch(this.value)" onfocus="this.style.width='220px'" onblur="if(!this.value)this.style.width='160px'" onkeydown="if(event.key==='Escape'){this.value='';liveSearch('');this.blur();}"><span style="position:absolute;right:8px;font-size:14px;color:var(--text3);pointer-events:none">🔍</span></div>
@@ -502,12 +509,7 @@ body {
         <button class="vtab"        id="vt-of" onclick="setView('offers')"    title="Офферы и коммерческие предложения">💼 Офферы</button>
         <button class="vtab" id="vt-ct"        onclick="setView('contracts')" title="Контракты и договоры — не отображаются в счетах">📋 Контракты</button>
       </div>
-      <button class="btn btn-gold"  id="scanThisBtn" onclick="scanSequential(1)" title="Сканировать письма за текущий месяц">📥 Этот месяц</button>
-      <button class="btn btn-glass" id="scan2Btn"    onclick="scanSequential(2)" title="Сканировать текущий + предыдущий месяц">📥 +Пред</button>
-      <button class="btn btn-glass" id="scan3Btn"    onclick="scanSequential(4)" title="Сканировать последние 4 месяца">📥 +3 мес</button>
-      <button class="btn btn-glass" id="refreshBtn"  onclick="doRefresh()"       title="Обновить список счетов из базы">🔄</button>
-      <span id="autoScanTimer" style="font-size:11px;color:var(--text3)"></span>
-      <div class="theme-sw" style="margin-left:auto">
+      <div class="theme-sw">
         <button class="th-btn th-dark" id="th-dark2" onclick="setTheme('dark')" title="Тёмная">🌑</button>
         <button class="th-btn th-grey" id="th-grey2" onclick="setTheme('grey')" title="Серая">🌫</button>
         <button class="th-btn th-white" id="th-white2" onclick="setTheme('white')" title="Светлая">☀</button>
