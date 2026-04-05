@@ -168,21 +168,30 @@ async function loadAiStatus(){
   try {
     var d = await api('/api/keys');
     var h = '';
-    var providers = [
-      {name:'Gemini', key:'gemini', color:'amber'},
-      {name:'Groq',   key:'groq',   color:'green'},
-      {name:'OpenAI', key:'openai', color:'blue'},
-      {name:'Claude', key:'claude', color:'blue'},
-    ];
-    providers.forEach(function(p){
-      var cnt = (d[p.key+'_keys'] || []).length;
-      var active = d.active_provider === p.key;
-      h += '<span class="pill pill-'+(cnt>0?p.color:'red')+'" style="margin:0 4px 4px 0">'
-           +p.name+' '+(cnt>0?cnt+' ключ':'нет')+(active?' ✓':'')+'</span>';
-    });
-    if(!h) h = '<span class="pill pill-amber">Только ключевые слова</span>';
+    var active = d.active_provider || 'keyword';
+    // Gemini
+    var gm = d.gemini || {};
+    h += '<span class="pill pill-'+(gm.has_keys?'amber':'red')+'" style="margin:0 4px 4px 0">'
+         +'Gemini '+(gm.has_keys?(gm.total+'кл'):'нет')+(active==='gemini'?' ✓':'')+'</span>';
+    // Groq
+    var gr = d.groq || {};
+    h += '<span class="pill pill-'+(gr.has_keys?'green':'red')+'" style="margin:0 4px 4px 0">'
+         +'Groq '+(gr.has_keys?(gr.total+'кл'):'нет')+(active==='groq'?' ✓':'')+'</span>';
+    // OpenAI
+    var oa = d.openai || {};
+    h += '<span class="pill pill-'+(oa.has_keys?'blue':'red')+'" style="margin:0 4px 4px 0">'
+         +'OpenAI '+(oa.has_keys?(oa.total+'кл'):'нет')+(active==='openai'?' ✓':'')+'</span>';
+    // Claude
+    h += '<span class="pill pill-'+(d.claude_key?'blue':'red')+'" style="margin:0 4px 4px 0">'
+         +'Claude '+(d.claude_key?'✓':'нет')+(active==='claude'?' ✓':'')+'</span>';
+
+    if(active==='keyword')
+      h += '<div style="margin-top:8px;font-size:12px;color:#f59e0b">⚠ Нет рабочих ключей — используются ключевые слова</div>';
+    else
+      h += '<div style="margin-top:8px;font-size:12px;color:#4ade80">✅ Активный провайдер: <b>'+active+'</b></div>';
+
     document.getElementById('ai-status').innerHTML = h;
-  } catch(e){ document.getElementById('ai-status').textContent = 'Ошибка загрузки'; }
+  } catch(e){ document.getElementById('ai-status').textContent = 'Ошибка загрузки: '+e.message; }
 }
 
 async function addKey(){

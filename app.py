@@ -393,12 +393,12 @@ _openai_pool = KeyPool(_load_key_pool("OPENAI_API_KEY", "openai_key", OPENAI_KEY
 _provider_blocked = set()  # tracks quota-exceeded providers
 
 def _active_provider():
-    """Return first available AI provider (skips quota-exceeded ones)."""
-    if GEMINI_KEY  and len(GEMINI_KEY)  > 10 and "gemini"  not in _provider_blocked: return "gemini"
-    if API_KEY     and len(API_KEY)     > 20 and "claude"  not in _provider_blocked: return "claude"
-    if GROQ_KEY    and len(GROQ_KEY)    > 10 and "groq"    not in _provider_blocked: return "groq"
-    if OPENAI_KEY  and len(OPENAI_KEY)  > 10 and "openai"  not in _provider_blocked: return "openai"
-    return None  # will use keyword extractor
+    """Return first available AI provider — checks live pools, not stale globals."""
+    if _gemini_pool.current() and "gemini" not in _provider_blocked: return "gemini"
+    if _groq_pool.current()   and "groq"   not in _provider_blocked: return "groq"
+    if _openai_pool.current() and "openai" not in _provider_blocked: return "openai"
+    if API_KEY and len(API_KEY) > 20       and "claude" not in _provider_blocked: return "claude"
+    return None
 
 
 def _ask_huggingface(prompt):
@@ -3192,33 +3192,63 @@ def api_test_scan():
 
 @app.route("/api/keys", methods=["GET"])
 def api_keys_status():
-    """Show key pool status."""
+    """Show key pool status with truncated key previews."""
+    def pool_info(pool):
+        s = pool.status()
+        s["keys"] = [k[:16]+"..." for k in pool.keys]
+        s["has_keys"] = len(pool.keys) > 0
+        return s
     return jsonify({
-        "gemini": _gemini_pool.status(),
-        "groq":   _groq_pool.status(),
-        "openai": _openai_pool.status(),
+        "gemini":          pool_info(_gemini_pool),
+        "groq":            pool_info(_groq_pool),
+        "openai":          pool_info(_openai_pool),
+        "claude_key":      bool(API_KEY and len(API_KEY) > 20),
         "active_provider": _active_provider() or "keyword",
     })
 
 @app.route("/api/keys/add", methods=["POST"])
 def api_keys_add():
-    """Add a new API key to the pool."""
+    """Add API key to pool AND persist to Volume config.ini."""
+    global GEMINI_KEY, GROQ_KEY, OPENAI_KEY, API_KEY
     data     = request.json or {}
     provider = data.get("provider", "").lower()
     key      = data.get("key", "").strip()
     if not key or len(key) < 10:
         return jsonify({"ok": False, "error": "Key too short"})
+
     if provider == "gemini":
         _gemini_pool.add(key)
-        # Save to config
+        GEMINI_KEY = key  # update runtime global
         n = len(_gemini_pool.keys)
-        save_config_value("ai", f"gemini_key_{n}" if n > 1 else "gemini_key", key)
-        return jsonify({"ok": True, "pool": _gemini_pool.status()})
+        cfg_key = f"gemini_key_{n}" if n > 1 else "gemini_key"
+        save_config_value("ai", cfg_key, key)
+        log.info(f"Gemini key #{n} saved to Volume config")
+        return jsonify({"ok": True, "provider": "gemini", "pool": _gemini_pool.status()})
+
     elif provider == "groq":
         _groq_pool.add(key)
+        GROQ_KEY = key
         n = len(_groq_pool.keys)
-        save_config_value("ai", f"groq_key_{n}" if n > 1 else "groq_key", key)
-        return jsonify({"ok": True, "pool": _groq_pool.status()})
+        cfg_key = f"groq_key_{n}" if n > 1 else "groq_key"
+        save_config_value("ai", cfg_key, key)
+        log.info(f"Groq key #{n} saved to Volume config")
+        return jsonify({"ok": True, "provider": "groq", "pool": _groq_pool.status()})
+
+    elif provider == "openai":
+        _openai_pool.add(key)
+        OPENAI_KEY = key
+        n = len(_openai_pool.keys)
+        cfg_key = f"openai_key_{n}" if n > 1 else "openai_key"
+        save_config_value("ai", cfg_key, key)
+        log.info(f"OpenAI key #{n} saved to Volume config")
+        return jsonify({"ok": True, "provider": "openai", "pool": _openai_pool.status()})
+
+    elif provider == "claude":
+        API_KEY = key
+        save_config_value("claude", "api_key", key)
+        log.info("Claude API key saved to Volume config")
+        return jsonify({"ok": True, "provider": "claude"})
+
     return jsonify({"ok": False, "error": f"Unknown provider: {provider}"})
 
 
