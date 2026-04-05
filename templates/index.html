@@ -1477,23 +1477,6 @@ function renderTopbar(){
   }).length;
   if(ofCount)h+=`<div class="stat-pill pill-purple" onclick="setView('offers')">💼 Офферы <span class="pv">${ofCount}</span></div>`;
   setStatPills(h);
-  fetch('/api/email-accounts',{credentials:'include'})
-    .then(function(r){return r.json();})
-    .then(function(accs){
-      if(!accs||accs.length<=1) return;
-      ['sp-desktop','sp-mobile'].forEach(function(sid){
-        var sp=document.getElementById(sid);
-        if(!sp) return;
-        var old=sp.querySelector('.acc-pill');
-        if(old) sp.removeChild(old);
-        var p=document.createElement('div');
-        p.className='stat-pill acc-pill';
-        p.setAttribute('style','border-color:rgba(45,212,191,.3);color:#2dd4bf;cursor:pointer');
-        p.textContent=String.fromCodePoint(128231)+' '+accs.length+' ящ.';
-        p.onclick=function(){window.location='/keys';};
-        sp.appendChild(p);
-      });
-    }).catch(function(){});
 }
 
 function renderSumBar(){
