@@ -3219,6 +3219,80 @@ def api_reset_scan():
 
 
 
+@app.route("/api/backup/export", methods=["GET"])
+def api_backup_export():
+    """Download full backup: invoices + config as a single JSON file."""
+    import datetime as _dt
+    backup = {
+        "version": 2,
+        "exported_at": _dt.datetime.utcnow().isoformat() + "Z",
+        "invoices": load_invoices(),
+        "config": {},
+    }
+    # Include config sections
+    cfg = _load_cfg()
+    for section in cfg.sections():
+        backup["config"][section] = dict(cfg[section])
+    # Include scan state if present
+    if STATE_FILE.exists():
+        try:
+            backup["scan_state"] = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    ts = _dt.datetime.utcnow().strftime("%Y%m%d_%H%M")
+    filename = f"paycalendar_backup_{ts}.json"
+    resp = Response(
+        json.dumps(backup, ensure_ascii=False, indent=2),
+        mimetype="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+    return resp
+
+
+@app.route("/api/backup/import", methods=["POST"])
+def api_backup_import():
+    """Restore from backup JSON. Merges: new invoices added, existing kept."""
+    try:
+        data = request.json or {}
+        if "invoices" not in data:
+            return jsonify({"ok": False, "error": "Неверный формат — нет поля invoices"}), 400
+        incoming = data["invoices"]
+        if not isinstance(incoming, list):
+            return jsonify({"ok": False, "error": "invoices должен быть массивом"}), 400
+
+        mode = data.get("mode", "merge")  # merge | replace
+        if mode == "replace":
+            save_invoices(incoming)
+            added = len(incoming)
+            skipped = 0
+        else:
+            # merge: add only invoices missing from current
+            current = load_invoices()
+            current_ids = {i["id"] for i in current}
+            new_only = [i for i in incoming if i.get("id") and i["id"] not in current_ids]
+            if new_only:
+                save_invoices(current + new_only)
+            added = len(new_only)
+            skipped = len(incoming) - added
+
+        # Restore config if present
+        if "config" in data and isinstance(data["config"], dict):
+            cfg = _load_cfg()
+            for section, kv in data["config"].items():
+                if not cfg.has_section(section):
+                    cfg.add_section(section)
+                for k, v in kv.items():
+                    cfg.set(section, k, str(v))
+            with open(CONFIG_FILE, "w", encoding="utf-8") as f:
+                cfg.write(f)
+
+        return jsonify({"ok": True, "added": added, "skipped": skipped,
+                        "total": len(load_invoices())})
+    except Exception as ex:
+        log.exception("backup import error")
+        return jsonify({"ok": False, "error": str(ex)}), 500
+
+
 @app.route("/api/invoice/<inv_id>/pdf")
 def api_serve_pdf(inv_id):
     """Serve PDF: local file → Drive download → Drive redirect."""

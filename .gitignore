@@ -3,3 +3,4 @@ __pycache__/
 *.log
 invoices.json
 scan_state.json
+backups/

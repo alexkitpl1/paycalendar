@@ -108,6 +108,17 @@ input,select{font-family:'DM Sans',sans-serif}
 .sb:last-child{border-right:none}
 .sb[onclick]{cursor:pointer;transition:background .15s}
 .sb[onclick]:hover{background:var(--bg3)}
+
+/* ── Custom tooltip ──────────────────────────────────────────────────────── */
+#tip-box{
+  position:fixed;z-index:99999;pointer-events:none;
+  background:rgba(10,14,20,.95);color:#e0eaff;
+  border:1px solid rgba(56,189,248,.25);border-radius:7px;
+  padding:6px 11px;font-size:11px;font-family:'DM Mono',monospace;
+  line-height:1.5;max-width:260px;white-space:pre-wrap;word-break:break-word;
+  box-shadow:0 6px 20px rgba(0,0,0,.5);
+  opacity:0;transition:opacity .12s;
+}
 .sb-lbl{font-family:'DM Mono',monospace;font-size:8px;letter-spacing:1.2px;text-transform:uppercase;color:var(--text4);margin-bottom:1px}
 .sb-val{font-family:'DM Mono',monospace;font-size:16px;font-weight:500;letter-spacing:-.5px;line-height:1.1}
 .sb-sub{font-size:10px;color:var(--text4);margin-top:1px}
@@ -492,17 +503,17 @@ body {
         <button class="th-btn th-white" id="th-white2" onclick="setTheme('white')" title="Светлая">☀</button>
       </div>
       <div class="view-toggle">
-        <button class="vtab active" id="vt-m"  onclick="setView('month')">Месяц</button>
-        <button class="vtab"        id="vt-w"  onclick="setView('week')">Неделя</button>
-        <button class="vtab"        id="vt-o"  onclick="setView('overdue')">⚠ Долги</button>
-        <button class="vtab"        id="vt-of" onclick="setView('offers')">💼 Офферы</button>
-        <button class="vtab" id="vt-ct" onclick="setView('contracts')">📋 Контракты</button>
+        <button class="vtab active" id="vt-m"  onclick="setView('month')"     title="Календарь по месяцам — все счета на дни оплаты">Месяц</button>
+        <button class="vtab"        id="vt-w"  onclick="setView('week')"      title="Неделя — счета на текущую неделю">Неделя</button>
+        <button class="vtab"        id="vt-o"  onclick="setView('overdue')"   title="Просроченные счета — все неоплаченные сверх срока">⚠ Долги</button>
+        <button class="vtab"        id="vt-of" onclick="setView('offers')"    title="Офферы и коммерческие предложения">💼 Офферы</button>
+        <button class="vtab" id="vt-ct"        onclick="setView('contracts')" title="Контракты и договоры — не отображаются в счетах">📋 Контракты</button>
       </div>
-      <button class="btn btn-gold" id="scanThisBtn" onclick="scanSequential(1)">📥 Этот месяц</button>
-      <button class="btn btn-glass" id="scan2Btn" onclick="scanSequential(2)">📥 +Пред</button>
-      <button class="btn btn-glass" id="scan3Btn" onclick="scanSequential(4)">📥 +3 мес</button>
-      <button class="btn btn-glass" id="refreshBtn" onclick="doRefresh()">🔄</button>
-      <button class="btn btn-glass" onclick="resetAndScan()">🔁</button>
+      <button class="btn btn-gold"  id="scanThisBtn" onclick="scanSequential(1)" title="Сканировать письма за текущий месяц">📥 Этот месяц</button>
+      <button class="btn btn-glass" id="scan2Btn"    onclick="scanSequential(2)" title="Сканировать текущий + предыдущий месяц">📥 +Пред</button>
+      <button class="btn btn-glass" id="scan3Btn"    onclick="scanSequential(4)" title="Сканировать последние 4 месяца">📥 +3 мес</button>
+      <button class="btn btn-glass" id="refreshBtn"  onclick="doRefresh()"       title="Обновить список счетов из базы">🔄</button>
+      <button class="btn btn-glass" onclick="resetAndScan()"                      title="Полный сброс и пересканирование всей почты">🔁</button>
       <span id="autoScanTimer" style="font-size:11px;color:var(--text3)"></span>
     </div>
   </div>
@@ -2465,6 +2476,50 @@ function openSearchResult(id){
       style="padding:6px;background:transparent;border:none;color:#6b89a5;cursor:pointer">✕</button>
   </div>
 </div>
+
+<!-- Tooltip -->
+<div id="tip-box"></div>
+<script>
+(function(){
+  var box=document.getElementById('tip-box');
+  var cur=null,timer=null;
+  function show(el,e){
+    var tip=el.getAttribute('title')||el.getAttribute('data-tip');
+    if(!tip)return;
+    // prevent native browser tooltip
+    el._title=tip;el.setAttribute('title','');
+    box.textContent=tip;
+    box.style.opacity='1';
+    move(e);
+    cur=el;
+  }
+  function move(e){
+    var x=e.clientX+14,y=e.clientY+14;
+    var W=window.innerWidth,H=window.innerHeight;
+    if(x+270>W)x=e.clientX-270;
+    if(y+60>H)y=e.clientY-60;
+    box.style.left=x+'px';box.style.top=y+'px';
+  }
+  function hide(){
+    box.style.opacity='0';
+    if(cur){cur.setAttribute('title',cur._title||'');cur._title=null;cur=null;}
+  }
+  document.addEventListener('mouseover',function(e){
+    var el=e.target.closest('[title],[data-tip]');
+    if(el===cur)return;
+    hide();
+    if(el){timer=setTimeout(function(){show(el,e);},420);}
+  });
+  document.addEventListener('mousemove',function(e){
+    if(cur)move(e);
+  });
+  document.addEventListener('mouseout',function(e){
+    clearTimeout(timer);
+    if(cur&&!cur.contains(e.relatedTarget))hide();
+  });
+  document.addEventListener('click',function(){clearTimeout(timer);hide();});
+})();
+</script>
 
 <!-- iOS hint -->
 <div id="ios-hint" style="display:none;position:fixed;bottom:0;left:0;right:0;
