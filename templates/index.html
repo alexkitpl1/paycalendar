@@ -996,45 +996,77 @@ function renderOverdue(){
       var pa=PRI[a.priority||'none']||3,pb=PRI[b.priority||'none']||3;
       return pa!==pb?pa-pb:b.due_date.localeCompare(a.due_date);
     });
-    h+='<div style="margin-bottom:20px">';
+    h+='<div style="margin-bottom:24px">';
     h+='<div style="font-size:11px;font-weight:700;color:var(--text3);text-transform:uppercase;'
       +'padding:5px 0 8px;border-bottom:1px solid var(--border2);margin-bottom:10px;'
       +'display:flex;justify-content:space-between">'+g.label
       +'<span style="color:#f87171">'+fmtAmt(Math.round(g.total*100)/100)+'</span></div>';
-    h+='<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch">';
+    h+='<div style="display:flex;gap:10px;overflow-x:auto;padding-bottom:8px;-webkit-overflow-scrolling:touch">';
     sorted.forEach(function(inv,n){
       var dl=Math.round((today-new Date(inv.due_date+'T00:00:00'))/86400000);
       var bc=dl<=7?'#fbbf24':'#f87171';
       var num=String(n+1).padStart(2,'0');
-      h+='<div style="flex:0 0 195px;background:var(--bg2);border:1px solid var(--border2);'
-        +'border-left:3px solid '+bc+';border-radius:10px;padding:12px">';
-      // row: number + date
+      // card — clickable if has PDF or Drive
+      var clickable=inv.has_pdf||inv.gdrive_link;
+      var cardClick=clickable?'style="cursor:pointer"':'style="cursor:default"';
+      h+='<div '+cardClick+' data-inv-id="'+esc(inv.id)+'"'
+        +' style="flex:0 0 190px;background:var(--bg2);border:1px solid var(--border2);'
+        +'border-top:3px solid '+bc+';border-radius:10px;padding:12px;position:relative">';
+      // header: number + date
       h+='<div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">';
-      h+='<span style="font-size:18px;font-weight:800;color:'+bc+';font-family:monospace">#'+num+'</span>';
+      h+='<span style="font-size:17px;font-weight:800;color:'+bc+';font-family:monospace">#'+num+'</span>';
       h+='<span style="font-size:10px;color:var(--text3);background:var(--bg);padding:2px 7px;'
         +'border-radius:8px;border:1px solid var(--border)">до '+inv.due_date+'</span></div>';
       // vendor
-      h+='<div style="font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">'+esc(inv.vendor||'—')+'</div>';
-      if(inv.description)h+='<div style="font-size:10px;color:var(--text3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">'+esc(inv.description)+'</div>';
+      h+='<div style="font-size:13px;font-weight:700;overflow:hidden;text-overflow:ellipsis;'
+        +'white-space:nowrap;margin-bottom:3px">'+esc(inv.vendor||'—')+'</div>';
+      if(inv.description)h+='<div style="font-size:10px;color:var(--text3);overflow:hidden;'
+        +'text-overflow:ellipsis;white-space:nowrap;margin-bottom:3px">'+esc(inv.description)+'</div>';
       if(inv.invoice_number)h+='<div style="font-size:10px;color:var(--text3);margin-bottom:6px">№ '+esc(inv.invoice_number)+'</div>';
-      // amount + days
-      h+='<div style="font-size:16px;font-weight:800;color:#f87171;margin-bottom:3px">'+fmtAmt(inv.amount,inv.currency)+'</div>';
-      h+='<div style="font-size:10px;font-weight:600;color:'+bc+';margin-bottom:10px">просрочен '+dl+' дн.</div>';
-      // buttons
+      // amount + overdue days
+      h+='<div style="font-size:16px;font-weight:800;color:#f87171;margin-bottom:2px">'+fmtAmt(inv.amount,inv.currency)+'</div>';
+      h+='<div style="font-size:10px;color:'+bc+';font-weight:600;margin-bottom:10px">просрочен '+dl+' дн.</div>';
+      // PDF + Drive icons row
+      h+='<div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap">';
+      if(inv.has_pdf){
+        h+='<button class="ic-btn" data-id="'+esc(inv.id)+'" onclick="event.stopPropagation();openPdf(this.dataset.id)"'
+          +' style="display:flex;align-items:center;gap:4px;padding:5px 8px;font-size:11px;font-weight:600">'+pdfIcon(14)+' PDF</button>';
+      }
+      if(inv.gdrive_link){
+        h+='<a href="'+inv.gdrive_link+'" target="_blank" onclick="event.stopPropagation()"'
+          +' class="ic-btn" style="display:flex;align-items:center;gap:4px;padding:5px 8px;'
+          +'font-size:11px;font-weight:600;text-decoration:none;color:#34d399">☁️ Drive</a>';
+      }
+      if(!inv.has_pdf&&!inv.gdrive_link){
+        h+='<span style="font-size:10px;color:var(--text3);padding:5px 0">'+String.fromCodePoint(0x1F4CE)+' PDF не загружен</span>';
+      }
+      h+='</div>';
+      // action buttons
       h+='<div style="display:flex;flex-direction:column;gap:5px">';
-      h+='<button class="ic-btn ic-btn-pay" data-inv="'+esc(inv.id)+'" onclick="markPaidOv(this.dataset.inv)">✓ Оплачен</button>';
-      if(inv.has_pdf)h+='<button class="ic-btn" data-id="'+esc(inv.id)+'" onclick="openPdf(this.dataset.id)">'+pdfIcon(13)+' PDF</button>';
-      if(inv.gdrive_link)h+='<a href="'+inv.gdrive_link+'" target="_blank" class="ic-btn" style="text-decoration:none;color:#34d399">☁️ Drive</a>';
-      h+='<select data-inv="'+esc(inv.id)+'" onchange="setPriority(this.dataset.inv,this.value)" class="ic-btn" style="cursor:pointer;font-size:10px">';
-      h+='<option value="none"'+(!inv.priority||inv.priority==="none"?' selected':'')+'Приоритет></option>';
+      h+='<button class="ic-btn ic-btn-pay" data-inv="'+esc(inv.id)+'" onclick="event.stopPropagation();markPaidOv(this.dataset.inv)">✓ Оплачен</button>';
+      h+='<select data-inv="'+esc(inv.id)+'" onchange="event.stopPropagation();setPriority(this.dataset.inv,this.value)" class="ic-btn" style="cursor:pointer;font-size:10px">';
+      h+='<option value="none"'+(!inv.priority||inv.priority==="none"?' selected':'')+'Приоритет</option>';
       h+='<option value="high"'+(inv.priority==="high"?' selected':'')+'>'+String.fromCodePoint(0x1F534)+' Срочно</option>';
       h+='<option value="medium"'+(inv.priority==="medium"?' selected':'')+'>'+String.fromCodePoint(0x1F7E1)+' Важно</option>';
       h+='<option value="low"'+(inv.priority==="low"?' selected':'')+'>'+String.fromCodePoint(0x1F7E2)+' Обычный</option>';
-      h+='</select></div></div>';
+      h+='</select></div>';
+      // click card to open PDF
+      h+='</div>';
     });
     h+='</div></div>';
   });
   el.innerHTML=h;
+  // card click → open PDF or Drive
+  el.querySelectorAll('[data-inv-id]').forEach(function(card){
+    card.onclick=function(e){
+      if(e.target.tagName==='BUTTON'||e.target.tagName==='SELECT'||e.target.tagName==='A'||e.target.tagName==='OPTION')return;
+      var id=card.dataset.invId;
+      var inv=S.invoices.find(function(i){return i.id===id;});
+      if(!inv)return;
+      if(inv.has_pdf){openPdf(id);return;}
+      if(inv.gdrive_link){window.open(inv.gdrive_link,'_blank');return;}
+    };
+  });
 }
 
 function render(){
