@@ -1532,6 +1532,19 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
             skipped_dup += 1; all_uids.append(uid); continue
         existing_subj_dates.add(norm_key)
 
+        # ── Skip Fwd: emails — find original and increment its reminder_count ─
+        is_fwd = bool(re.match(r'^(fwd?:|fw:)', subj.strip(), re.IGNORECASE))
+        if is_fwd:
+            norm_fwd = _norm_subj(subj)
+            matched = False
+            for _inv in existing:
+                if norm_fwd and norm_fwd in _norm_subj(_inv.get("description","") or _inv.get("vendor","")):
+                    _inv["reminder_count"] = _inv.get("reminder_count", 1) + 1
+                    _inv["last_reminded"]  = ds
+                    matched = True
+                    break
+            skipped_dup += 1; all_uids.append(uid); continue
+
         # ── Keyword pre-filter ────────────────────────────────────────────
         score = is_invoice_by_keywords(subj, body, frm, att)
         if score < 15:
@@ -1675,9 +1688,21 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         last_uid = uid
         if inv: new_invs.append(inv)
 
-    # Always save: new invoices + updated reminder counts
-        save_invoices(existing + new_invs)
-        emit(f"✅ Добавлено {len(new_invs)} счетов!", "ok")
+    # Reload current state to preserve user changes made during scan
+    # (user may have marked invoices paid while scan was running)
+    current_saved  = load_invoices()
+    current_by_id  = {i["id"]: i for i in current_saved}
+    # Propagate reminder_count updates (non-destructive to user fields)
+    for inv in existing:
+        cur = current_by_id.get(inv["id"])
+        if cur and inv.get("reminder_count", 1) > cur.get("reminder_count", 1):
+            cur["reminder_count"] = inv["reminder_count"]
+            cur["last_reminded"]  = inv.get("last_reminded", cur.get("last_reminded"))
+    # Only add invoices not already in current state
+    truly_new = [i for i in new_invs if i["id"] not in current_by_id]
+    if truly_new:
+        save_invoices(current_saved + truly_new)
+        emit(f"✅ Добавлено {len(truly_new)} счетов!", "ok")
     else:
         emit("Новых счетов не найдено", "ok")
 
@@ -3142,6 +3167,7 @@ def api_config():
         "ai_provider":       provider or "keyword",
         "has_gemini":        bool(GEMINI_KEY),
         "has_groq":          bool(GROQ_KEY),
+        "ui_theme":          c("ui", "theme", ""),  # user's saved theme from Volume
     })
 
 

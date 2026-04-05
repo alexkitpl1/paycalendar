@@ -730,6 +730,8 @@ async function loadAll(){
   S.invoices = Array.isArray(inv) ? inv : [];
   const cfg = await apiGet("/api/config");
   S.company = (cfg && cfg.company) || "";
+  // Load theme from server Volume (overrides localStorage — survives cache clear)
+  if(cfg && cfg.ui_theme){try{setTheme(cfg.ui_theme);}catch(e){}}
   const nameEl = document.getElementById("company-name");
   if(nameEl) nameEl.textContent = S.company;
   // Update overdue tab badge
@@ -847,6 +849,8 @@ function setTheme(t){
   S.theme=t;
   try{document.documentElement.setAttribute("data-theme",t);}catch(e){}
   try{localStorage.setItem("pcal_theme",t);}catch(e){}
+  // Persist to server Volume so theme survives cache clear / new device
+  apiPost('/api/save-config',{section:'ui',key:'theme',value:t}).catch(function(){});
   ["dark","grey","white"].forEach(x=>{
     var el=document.getElementById("th-"+x);
     if(el) el.classList.toggle("active",x===t);
