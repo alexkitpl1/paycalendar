@@ -1751,7 +1751,7 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
                         "category": guess_category(subj, body, frm),
                         "invoice_number": "",
                     }, uid, subj, frm, ds, att, source)
-                emit(f"✓ [KW:{score}] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
+                    emit(f"✓ [KW:{score}] {inv['vendor']} {inv['amount']} {inv['currency']}", "ok")
 
         with lock:
             done[0] += 1
