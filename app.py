@@ -2046,8 +2046,16 @@ def scan_imap(emit, from_date=None, to_date=None):
             """Fetch full message: body text + extract ALL PDFs, parse invoice data."""
             try:
                 uid_b = uid_str.encode() if isinstance(uid_str, str) else uid_str
-                # Thread-safe IMAP fetch with reconnect
-                with _imap_lock:
+                # Thread-safe IMAP fetch with timeout to prevent deadlock
+                if not _imap_lock.acquire(timeout=30):
+                    log.warning(f"IMAP lock timeout for {uid_str}, skipping")
+                    return ""
+                try:
+                    # Set socket timeout to prevent hang
+                    try:
+                        _imap_ref[0].socket().settimeout(20)
+                    except Exception:
+                        pass
                     try:
                         _, data = _imap_ref[0].fetch(uid_b, "(RFC822)")
                     except Exception:
@@ -2059,6 +2067,8 @@ def scan_imap(emit, from_date=None, to_date=None):
                             _, data = _imap_ref[0].fetch(uid_b, "(RFC822)")
                         else:
                             return ""
+                finally:
+                    _imap_lock.release()
                 if not data or not data[0]: return ""
                 raw_msg = email.message_from_bytes(data[0][1])
                 body_text = get_plain_body(raw_msg)
@@ -2740,8 +2750,15 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
             nonlocal mail
             try:
                 real_uid = uid_str.split("_")[-1].encode()
-                # Thread-safe IMAP fetch with reconnect
-                with _mail_lock:
+                # Thread-safe IMAP fetch with timeout to prevent deadlock
+                if not _mail_lock.acquire(timeout=30):
+                    log.warning(f"IMAP lock timeout for {uid_str}, skipping")
+                    return ""
+                try:
+                    try:
+                        _mail_ref[0].socket().settimeout(20)
+                    except Exception:
+                        pass
                     try:
                         _, data = _mail_ref[0].fetch(real_uid, "(RFC822)")
                     except Exception:
@@ -2755,6 +2772,8 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
                             _, data = _mail_ref[0].fetch(real_uid, "(RFC822)")
                         else:
                             return ""
+                finally:
+                    _mail_lock.release()
                 if not data or not data[0]: return ""
                 raw_msg = email.message_from_bytes(data[0][1])
                 body_text = get_plain_body(raw_msg)
