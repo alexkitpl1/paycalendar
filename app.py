@@ -4690,34 +4690,10 @@ def _start_background():
     except Exception as ex:
         log.error(f"Auto-cleanup error: {ex}")
 
-    # ── Auto-resume OR trigger full re-scan after cleanup ─────────────────────
+    # ── Clean up pending file to prevent restart loops ──────────────────────
     if PENDING_FILE.exists():
-        # A scan was in progress before this restart — read params, then DELETE
-        # the file BEFORE starting so we don't loop on next restart
-        try:
-            pending = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
-            fd = pending.get("from_date")
-            td = pending.get("to_date")
-            qk = pending.get("quick", False)
-            # Delete FIRST to prevent restart loop
-            _clear_pending_scan()
-            log.info(f"Auto-resuming scan after restart: from={fd} to={td} quick={qk}")
-            import time as _tm, threading as _thr
-            def _delayed_resume():
-                _tm.sleep(5)
-                log.info("Auto-resume: starting scan now")
-                start_bg_scan(from_date=fd, to_date=td, quick=qk)
-            _thr.Thread(target=_delayed_resume, daemon=True, name="scan-auto-resume").start()
-        except Exception as ex:
-            log.error(f"Auto-resume failed: {ex}")
-    elif removed > 0:
-        # Bad invoices were deleted → schedule a full re-scan from 2025-01-01
-        import time as _tm2, threading as _thr2
-        def _delayed_rescan():
-            _tm2.sleep(8)
-            log.info(f"Auto-rescan: full scan from 2025-01-01 after cleanup of {removed} invoices")
-            start_bg_scan(from_date="2025-01-01", to_date=None, quick=False)
-        _thr2.Thread(target=_delayed_rescan, daemon=True, name="scan-post-cleanup").start()
+        _clear_pending_scan()
+        log.info("Cleared PENDING_FILE (no auto-scan on restart)")
 
 # Auto-start when imported (gunicorn)
 # Auto-fix wrong IMAP host (mail.zone.ee → imap.zone.eu)
