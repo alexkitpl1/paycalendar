@@ -4645,10 +4645,14 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
     from email.utils import parsedate_to_datetime as _pdt2
 
     import time as _gmail_t
+    # Set socket timeout for all Gmail API calls in this thread
+    _old_timeout = socket.getdefaulttimeout()
+    socket.setdefaulttimeout(15)
+
     for _mi, msg_stub in enumerate(msgs):
         try:
             hdr = None
-            for _retry in range(3):
+            for _retry in range(2):
                 try:
                     hdr = service.users().messages().get(
                         userId="me", id=msg_stub["id"],
@@ -4657,10 +4661,12 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
                     ).execute()
                     break
                 except Exception as _gex:
-                    if "429" in str(_gex) or "Rate" in str(_gex) or "quota" in str(_gex).lower():
+                    _gs = str(_gex)
+                    if "429" in _gs or "Rate" in _gs or "quota" in _gs.lower():
                         _gmail_t.sleep(2 * (_retry + 1))
+                    elif "timed out" in _gs.lower() or "timeout" in _gs.lower():
+                        _gmail_t.sleep(1)
                     else:
-                        log.debug(f"Gmail hdr {msg_stub['id']}: {_gex}")
                         break
             if not hdr:
                 continue
@@ -4707,6 +4713,7 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
         if (_mi + 1) % 100 == 0:
             emit(f"  📥 Gmail заголовки: {_mi+1}/{len(msgs)}...", "info")
 
+    socket.setdefaulttimeout(_old_timeout)
     emit(f"📨 Gmail: {len(emails_raw)} заголовков загружено", "ok")
 
     # Fetch body+PDFs for candidates (after keyword pre-filter)
