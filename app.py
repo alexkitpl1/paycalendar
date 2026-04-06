@@ -1641,9 +1641,13 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
     oai_ok  = len([k for k in _openai_pool.keys  if k not in _openai_pool.failed])
     has_cl  = 1 if (API_KEY and len(API_KEY) > 20) else 0
     n_keys  = gem_ok + grq_ok + oai_ok + has_cl
-    # Gemini: each key × 4 models = high throughput with per-key rate limiting
-    # Scale: 3 workers per Gemini key, 2 per Groq/OpenAI, 1 for Claude
-    workers = max(1, min(gem_ok * 3 + grq_ok * 2 + oai_ok * 2 + has_cl, 40, total))
+    # Scale workers based on source: Gmail API has rate limits → fewer workers
+    _is_gmail = source and "gmail" in source.lower()
+    if _is_gmail:
+        # Gmail: each fetch_body = 2-3 API calls → limit to 5 workers
+        workers = max(1, min(5, total))
+    else:
+        workers = max(1, min(gem_ok * 3 + grq_ok * 2 + oai_ok * 2 + has_cl, 40, total))
 
     emit(f"⚡ Параллельный анализ: {workers} потоков | "
          f"Gemini×{gem_ok} Groq×{grq_ok} OpenAI×{oai_ok} Claude×{has_cl}", "info")
@@ -4700,12 +4704,6 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
                     pt = extract_pdf_text(att["data"], max_chars=4000)
                     if pt:
                         pdf_texts.append(f"[PDF: {att['filename']}]\n{pt}")
-                    # Save to Drive
-                    try:
-                        clean = re.sub(r"[^a-zA-Z0-9._\-]","_",att["filename"])[:80]
-                        gdrive_upload_pdf(att["data"], clean, None)
-                    except Exception:
-                        pass
             result = body_text
             if pdf_texts:
                 result += "\n\n--- PDF ---\n" + "\n".join(pdf_texts)
