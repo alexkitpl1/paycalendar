@@ -4646,11 +4646,21 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
 
     for _mi, msg_stub in enumerate(msgs):
         try:
-            hdr = service.users().messages().get(
-                userId="me", id=msg_stub["id"],
-                format="metadata",
-                metadataHeaders=["Subject","From","Date"]
-            ).execute()
+            # Gmail API with retry on rate limit
+            for _retry in range(3):
+                try:
+                    hdr = service.users().messages().get(
+                        userId="me", id=msg_stub["id"],
+                        format="metadata",
+                        metadataHeaders=["Subject","From","Date"]
+                    ).execute()
+                    break
+                except Exception as _gex:
+                    if "429" in str(_gex) or "rate" in str(_gex).lower():
+                        import time as _gt
+                        _gt.sleep(2 * (_retry + 1))  # 2s, 4s, 6s backoff
+                        continue
+                    raise
             headers = {h["name"]: h["value"] for h in hdr.get("payload",{}).get("headers",[])}
             raw_subj = headers.get("Subject","")
             try:
@@ -4702,7 +4712,17 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
     def _fetch_gmail_body(uid_str):
         gmail_id = uid_str.replace("gmail_", "")
         try:
-            body_text, attachments = _gmail_get_body(_gmail_svc_ref, gmail_id)
+            # Retry on 429 rate limit
+            for _br in range(3):
+                try:
+                    body_text, attachments = _gmail_get_body(_gmail_svc_ref, gmail_id)
+                    break
+                except Exception as _bex:
+                    if "429" in str(_bex) or "rate" in str(_bex).lower():
+                        import time as _bt
+                        _bt.sleep(3 * (_br + 1))
+                        continue
+                    raise
             pdf_texts = []
             for att in attachments:
                 fn = att["filename"] or ""
