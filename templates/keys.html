@@ -201,6 +201,7 @@ input:focus{border-color:#38bdf8}
 
   <div id="gdrive-connected" style="display:none">
     <button class="btn btn2" onclick="uploadExisting()" id="uploadBtn">☁️ Загрузить все существующие PDF</button>
+    <button class="btn btn1" style="margin-top:6px" onclick="reconnectDrive()">🔄 Переподключить (обновить разрешения)</button>
     <button class="btn btn2" style="margin-top:6px;color:#f87171;border-color:rgba(248,113,113,.2)" onclick="disconnectDrive()">✕ Отключить</button>
   </div>
 
@@ -564,6 +565,18 @@ async function uploadExisting(){
     log('gLog','✅ Загружено: '+r.uploaded+' | Ошибок: '+r.failed,'ok');
   } catch(e){ log('gLog','❌ '+e.message,'err'); }
   btn.disabled=false; btn.textContent='☁️ Загрузить все существующие PDF';
+}
+
+async function reconnectDrive(){
+  try {
+    var r = await api('/api/gdrive/auth-url');
+    if(r.url){
+      window.open(r.url, '_blank', 'width=600,height=700');
+      log('gLog','🔄 Открыто окно авторизации Google — подтвердите все разрешения','info');
+    } else {
+      log('gLog','Ошибка: нет URL','err');
+    }
+  } catch(e){ log('gLog','Ошибка: '+e.message,'err'); }
 }
 
 async function disconnectDrive(){
