@@ -2232,46 +2232,45 @@ def scan_email(emit=None, quick=False, from_date=None, to_date=None):
         SCAN_LIMIT = QUICK_SCAN_LIMIT
         emitter(f"Quick scan: last {QUICK_SCAN_LIMIT} emails")
     try:
-        accounts = load_email_accounts()
         all_results = []
+        cutoff = GMAIL_CUTOFF
 
-        if len(accounts) > 1:
-            emitter(f"Сканирую {len(accounts)} почтовых аккаунта...", "ok")
-            for acc in accounts:
-                try:
-                    res = scan_account(acc, emitter, from_date=from_date, to_date=to_date)
-                    all_results.extend(res or [])
-                except Exception as ex:
-                    emitter(f"Аккаунт {acc['email']}: {ex}", "warn")
-            return all_results
-
-        # Smart routing: Zone IMAP (history) + Gmail API (new)
-        all_results = []
-        cutoff = GMAIL_CUTOFF  # 2026-04-05
-
-        # ── Zone IMAP: historical emails (before cutoff) ──────────────
-        if not from_date or from_date < cutoff:
-            imap_to_date = min(to_date, cutoff) if to_date else cutoff
-            emitter(f"📧 Zone IMAP (до {imap_to_date})...", "info")
-            try:
-                with socket.create_connection((IMAP_HOST, IMAP_PORT), timeout=8):
-                    imap_r = scan_imap(emitter,
-                        from_date=from_date, to_date=imap_to_date)
-                    if imap_r:
-                        all_results.extend(imap_r)
-                        emitter(f"✅ Zone: {len(imap_r)} счетов", "ok")
-            except Exception as ex:
-                emitter(f"Zone IMAP: {type(ex).__name__}", "warn")
-
-        # ── Gmail API: new emails (from cutoff onwards) ───────────────
-        gmail_from = max(from_date or cutoff, cutoff)
+        # ── Gmail API: primary source (migrated emails) ──────────────
+        gmail_from = from_date or cutoff
         if not to_date or to_date >= cutoff:
             emitter(f"📨 Gmail (с {gmail_from})...", "info")
-            gmail_r = scan_gmail(emitter,
-                from_date=gmail_from, to_date=to_date)
-            if gmail_r:
-                all_results.extend(gmail_r)
-                emitter(f"✅ Gmail: {len(gmail_r)} счетов", "ok")
+            try:
+                gmail_r = scan_gmail(emitter,
+                    from_date=gmail_from, to_date=to_date)
+                if gmail_r:
+                    all_results.extend(gmail_r)
+                    emitter(f"✅ Gmail: {len(gmail_r)} счетов", "ok")
+            except Exception as ex:
+                emitter(f"Gmail scan error: {ex}", "err")
+
+        # ── IMAP fallback: only for dates before cutoff (unmigrated) ─
+        if from_date and from_date < cutoff:
+            imap_to_date = min(to_date, cutoff) if to_date else cutoff
+            accounts = load_email_accounts()
+            if len(accounts) > 1:
+                emitter(f"📧 IMAP: {len(accounts)} аккаунтов (до {imap_to_date})...", "info")
+                for acc in accounts:
+                    try:
+                        res = scan_account(acc, emitter,
+                            from_date=from_date, to_date=imap_to_date)
+                        all_results.extend(res or [])
+                    except Exception as ex:
+                        emitter(f"Аккаунт {acc['email']}: {ex}", "warn")
+            else:
+                emitter(f"📧 Zone IMAP (до {imap_to_date})...", "info")
+                try:
+                    with socket.create_connection((IMAP_HOST, IMAP_PORT), timeout=8):
+                        imap_r = scan_imap(emitter,
+                            from_date=from_date, to_date=imap_to_date)
+                        if imap_r:
+                            all_results.extend(imap_r)
+                except Exception as ex:
+                    emitter(f"Zone IMAP: {type(ex).__name__}", "warn")
 
         return all_results
     finally:
