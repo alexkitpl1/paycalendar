@@ -1485,9 +1485,9 @@ def is_invoice_by_keywords(subject, body, sender, has_att):
             score += 10
             break
     
-    # Has attachment = likely invoice/document
+    # Has attachment = likely invoice/document — PDF attachment alone is enough
     if has_att:
-        score += 25
+        score += 30
     # Business email patterns
     if re.search(r'\b(nr|no|#|номер|nummer)\s*\.?\s*\d+', text, re.IGNORECASE):
         score += 15  # has document number
@@ -1644,8 +1644,8 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
     # Scale workers based on source: Gmail API has rate limits → fewer workers
     _is_gmail = source and "gmail" in source.lower()
     if _is_gmail:
-        # Gmail: each fetch_body = 2-3 API calls → limit to 5 workers
-        workers = max(1, min(5, total))
+        # Gmail: each fetch_body = 2-3 API calls → limit to 8 workers
+        workers = max(1, min(8, total))
     else:
         workers = max(1, min(gem_ok * 3 + grq_ok * 2 + oai_ok * 2 + has_cl, 40, total))
 
@@ -4607,19 +4607,12 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
     start = from_date or GMAIL_CUTOFF
     emit(f"📨 Gmail: письма с {start}...", "info")
 
-    # Build Gmail query — date range + invoice keywords
+    # Build Gmail query — ALL emails in date range (no keyword filter!)
+    # process_emails handles keyword scoring; here we just get everything
     query_parts = [f"after:{start.replace('-','/')}"]
     if to_date:
         query_parts.append(f"before:{to_date.replace('-','/')}")
-
-    # Search for invoice-related emails (broad query — process_emails does fine filtering)
-    inv_query = " OR ".join([
-        "subject:arve", "subject:invoice", "subject:счёт", "subject:rechnung",
-        "subject:faktura", "subject:bill", "subject:payment", "subject:offer",
-        "subject:quote", "subject:order", "subject:makse", "subject:tasuda",
-        "has:attachment filename:pdf"
-    ])
-    query = "(" + " ".join(query_parts) + ") (" + inv_query + ")"
+    query = " ".join(query_parts)
 
     try:
         # Paginate to get ALL results (not just 500)
@@ -4647,7 +4640,7 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
     import email.header as _eh2
     from email.utils import parsedate_to_datetime as _pdt2
 
-    for msg_stub in msgs:
+    for _mi, msg_stub in enumerate(msgs):
         try:
             hdr = service.users().messages().get(
                 userId="me", id=msg_stub["id"],
@@ -4670,11 +4663,17 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
             except Exception:
                 ds = date.today().isoformat()
 
-            # Check for PDF attachments
-            has_att = any(
-                p.get("filename","").lower().endswith(".pdf")
-                for p in hdr.get("payload",{}).get("parts",[])
-            )
+            # Check for PDF attachments (recursive — handles nested multipart)
+            def _has_pdf(parts):
+                for p in (parts or []):
+                    fn = (p.get("filename") or "").lower()
+                    mt = (p.get("mimeType") or "").lower()
+                    if fn.endswith(".pdf") or mt == "application/pdf":
+                        return True
+                    if p.get("parts") and _has_pdf(p["parts"]):
+                        return True
+                return False
+            has_att = _has_pdf(hdr.get("payload",{}).get("parts",[]))
 
             emails_raw.append({
                 "id":            f"gmail_{msg_stub['id']}",
@@ -4687,11 +4686,14 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
             })
         except Exception as ex:
             log.debug(f"Gmail header {msg_stub['id']}: {ex}")
+        if (_mi + 1) % 100 == 0:
+            emit(f"  📥 Gmail заголовки: {_mi+1}/{len(msgs)}...", "info")
 
     emit(f"📨 Gmail: {len(emails_raw)} заголовков загружено", "ok")
 
     # Fetch body+PDFs for candidates (after keyword pre-filter)
     _gmail_svc_ref = service  # capture for closure
+    _gmail_pending_pdfs = {}  # uid_str -> {filename, bytes, text}
 
     def _fetch_gmail_body(uid_str):
         gmail_id = uid_str.replace("gmail_", "")
@@ -4699,11 +4701,16 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
             body_text, attachments = _gmail_get_body(_gmail_svc_ref, gmail_id)
             pdf_texts = []
             for att in attachments:
-                fn = att["filename"].lower()
-                if fn.endswith(".pdf") or "pdf" in att["mime_type"]:
+                fn = att["filename"] or ""
+                if fn.lower().endswith(".pdf") or "pdf" in att.get("mime_type",""):
                     pt = extract_pdf_text(att["data"], max_chars=4000)
                     if pt:
-                        pdf_texts.append(f"[PDF: {att['filename']}]\n{pt}")
+                        pdf_texts.append(f"[PDF: {fn}]\n{pt}")
+                    # Store PDF for later saving
+                    _gmail_pending_pdfs[uid_str] = {
+                        "filename": fn, "bytes": att["data"], "text": pt or "",
+                        "parsed": parse_pdf_invoice(pt, fn) if pt else {},
+                    }
             result = body_text
             if pdf_texts:
                 result += "\n\n--- PDF ---\n" + "\n".join(pdf_texts)
@@ -4716,6 +4723,41 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
     result = process_emails(emails_raw, emit,
                             fetch_body=_fetch_gmail_body,
                             source="gmail")
+
+    # Save PDFs and enrich invoices with PDF data
+    if _gmail_pending_pdfs and isinstance(result, list):
+        for inv in result:
+            uid = inv.get("email_uid", "")
+            if uid in _gmail_pending_pdfs:
+                pdf_info = _gmail_pending_pdfs[uid]
+                try:
+                    link = save_pdf(inv["id"], pdf_info["bytes"],
+                                    pdf_info["filename"],
+                                    invoice_date=inv.get("issue_date",""))
+                    inv["has_pdf"] = True
+                    inv["pdf_filename"] = pdf_info["filename"]
+                    if link:
+                        inv["pdf_link"] = link
+                    # Enrich from PDF parsing
+                    parsed = pdf_info.get("parsed", {})
+                    if parsed.get("is_invoice"):
+                        if (not inv.get("amount") or float(inv.get("amount",0)) == 0) and parsed.get("amount"):
+                            inv["amount"] = parsed["amount"]
+                        if not inv.get("due_date") and parsed.get("due_date"):
+                            inv["due_date"] = parsed["due_date"]
+                        if parsed.get("issue_date") and not inv.get("issue_date"):
+                            inv["issue_date"] = parsed["issue_date"]
+                        if not inv.get("invoice_number") and parsed.get("invoice_number"):
+                            inv["invoice_number"] = parsed["invoice_number"]
+                except Exception as ex:
+                    log.debug(f"Gmail PDF save {uid}: {ex}")
+        # Re-save enriched invoices
+        all_inv = load_invoices()
+        inv_by_id = {i["id"]: i for i in all_inv}
+        for inv in result:
+            if inv["id"] in inv_by_id:
+                inv_by_id[inv["id"]].update(inv)
+        save_invoices(all_inv)
     emit(f"✅ Gmail: найдено {len(result)} счетов", "ok")
     return result
 
