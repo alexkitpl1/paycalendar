@@ -4644,9 +4644,10 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
     import email.header as _eh2
     from email.utils import parsedate_to_datetime as _pdt2
 
+    import time as _gmail_t
     for _mi, msg_stub in enumerate(msgs):
         try:
-            # Gmail API with retry on rate limit
+            hdr = None
             for _retry in range(3):
                 try:
                     hdr = service.users().messages().get(
@@ -4656,11 +4657,13 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
                     ).execute()
                     break
                 except Exception as _gex:
-                    if "429" in str(_gex) or "rate" in str(_gex).lower():
-                        import time as _gt
-                        _gt.sleep(2 * (_retry + 1))  # 2s, 4s, 6s backoff
-                        continue
-                    raise
+                    if "429" in str(_gex) or "Rate" in str(_gex) or "quota" in str(_gex).lower():
+                        _gmail_t.sleep(2 * (_retry + 1))
+                    else:
+                        log.debug(f"Gmail hdr {msg_stub['id']}: {_gex}")
+                        break
+            if not hdr:
+                continue
             headers = {h["name"]: h["value"] for h in hdr.get("payload",{}).get("headers",[])}
             raw_subj = headers.get("Subject","")
             try:
@@ -4677,17 +4680,18 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
             except Exception:
                 ds = date.today().isoformat()
 
-            # Check for PDF attachments (recursive — handles nested multipart)
-            def _has_pdf(parts):
-                for p in (parts or []):
-                    fn = (p.get("filename") or "").lower()
-                    mt = (p.get("mimeType") or "").lower()
-                    if fn.endswith(".pdf") or mt == "application/pdf":
-                        return True
-                    if p.get("parts") and _has_pdf(p["parts"]):
-                        return True
-                return False
-            has_att = _has_pdf(hdr.get("payload",{}).get("parts",[]))
+            # Check for attachments (any attachment = candidate)
+            payload = hdr.get("payload", {})
+            has_att = False
+            for p in (payload.get("parts") or []):
+                fn = (p.get("filename") or "").lower()
+                if fn:
+                    has_att = True
+                    break
+                for sp in (p.get("parts") or []):
+                    if (sp.get("filename") or ""):
+                        has_att = True
+                        break
 
             emails_raw.append({
                 "id":            f"gmail_{msg_stub['id']}",
