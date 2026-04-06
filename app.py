@@ -567,7 +567,7 @@ def _ask_gemini(prompt):
     for model in good_models:
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={key}"
         try:
-            r = requests.post(url, json=body, timeout=25)
+            r = requests.post(url, json=body, timeout=15)
             if r.status_code == 200:
                 log.debug(f"Gemini OK via {model}")
                 parts = r.json().get("candidates",[{}])[0].get("content",{}).get("parts",[])
@@ -602,8 +602,12 @@ def _ask_claude(prompt):
         json={"model": MODEL, "max_tokens": 1000,
               "system": CLAUDE_SYSTEM,
               "messages": [{"role":"user","content": prompt}]},
-        timeout=30,
+        timeout=15,
     )
+    if r.status_code in (401, 403):
+        _provider_blocked.add("claude")  # don't retry invalid key
+        log.error(f"Claude API auth error {r.status_code} — blocked")
+        r.raise_for_status()
     if r.status_code != 200:
         log.error(f"Claude API error: {r.status_code} {r.text[:200]}")
         r.raise_for_status()
