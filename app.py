@@ -4520,7 +4520,7 @@ def api_migrate_stop():
 #  Zone.eu IMAP handles everything before 2026-04-05
 # ═══════════════════════════════════════════════════════════════════════════════
 
-GMAIL_CUTOFF = "2026-01-01"  # All emails migrated to Gmail — scan from Gmail
+GMAIL_CUTOFF = "2099-01-01"  # Disabled: Gmail fetch_body hangs → use IMAP for scan
 
 
 def _get_gmail_service():
