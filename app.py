@@ -462,20 +462,19 @@ def ask_ai(prompt):
     errors = []
 
     # ── 1. Gemini (all keys × all models) ─────────────────────────────────────
-    if _gemini_pool.keys:
-        orig_failed = set(_gemini_model_failed)
-        _gemini_model_failed.clear()
-        for _attempt in range(len(_gemini_pool.keys) * len(_GEMINI_MODELS)):
+    if _gemini_pool.keys and "gemini" not in _provider_blocked:
+        # Try up to 3× (key × models) to allow for transient 429 errors
+        max_tries = min(len(_gemini_pool.keys) * len(_GEMINI_MODELS), 12)
+        for _attempt in range(max_tries):
             try:
                 return _ask_gemini(prompt)
             except Exception as ex:
                 err = str(ex)
                 errors.append(f"Gemini: {err[:60]}")
                 if "нет ключей" in err or "ALL keys" in err.lower():
-                    break  # all keys exhausted
+                    break
                 if "invalid" in err.lower() or "billing" in err.lower():
                     _provider_blocked.add("gemini"); break
-                # quota → already rotated inside _ask_gemini, try again
         log.info(f"Gemini exhausted ({len(errors)} attempts) → trying Groq")
 
     # ── 2. Groq (all keys) ────────────────────────────────────────────────────
@@ -521,6 +520,9 @@ def ask_ai(prompt):
     raise ValueError("Все AI провайдеры недоступны — используются ключевые слова")
 
 _gemini_last_call = [0.0]
+# Per-key rate limiter: {key_prefix: last_call_time}
+_gemini_key_timers = {}
+_gemini_timer_lock = threading.Lock()
 
 # Gemini models - each has SEPARATE daily quota (free tier)
 _GEMINI_MODELS = [
@@ -535,10 +537,18 @@ _gemini_model_failed = set()
 def _ask_gemini(prompt):
     """Google Gemini with model rotation (each model = separate free quota)."""
     import time as _t
-    elapsed = _t.time() - _gemini_last_call[0]
-    if elapsed < 2.0:
-        _t.sleep(2.0 - elapsed)
-    _gemini_last_call[0] = _t.time()
+    # Per-key rate limiting: 0.5s between requests PER KEY (not global)
+    # This allows N keys to run at N× throughput
+    key = _gemini_pool.current()
+    if key:
+        kp = key[:12]
+        with _gemini_timer_lock:
+            last = _gemini_key_timers.get(kp, 0.0)
+            now = _t.time()
+            wait = 0.5 - (now - last)
+            if wait > 0:
+                _t.sleep(wait)
+            _gemini_key_timers[kp] = _t.time()
 
     body = {
         "contents": [{"parts": [{"text": CLAUDE_SYSTEM + "\n\n" + prompt}]}],
@@ -1631,14 +1641,15 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
     oai_ok  = len([k for k in _openai_pool.keys  if k not in _openai_pool.failed])
     has_cl  = 1 if (API_KEY and len(API_KEY) > 20) else 0
     n_keys  = gem_ok + grq_ok + oai_ok + has_cl
-    # Each Groq key can handle ~3 concurrent requests; allow up to 20 workers
-    workers = max(1, min(n_keys * 2, 20, total))
+    # Gemini: each key × 4 models = high throughput with per-key rate limiting
+    # Scale: 3 workers per Gemini key, 2 per Groq/OpenAI, 1 for Claude
+    workers = max(1, min(gem_ok * 3 + grq_ok * 2 + oai_ok * 2 + has_cl, 40, total))
 
     emit(f"⚡ Параллельный анализ: {workers} потоков | "
          f"Gemini×{gem_ok} Groq×{grq_ok} OpenAI×{oai_ok} Claude×{has_cl}", "info")
 
     # ETA estimate
-    ai_rps  = workers * 0.8  # ~0.8 req/sec per worker conservatively
+    ai_rps  = workers * 0.5  # ~0.5 req/sec per worker (IMAP lock + AI latency)
     eta_sec = int(total / ai_rps) if ai_rps > 0 else total * 4
     emit(f"⏱ Ожидаемое время: ~{eta_sec}с ({total} кандидатов × {workers} потоков)", "info")
 
@@ -1958,53 +1969,96 @@ def scan_imap(emit, from_date=None, to_date=None):
         emit(f"📬 {len(ids_sorted)} писем для анализа" + (f" (лимит {SCAN_LIMIT})" if not date_terms else " (все в диапазоне)"), "ok")
         ids = set(ids_sorted)
 
-        # Fetch headers one-by-one with progress every 200
+        # Fetch headers in batches (much faster than one-by-one)
         emails_raw = []
         ids_list   = list(ids)
         total_ids  = len(ids_list)
-        for _hi, uid in enumerate(ids_list):
+        BATCH_SZ   = 50  # UIDs per IMAP fetch command
+        _hi = 0
+        for batch_start in range(0, total_ids, BATCH_SZ):
+            batch = ids_list[batch_start:batch_start + BATCH_SZ]
+            uid_range = b",".join(
+                (u if isinstance(u, bytes) else u.encode()) for u in batch
+            )
             try:
-                _, data = mail.fetch(uid, "(RFC822.HEADER)")
-                if not data or not data[0]: continue
-                msg  = email.message_from_bytes(data[0][1])
-                subj = decode_header(msg.get("Subject",""))
-                sndr = decode_header(msg.get("From",""))
-                ct   = msg.get("Content-Type","").lower()
-                att  = "multipart/mixed" in ct or "multipart/related" in ct or "application/" in ct
-                try:
-                    ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
-                except Exception:
-                    ds = date.today().isoformat()
-                uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
-                emails_raw.append({
-                    "id": uid_s, "subject": subj, "from": sndr,
-                    "body": "", "date": ds, "has_attachment": att,
-                })
+                _, batch_data = mail.fetch(uid_range, "(RFC822.HEADER)")
+                if not batch_data:
+                    _hi += len(batch)
+                    continue
+                for item in batch_data:
+                    if not isinstance(item, tuple) or len(item) < 2:
+                        continue
+                    try:
+                        msg  = email.message_from_bytes(item[1])
+                        subj = decode_header(msg.get("Subject",""))
+                        sndr = decode_header(msg.get("From",""))
+                        ct   = msg.get("Content-Type","").lower()
+                        att  = "multipart/mixed" in ct or "multipart/related" in ct or "application/" in ct
+                        try:
+                            ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
+                        except Exception:
+                            ds = date.today().isoformat()
+                        # Extract UID from response
+                        uid_match = re.search(rb"UID (\d+)", item[0]) if isinstance(item[0], bytes) else None
+                        uid_s = uid_match.group(1).decode() if uid_match else str(_hi)
+                        emails_raw.append({
+                            "id": uid_s, "subject": subj, "from": sndr,
+                            "body": "", "date": ds, "has_attachment": att,
+                        })
+                    except Exception:
+                        pass
+                    _hi += 1
             except Exception as ex:
-                emit(f"Ошибка заголовка {uid}: {ex}", "err")
-            if (_hi + 1) % 200 == 0 or _hi + 1 == total_ids:
-                emit(f"  📥 Заголовки: {_hi+1}/{total_ids}...", "info")
+                # Fallback: fetch one-by-one for this batch
+                for uid in batch:
+                    try:
+                        _, data = mail.fetch(
+                            uid if isinstance(uid, bytes) else uid.encode(),
+                            "(RFC822.HEADER)"
+                        )
+                        if not data or not data[0]: continue
+                        msg  = email.message_from_bytes(data[0][1])
+                        subj = decode_header(msg.get("Subject",""))
+                        sndr = decode_header(msg.get("From",""))
+                        ct   = msg.get("Content-Type","").lower()
+                        att  = "multipart/mixed" in ct or "multipart/related" in ct or "application/" in ct
+                        try:
+                            ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
+                        except Exception:
+                            ds = date.today().isoformat()
+                        uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
+                        emails_raw.append({
+                            "id": uid_s, "subject": subj, "from": sndr,
+                            "body": "", "date": ds, "has_attachment": att,
+                        })
+                    except Exception:
+                        pass
+                    _hi += 1
+            if _hi % 500 <= BATCH_SZ or _hi >= total_ids:
+                emit(f"  📥 Заголовки: {min(_hi, total_ids)}/{total_ids}...", "info")
 
         # Hook for PDF fetching - pass mail connection
         _pending_pdfs = {}  # uid_str -> {filename, bytes, parsed}
         _imap_ref = [mail]  # mutable ref for reconnect inside closure
+        _imap_lock = threading.Lock()  # Thread safety for shared IMAP connection
 
         def _fetch_pdf_and_body(uid_str):
             """Fetch full message: body text + extract ALL PDFs, parse invoice data."""
             try:
                 uid_b = uid_str.encode() if isinstance(uid_str, str) else uid_str
-                # Try fetch; if IMAP connection dropped, reconnect once
-                try:
-                    _, data = _imap_ref[0].fetch(uid_b, "(RFC822)")
-                except Exception:
-                    log.debug(f"scan_imap: IMAP reconnect for {uid_str}")
-                    new_mail, _ = _try_imap_connect(alt_hosts, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
-                    if new_mail:
-                        new_mail.select(IMAP_FOLDER)
-                        _imap_ref[0] = new_mail
+                # Thread-safe IMAP fetch with reconnect
+                with _imap_lock:
+                    try:
                         _, data = _imap_ref[0].fetch(uid_b, "(RFC822)")
-                    else:
-                        return ""
+                    except Exception:
+                        log.debug(f"scan_imap: IMAP reconnect for {uid_str}")
+                        new_mail, _ = _try_imap_connect(alt_hosts, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
+                        if new_mail:
+                            new_mail.select(IMAP_FOLDER)
+                            _imap_ref[0] = new_mail
+                            _, data = _imap_ref[0].fetch(uid_b, "(RFC822)")
+                        else:
+                            return ""
                 if not data or not data[0]: return ""
                 raw_msg = email.message_from_bytes(data[0][1])
                 body_text = get_plain_body(raw_msg)
@@ -2680,25 +2734,27 @@ def scan_account(account: dict, emit, from_date=None, to_date=None) -> list:
                 emit(f"  📥 Заголовки: {_hi_ac+1}/{total_ac}...", "info")
 
         _mail_ref = [mail]  # mutable ref for reconnect inside closure
+        _mail_lock = threading.Lock()  # Thread safety for shared IMAP connection
 
         def _fetch_pdf(uid_str):
             nonlocal mail
             try:
                 real_uid = uid_str.split("_")[-1].encode()
-                # Try fetch; if connection dropped, reconnect once
-                try:
-                    _, data = _mail_ref[0].fetch(real_uid, "(RFC822)")
-                except Exception:
-                    log.debug(f"scan_account: IMAP reconnect for {uid_str}")
-                    new_mail, _ = _try_imap_connect(alt_hosts, account["port"],
-                                                    account["email"], account["password"])
-                    if new_mail:
-                        new_mail.select(IMAP_FOLDER)
-                        _mail_ref[0] = new_mail
-                        mail = new_mail
+                # Thread-safe IMAP fetch with reconnect
+                with _mail_lock:
+                    try:
                         _, data = _mail_ref[0].fetch(real_uid, "(RFC822)")
-                    else:
-                        return ""
+                    except Exception:
+                        log.debug(f"scan_account: IMAP reconnect for {uid_str}")
+                        new_mail, _ = _try_imap_connect(alt_hosts, account["port"],
+                                                        account["email"], account["password"])
+                        if new_mail:
+                            new_mail.select(IMAP_FOLDER)
+                            _mail_ref[0] = new_mail
+                            mail = new_mail
+                            _, data = _mail_ref[0].fetch(real_uid, "(RFC822)")
+                        else:
+                            return ""
                 if not data or not data[0]: return ""
                 raw_msg = email.message_from_bytes(data[0][1])
                 body_text = get_plain_body(raw_msg)
