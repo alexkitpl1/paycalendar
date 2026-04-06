@@ -4513,7 +4513,7 @@ def api_migrate_stop():
 #  Zone.eu IMAP handles everything before 2026-04-05
 # ═══════════════════════════════════════════════════════════════════════════════
 
-GMAIL_CUTOFF = "2026-04-05"  # Zone → before this date, Gmail → from this date
+GMAIL_CUTOFF = "2026-01-01"  # All emails migrated to Gmail — scan from Gmail
 
 
 def _get_gmail_service():
@@ -4604,23 +4604,33 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
     start = from_date or GMAIL_CUTOFF
     emit(f"📨 Gmail: письма с {start}...", "info")
 
-    # Build Gmail query
+    # Build Gmail query — date range + invoice keywords
     query_parts = [f"after:{start.replace('-','/')}"]
     if to_date:
         query_parts.append(f"before:{to_date.replace('-','/')}")
 
-    # Search for invoice-related emails
+    # Search for invoice-related emails (broad query — process_emails does fine filtering)
     inv_query = " OR ".join([
         "subject:arve", "subject:invoice", "subject:счёт", "subject:rechnung",
-        "subject:faktura", "has:attachment filename:pdf"
+        "subject:faktura", "subject:bill", "subject:payment", "subject:offer",
+        "subject:quote", "subject:order", "subject:makse", "subject:tasuda",
+        "has:attachment filename:pdf"
     ])
     query = "(" + " ".join(query_parts) + ") (" + inv_query + ")"
 
     try:
-        resp = service.users().messages().list(
-            userId="me", q=query, maxResults=500
-        ).execute()
-        msgs = resp.get("messages", [])
+        # Paginate to get ALL results (not just 500)
+        msgs = []
+        page_token = None
+        while True:
+            resp = service.users().messages().list(
+                userId="me", q=query, maxResults=500,
+                pageToken=page_token
+            ).execute()
+            msgs.extend(resp.get("messages", []))
+            page_token = resp.get("nextPageToken")
+            if not page_token or len(msgs) >= SCAN_LIMIT:
+                break
         emit(f"📨 Gmail: найдено {len(msgs)} писем", "ok")
     except Exception as ex:
         emit(f"Gmail поиск: {ex}", "err")
