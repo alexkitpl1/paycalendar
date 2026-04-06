@@ -4692,12 +4692,15 @@ def _start_background():
 
     # ── Auto-resume OR trigger full re-scan after cleanup ─────────────────────
     if PENDING_FILE.exists():
-        # A scan was already in progress before this deploy — resume it
+        # A scan was in progress before this restart — read params, then DELETE
+        # the file BEFORE starting so we don't loop on next restart
         try:
             pending = json.loads(PENDING_FILE.read_text(encoding="utf-8"))
             fd = pending.get("from_date")
             td = pending.get("to_date")
             qk = pending.get("quick", False)
+            # Delete FIRST to prevent restart loop
+            _clear_pending_scan()
             log.info(f"Auto-resuming scan after restart: from={fd} to={td} quick={qk}")
             import time as _tm, threading as _thr
             def _delayed_resume():
