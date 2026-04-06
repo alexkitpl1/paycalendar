@@ -4724,21 +4724,27 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
     def _fetch_gmail_body(uid_str):
         gmail_id = uid_str.replace("gmail_", "")
         try:
+            # Set socket timeout in THIS thread (ThreadPoolExecutor)
+            socket.setdefaulttimeout(15)
             # Limit concurrent Gmail API calls to avoid rate limit
-            _gmail_api_sem.acquire()
+            if not _gmail_api_sem.acquire(timeout=30):
+                return ""
             try:
-                for _br in range(3):
+                body_text = ""
+                attachments = []
+                for _br in range(2):
                     try:
                         body_text, attachments = _gmail_get_body(_gmail_svc_ref, gmail_id)
                         break
                     except Exception as _bex:
-                        if "429" in str(_bex) or "Rate" in str(_bex) or "quota" in str(_bex).lower():
+                        _bs = str(_bex)
+                        if "429" in _bs or "Rate" in _bs or "quota" in _bs.lower():
                             import time as _bt
                             _bt.sleep(3 * (_br + 1))
-                            continue
-                        raise
-                else:
-                    return ""  # all retries failed
+                        elif "timed out" in _bs.lower():
+                            break  # skip this email
+                        else:
+                            break
             finally:
                 _gmail_api_sem.release()
             pdf_texts = []
