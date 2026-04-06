@@ -1671,13 +1671,19 @@ def process_emails(emails_raw, emit, fetch_body=None, source="webmail"):
         score = em["score"]
         pdf_text = ""  # will be filled after fetch_body
 
-        # Fetch full body + PDFs (result includes PDF text appended)
+        # Fetch full body + PDFs with timeout — skip if too slow
         if fetch_body and uid:
             try:
-                fb = fetch_body(uid)
+                import concurrent.futures as _cf2
+                with _cf2.ThreadPoolExecutor(max_workers=1) as _fb_pool:
+                    _fb_fut = _fb_pool.submit(fetch_body, uid)
+                    try:
+                        fb = _fb_fut.result(timeout=25)
+                    except (_cf2.TimeoutError, Exception):
+                        fb = None
                 if fb:
                     body     = fb[:3000]
-                    pdf_text = fb  # PDF text already appended by _fetch_pdf_and_body
+                    pdf_text = fb
                     new_score = is_invoice_by_keywords(subj, body, frm, att)
                     if new_score > score: score = new_score
             except Exception: pass
