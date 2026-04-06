@@ -169,6 +169,24 @@ input:focus{border-color:#38bdf8}
     <span style="color:#5a7a9a">📨 Gmail: проверяю...</span>
   </div>
 
+  <!-- Email Migration: IMAP → Gmail -->
+  <div style="margin-bottom:12px;padding:12px;border-radius:8px;background:#111820;border:1px solid #1e2d45">
+    <div style="font-size:13px;font-weight:700;color:#e2e8f0;margin-bottom:8px">📤 Миграция писем → Gmail</div>
+    <div style="font-size:11px;color:#6b7a8a;margin-bottom:10px">
+      Копирует письма из Zone.eu (IMAP) в Gmail. Приоритет: Апрель → Январь 2026.
+      Новые письма пересылаются автоматически через Zone.eu forwarding.
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px">
+      <button class="btn btn1" onclick="startMigration([4,3,2,1])">📤 Янв-Апр 2026</button>
+      <button class="btn btn2" onclick="startMigration([4,3])">📤 Мар-Апр</button>
+      <button class="btn btn2" onclick="startMigration([12,11,10,9,8,7])">📤 Июл-Дек 2025</button>
+    </div>
+    <div id="migrate-status" style="display:none;font-size:11px;color:#94a3b8;margin-top:6px">
+      <div id="migrate-progress" style="margin-bottom:4px"></div>
+      <div id="migrate-log" style="max-height:120px;overflow-y:auto;font-family:monospace;font-size:10px"></div>
+    </div>
+  </div>
+
   <div id="gdrive-status" style="margin-bottom:12px;padding:10px;border-radius:8px;background:#111820;border:1px solid #1e2d45;font-size:13px">
     <span style="color:#5a7a9a">Проверяю подключение...</span>
   </div>
@@ -437,6 +455,47 @@ async function loadGmailStatus(){
   } catch(e){}
 }
 loadGmailStatus();
+
+// ── Email Migration IMAP → Gmail ─────────────────────────────
+var _migrateInterval = null;
+
+async function startMigration(months){
+  var year = months.some(m=>m>=7) ? 2025 : 2026;
+  if(!confirm('Начать миграцию писем из Zone.eu в Gmail?\nМесяцы: '+months.join(',')+' '+year)) return;
+  try {
+    var r = await api('/api/migrate/start',{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({year:year, months:months})});
+    if(!r.ok){ alert('Ошибка: '+(r.error||'?')); return; }
+    document.getElementById('migrate-status').style.display='block';
+    if(_migrateInterval) clearInterval(_migrateInterval);
+    _migrateInterval = setInterval(pollMigration, 3000);
+    pollMigration();
+  } catch(e){ alert('Ошибка: '+e.message); }
+}
+
+async function pollMigration(){
+  try {
+    var r = await api('/api/migrate/status');
+    var prog = document.getElementById('migrate-progress');
+    var logEl = document.getElementById('migrate-log');
+    if(!prog) return;
+    if(r.running){
+      prog.innerHTML = '📤 <b>'+r.account+'</b> · '+r.month+' · '+r.done+' писем обработано';
+    } else if(r.finished){
+      prog.innerHTML = '✅ Миграция завершена';
+      clearInterval(_migrateInterval);
+    }
+    if(r.log && r.log.length){
+      var h='';
+      r.log.slice(-10).forEach(function(e){
+        var col = e.t==='ok'?'#4ade80':e.t==='err'?'#f87171':e.t==='warn'?'#fbbf24':'#94a3b8';
+        h+='<div style="color:'+col+'">'+e.ts+' '+esc(e.msg)+'</div>';
+      });
+      logEl.innerHTML=h;
+      logEl.scrollTop=logEl.scrollHeight;
+    }
+  } catch(e){}
+}
 
 window.addEventListener('message', function(e){
   if(e.data && e.data.gdrive === 'connected'){

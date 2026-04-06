@@ -3730,7 +3730,7 @@ def api_gdrive_auth_url():
         "client_id":     client_id,
         "redirect_uri":  redirect_uri,
         "response_type": "code",
-        "scope":         " ".join(["https://www.googleapis.com/auth/drive.file","https://www.googleapis.com/auth/gmail.readonly"]),
+        "scope":         " ".join(["https://www.googleapis.com/auth/drive.file","https://www.googleapis.com/auth/gmail.readonly","https://www.googleapis.com/auth/gmail.insert"]),
         "access_type":   "offline",
         "prompt":        "consent",
     }
@@ -3942,6 +3942,7 @@ def _get_gmail_service():
             client_id=token.get("client_id"),
             client_secret=token.get("client_secret"),
             scopes=["https://www.googleapis.com/auth/gmail.readonly",
+                    "https://www.googleapis.com/auth/gmail.insert",
                     "https://www.googleapis.com/auth/drive.file"],
         )
         if creds.expired and creds.refresh_token:
@@ -4285,6 +4286,225 @@ def api_gmail_scan():
     result = process_emails(emails_raw, emit, fetch_body=fetch_gmail_body, source="gmail")
     return jsonify({"ok": True, "found": len(result), "scanned": len(emails_raw)})
 
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  EMAIL MIGRATION: IMAP → Gmail
+#  Copies emails from Zone.eu (or any IMAP) to Gmail via gmail.insert API
+#  Priority: April, March, February, January 2026 → then older months
+# ═══════════════════════════════════════════════════════════════════════════════
+
+_migration_state = {
+    "running": False, "total": 0, "done": 0, "errors": 0,
+    "month": "", "account": "", "log": [], "started": None, "finished": None,
+}
+_migration_lock = threading.Lock()
+
+
+def _migrate_month(imap_host, imap_port, imap_user, imap_pass, gmail_svc,
+                   year, month, emit_fn, label_name="Zone-Import"):
+    """Copy one month of emails from IMAP to Gmail."""
+    import base64
+    from datetime import date as _d
+
+    # IMAP date range for this month
+    start = _d(year, month, 1)
+    if month == 12:
+        end = _d(year + 1, 1, 1)
+    else:
+        end = _d(year, month + 1, 1)
+
+    MONTHS_RU = ["","Январь","Февраль","Март","Апрель","Май","Июнь",
+                 "Июль","Август","Сентябрь","Октябрь","Ноябрь","Декабрь"]
+    month_label = f"{MONTHS_RU[month]} {year}"
+    emit_fn(f"📧 Миграция: {month_label} ({imap_user})", "info")
+
+    # Connect to IMAP
+    alt_hosts = [imap_host, "imap.zone.eu", "mail.zone.ee"]
+    mail_conn, used_host = _try_imap_connect(alt_hosts, imap_port, imap_user, imap_pass)
+    if not mail_conn:
+        emit_fn(f"❌ Не удалось подключиться к IMAP {imap_host}", "err")
+        return 0
+
+    try:
+        mail_conn.select(IMAP_FOLDER)
+        # Search by date range
+        since_str = start.strftime("%d-%b-%Y")
+        before_str = end.strftime("%d-%b-%Y")
+        _, data = mail_conn.search(None, f'(SINCE "{since_str}" BEFORE "{before_str}")')
+        uids = data[0].split() if data and data[0] else []
+        total = len(uids)
+        emit_fn(f"  📬 {total} писем за {month_label}", "ok")
+
+        if total == 0:
+            return 0
+
+        # Get or create Gmail label for imported emails
+        label_id = None
+        try:
+            labels = gmail_svc.users().labels().list(userId="me").execute()
+            for lb in labels.get("labels", []):
+                if lb["name"] == label_name:
+                    label_id = lb["id"]
+                    break
+            if not label_id:
+                new_label = gmail_svc.users().labels().create(
+                    userId="me",
+                    body={"name": label_name, "labelListVisibility": "labelShow",
+                          "messageListVisibility": "show"}
+                ).execute()
+                label_id = new_label["id"]
+        except Exception as ex:
+            log.warning(f"Gmail label creation: {ex}")
+
+        migrated = 0
+        errors = 0
+        for i, uid in enumerate(uids):
+            try:
+                # Fetch full email from IMAP
+                mail_conn.socket().settimeout(20)
+                _, msg_data = mail_conn.fetch(uid, "(RFC822)")
+                if not msg_data or not msg_data[0]:
+                    continue
+                raw_bytes = msg_data[0][1]
+
+                # Insert into Gmail via API
+                raw_b64 = base64.urlsafe_b64encode(raw_bytes).decode("ascii")
+                body = {"raw": raw_b64}
+                if label_id:
+                    body["labelIds"] = [label_id, "INBOX"]
+                else:
+                    body["labelIds"] = ["INBOX"]
+
+                gmail_svc.users().messages().insert(
+                    userId="me", body=body,
+                    internalDateSource="dateHeader"
+                ).execute()
+                migrated += 1
+
+            except Exception as ex:
+                errors += 1
+                if errors <= 3:
+                    emit_fn(f"  ⚠ Ошибка UID {uid}: {str(ex)[:60]}", "warn")
+                # Reconnect IMAP if connection dropped
+                if "socket" in str(ex).lower() or "broken" in str(ex).lower():
+                    try:
+                        mail_conn, _ = _try_imap_connect(alt_hosts, imap_port, imap_user, imap_pass)
+                        if mail_conn:
+                            mail_conn.select(IMAP_FOLDER)
+                    except Exception:
+                        pass
+
+            if (i + 1) % 50 == 0 or i + 1 == total:
+                emit_fn(f"  📤 {month_label}: {i+1}/{total} ({migrated} ок, {errors} ош)", "info")
+                _migration_state["done"] = _migration_state.get("_base_done", 0) + i + 1
+
+        emit_fn(f"  ✅ {month_label}: {migrated}/{total} перенесено ({errors} ошибок)", "ok")
+        return migrated
+
+    except Exception as ex:
+        emit_fn(f"❌ Ошибка миграции {month_label}: {ex}", "err")
+        return 0
+    finally:
+        try:
+            mail_conn.close()
+            mail_conn.logout()
+        except Exception:
+            pass
+
+
+def _run_migration(imap_host, imap_port, imap_user, imap_pass, months_list):
+    """Background migration thread: copies emails from IMAP to Gmail month by month."""
+    import time as _t
+
+    def emit(msg, t="info"):
+        entry = {"ts": datetime.now().strftime("%H:%M:%S"), "msg": msg, "t": t}
+        _migration_state["log"].append(entry)
+        if len(_migration_state["log"]) > 200:
+            _migration_state["log"] = _migration_state["log"][-200:]
+        log.info(f"[MIGRATE] {msg}")
+
+    try:
+        gmail_svc = _get_gmail_service()
+        if not gmail_svc:
+            emit("❌ Gmail не подключён. Подключите Google аккаунт в /keys", "err")
+            return
+
+        total_emails = 0
+        total_migrated = 0
+        _migration_state["_base_done"] = 0
+
+        for year, month in months_list:
+            _migration_state["month"] = f"{month:02d}.{year}"
+            count = _migrate_month(
+                imap_host, imap_port, imap_user, imap_pass,
+                gmail_svc, year, month, emit
+            )
+            total_migrated += count
+            _migration_state["_base_done"] = _migration_state["done"]
+            _t.sleep(1)  # small pause between months
+
+        emit(f"✅ Миграция завершена: {total_migrated} писем перенесено", "ok")
+
+    except Exception as ex:
+        emit(f"❌ Критическая ошибка: {ex}", "err")
+    finally:
+        _migration_state["running"] = False
+        _migration_state["finished"] = datetime.now().isoformat()
+
+
+@app.route("/api/migrate/start", methods=["POST"])
+def api_migrate_start():
+    """Start email migration from IMAP to Gmail.
+    Body: {account_email, year, months: [4,3,2,1], imap_host, imap_port}
+    Default: primary account, 2026, April→January
+    """
+    if _migration_state["running"]:
+        return jsonify({"ok": False, "error": "Миграция уже выполняется"})
+
+    data = request.json or {}
+    acc_email = data.get("account_email", EMAIL_ADDR)
+    acc_pass  = data.get("account_password", EMAIL_PASS)
+    host      = data.get("imap_host", IMAP_HOST)
+    port      = int(data.get("imap_port", IMAP_PORT))
+    year      = int(data.get("year", 2026))
+    months    = data.get("months", [4, 3, 2, 1])  # April first, then backwards
+
+    # Check for additional accounts
+    if acc_email != EMAIL_ADDR:
+        accounts = _load_accounts()
+        acc = next((a for a in accounts if a.get("email") == acc_email), None)
+        if acc:
+            acc_pass = acc.get("password", acc_pass)
+            host = acc.get("imap", host)
+            port = int(acc.get("port", port))
+
+    months_list = [(year, m) for m in months]
+
+    _migration_state.update({
+        "running": True, "total": 0, "done": 0, "errors": 0,
+        "month": "", "account": acc_email, "log": [],
+        "started": datetime.now().isoformat(), "finished": None,
+    })
+
+    t = threading.Thread(
+        target=_run_migration,
+        args=(host, port, acc_email, acc_pass, months_list),
+        daemon=True, name="email-migration"
+    )
+    t.start()
+    return jsonify({"ok": True, "message": f"Миграция запущена: {acc_email} → Gmail"})
+
+
+@app.route("/api/migrate/status")
+def api_migrate_status():
+    return jsonify(_migration_state)
+
+
+@app.route("/api/migrate/stop", methods=["POST"])
+def api_migrate_stop():
+    _migration_state["running"] = False
+    return jsonify({"ok": True})
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
