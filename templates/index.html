@@ -503,7 +503,8 @@ body {
       <div class="view-toggle">
         <button class="vtab active" id="vt-m"  onclick="setView('month')">Месяц</button>
         <button class="vtab"        id="vt-w"  onclick="setView('week')">Неделя</button>
-        <button class="vtab"        id="vt-o"  onclick="setView('overdue')">⚠</button>
+        <button class="vtab"        id="vt-o"  onclick="setView('overdue')">⚠ Просроченные</button>
+        <button class="vtab"        id="vt-urg" onclick="openUrgentList()">🔥 Срочные</button>
         <button class="vtab"        id="vt-of" onclick="setView('offers')">💼</button>
         <button class="vtab" id="vt-ct"        onclick="setView('contracts')">📋</button>
       </div>
@@ -537,8 +538,9 @@ body {
     <div class="m-tabs">
       <button class="vtab active" id="vt-m2"  onclick="setView('month')">Месяц</button>
       <button class="vtab"        id="vt-w2"  onclick="setView('week')">Неделя</button>
-      <button class="vtab"        id="vt-o2"  onclick="setView('overdue')">⚠ Долги</button>
-      <button class="vtab"        id="vt-of2" onclick="setView('offers')">💼 Офферы</button>
+      <button class="vtab"        id="vt-o2"  onclick="setView('overdue')">⚠</button>
+      <button class="vtab"        id="vt-urg2" onclick="openUrgentList()">🔥</button>
+      <button class="vtab"        id="vt-of2" onclick="setView('offers')">💼</button>
     </div>
   </div>
 </div>
@@ -872,6 +874,17 @@ function openInvoiceList(title, invoices, canPay){
 }
 
 /* ─── Pending docs modal ────────────────────────────────────────────────── */
+function openUrgentList(){
+  var urgent=S.invoices.filter(function(i){return stOf(i)==='urgent'&&!isContract(i);});
+  if(!urgent.length){
+    var overdue=S.invoices.filter(function(i){return stOf(i)==='overdue'&&!isContract(i);});
+    if(overdue.length) openInvoiceList('⚠ Просроченные счета',overdue,true);
+    else alert('Нет срочных счетов');
+    return;
+  }
+  openInvoiceList('🔥 Срочные (до 3 дней)',urgent,true);
+}
+
 function openPendingDocs(){
   var pending=S.invoices.filter(function(i){return i.status!=='paid'&&!isContract(i);});
   pending.sort(function(a,b){return (a.due_date||'').localeCompare(b.due_date||'');});
