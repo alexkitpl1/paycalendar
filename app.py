@@ -400,7 +400,8 @@ _openai_pool = KeyPool(_load_key_pool("OPENAI_API_KEY", "openai_key", OPENAI_KEY
 _provider_blocked = set()  # tracks quota-exceeded providers
 
 def _active_provider():
-    """Return first available AI provider — checks live pools, not stale globals."""
+    """Return first available AI provider — Claude is primary."""
+    if API_KEY and len(API_KEY) > 20 and "claude" not in _provider_blocked: return "claude"
     if _gemini_pool.current() and "gemini" not in _provider_blocked: return "gemini"
     if _groq_pool.current()   and "groq"   not in _provider_blocked: return "groq"
     if _openai_pool.current() and "openai" not in _provider_blocked: return "openai"
@@ -455,17 +456,27 @@ def _ask_cohere(prompt):
 
 def ask_ai(prompt):
     """
-    Full rotation chain:
-    Gemini key1→key2→key3 → Groq key1→key2 → OpenAI → Claude → keywords
-    Each provider tried with ALL its keys before moving to next.
+    Priority chain: Claude (best quality) → Gemini → Groq → OpenAI → HuggingFace
+    Claude is primary when API key is available — paid, fast, best extraction.
+    Free providers (Gemini/Groq) used as fallback when Claude unavailable.
     """
     errors = []
 
-    # ── 1. Gemini (all keys × all models) ─────────────────────────────────────
+    # ── 1. Claude (Anthropic) — PRIMARY: best quality, paid ──────────────────
+    if API_KEY and len(API_KEY) > 20 and "claude" not in _provider_blocked:
+        try:
+            return _ask_claude(prompt)
+        except Exception as ex:
+            err = str(ex)
+            errors.append(f"Claude: {err[:60]}")
+            log.warning(f"Claude API failed: {err[:100]}")
+            # Block Claude if auth/billing error (don't retry on every call)
+            if "401" in err or "403" in err or "billing" in err.lower():
+                _provider_blocked.add("claude")
+
+    # ── 2. Gemini (free fallback, max 2 attempts) ────────────────────────────
     if _gemini_pool.keys and "gemini" not in _provider_blocked:
-        # Try up to 3× (key × models) to allow for transient 429 errors
-        max_tries = min(len(_gemini_pool.keys) * len(_GEMINI_MODELS), 12)
-        for _attempt in range(max_tries):
+        for _attempt in range(2):
             try:
                 return _ask_gemini(prompt)
             except Exception as ex:
@@ -475,11 +486,10 @@ def ask_ai(prompt):
                     break
                 if "invalid" in err.lower() or "billing" in err.lower():
                     _provider_blocked.add("gemini"); break
-        log.info(f"Gemini exhausted ({len(errors)} attempts) → trying Groq")
 
-    # ── 2. Groq (all keys) ────────────────────────────────────────────────────
-    if _groq_pool.keys:
-        for _attempt in range(max(1, len(_groq_pool.keys))):
+    # ── 3. Groq (free fallback, max 2 attempts) ─────────────────────────────
+    if _groq_pool.keys and "groq" not in _provider_blocked:
+        for _attempt in range(min(2, len(_groq_pool.keys))):
             try:
                 return _ask_groq(prompt)
             except Exception as ex:
@@ -489,11 +499,10 @@ def ask_ai(prompt):
                     break
                 if "invalid" in err.lower() or "billing" in err.lower():
                     _provider_blocked.add("groq"); break
-        log.info("Groq exhausted → trying OpenAI")
 
-    # ── 3. OpenAI ─────────────────────────────────────────────────────────────
-    if _openai_pool.keys:
-        for _attempt in range(max(1, len(_openai_pool.keys))):
+    # ── 4. OpenAI (fallback, max 2 attempts) ─────────────────────────────────
+    if _openai_pool.keys and "openai" not in _provider_blocked:
+        for _attempt in range(min(2, len(_openai_pool.keys))):
             try:
                 return _ask_openai(prompt)
             except Exception as ex:
@@ -501,15 +510,6 @@ def ask_ai(prompt):
                 errors.append(f"OpenAI: {err[:60]}")
                 if "invalid" in err.lower() or "billing" in err.lower():
                     _provider_blocked.add("openai"); break
-        log.info("OpenAI exhausted → trying Claude")
-
-    # ── 4. Claude ─────────────────────────────────────────────────────────────
-    if API_KEY and len(API_KEY) > 20:
-        try:
-            return _ask_claude(prompt)
-        except Exception as ex:
-            errors.append(f"Claude: {str(ex)[:60]}")
-            log.info("Claude failed → keyword fallback")
 
     # ── 5. HuggingFace (free, no key) ─────────────────────────────────────────
     try:
