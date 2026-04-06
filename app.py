@@ -1907,30 +1907,24 @@ def scan_imap(emit, from_date=None, to_date=None):
             except Exception as ex:
                 emit(f"Дата-поиск ошибка: {ex}", "warn")
 
-        # Use ALL emails (bypass IMAP case-sensitivity on zone.eu)
-        # "SUBJECT arve" only matches lowercase; ALL+local filter catches all variants
-        try:
-            _, _all = mail.search(None, b"ALL")
-            _all_uids = _all[0].split() if (_all and _all[0]) else []
-            emit(f"📬 В ящике {len(_all_uids)} писем — берём {min(SCAN_LIMIT,len(_all_uids))} свежих", "ok")
-            # Sort newest first, take SCAN_LIMIT
+        # When NO date range — get ALL emails (limited by SCAN_LIMIT)
+        if not date_terms:
             try:
-                _all_sorted = sorted(_all_uids,
-                    key=lambda x: int(x.decode() if isinstance(x,bytes) else x),
-                    reverse=True)
-            except Exception:
-                _all_sorted = list(reversed(_all_uids))
-            for uid in _all_sorted[:SCAN_LIMIT]:
-                ids.add(uid)
-        except Exception as ex:
-            emit(f"⚠ ALL: {ex} — пробуем ключевые слова", "warn")
-            for term in IMAP_SUBJECTS:
+                _, _all = mail.search(None, b"ALL")
+                _all_uids = _all[0].split() if (_all and _all[0]) else []
+                emit(f"📬 В ящике {len(_all_uids)} писем — берём {min(SCAN_LIMIT,len(_all_uids))} свежих", "ok")
                 try:
-                    _, data = mail.search(None, term)
-                    if data and data[0]:
-                        for uid in data[0].split(): ids.add(uid)
-                except Exception: pass
-            emit(f"🔍 Keyword fallback: {len(ids)}", "ok")
+                    _all_sorted = sorted(_all_uids,
+                        key=lambda x: int(x.decode() if isinstance(x,bytes) else x),
+                        reverse=True)
+                except Exception:
+                    _all_sorted = list(reversed(_all_uids))
+                for uid in _all_sorted[:SCAN_LIMIT]:
+                    ids.add(uid)
+            except Exception as ex:
+                emit(f"⚠ ALL: {ex}", "warn")
+        else:
+            emit(f"📬 {len(ids)} писем в диапазоне дат", "ok")
 
         # New since last scan
         if last_uid and not from_date:
@@ -1977,73 +1971,51 @@ def scan_imap(emit, from_date=None, to_date=None):
         emit(f"📬 {len(ids_sorted)} писем для анализа" + (f" (лимит {SCAN_LIMIT})" if not date_terms else " (все в диапазоне)"), "ok")
         ids = set(ids_sorted)
 
-        # Fetch headers in batches (much faster than one-by-one)
+        # Fetch headers one-by-one with IMAP reconnect on failure
         emails_raw = []
         ids_list   = list(ids)
         total_ids  = len(ids_list)
-        BATCH_SZ   = 50  # UIDs per IMAP fetch command
-        _hi = 0
-        for batch_start in range(0, total_ids, BATCH_SZ):
-            batch = ids_list[batch_start:batch_start + BATCH_SZ]
-            uid_range = b",".join(
-                (u if isinstance(u, bytes) else u.encode()) for u in batch
-            )
+        _hdr_errors = 0
+        for _hi, uid in enumerate(ids_list):
             try:
-                _, batch_data = mail.fetch(uid_range, "(RFC822.HEADER)")
-                if not batch_data:
-                    _hi += len(batch)
-                    continue
-                for item in batch_data:
-                    if not isinstance(item, tuple) or len(item) < 2:
-                        continue
-                    try:
-                        msg  = email.message_from_bytes(item[1])
-                        subj = decode_header(msg.get("Subject",""))
-                        sndr = decode_header(msg.get("From",""))
-                        ct   = msg.get("Content-Type","").lower()
-                        att  = "multipart/mixed" in ct or "multipart/related" in ct or "application/" in ct
-                        try:
-                            ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
-                        except Exception:
-                            ds = date.today().isoformat()
-                        # Extract UID from response
-                        uid_match = re.search(rb"UID (\d+)", item[0]) if isinstance(item[0], bytes) else None
-                        uid_s = uid_match.group(1).decode() if uid_match else str(_hi)
-                        emails_raw.append({
-                            "id": uid_s, "subject": subj, "from": sndr,
-                            "body": "", "date": ds, "has_attachment": att,
-                        })
-                    except Exception:
-                        pass
-                    _hi += 1
+                mail.socket().settimeout(15)
+                _, data = mail.fetch(
+                    uid if isinstance(uid, bytes) else uid.encode(),
+                    "(RFC822.HEADER)"
+                )
+                if not data or not data[0]: continue
+                msg  = email.message_from_bytes(data[0][1])
+                subj = decode_header(msg.get("Subject",""))
+                sndr = decode_header(msg.get("From",""))
+                ct   = msg.get("Content-Type","").lower()
+                att  = "multipart/mixed" in ct or "multipart/related" in ct or "application/" in ct
+                try:
+                    ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
+                except Exception:
+                    ds = date.today().isoformat()
+                uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
+                emails_raw.append({
+                    "id": uid_s, "subject": subj, "from": sndr,
+                    "body": "", "date": ds, "has_attachment": att,
+                })
+                _hdr_errors = 0  # reset consecutive error counter
             except Exception as ex:
-                # Fallback: fetch one-by-one for this batch
-                for uid in batch:
+                _hdr_errors += 1
+                if _hdr_errors >= 3:
+                    # Reconnect IMAP after 3 consecutive errors
+                    emit(f"  🔄 IMAP reconnect (ошибки заголовков)...", "warn")
                     try:
-                        _, data = mail.fetch(
-                            uid if isinstance(uid, bytes) else uid.encode(),
-                            "(RFC822.HEADER)"
-                        )
-                        if not data or not data[0]: continue
-                        msg  = email.message_from_bytes(data[0][1])
-                        subj = decode_header(msg.get("Subject",""))
-                        sndr = decode_header(msg.get("From",""))
-                        ct   = msg.get("Content-Type","").lower()
-                        att  = "multipart/mixed" in ct or "multipart/related" in ct or "application/" in ct
-                        try:
-                            ds = parsedate_to_datetime(msg.get("Date","")).strftime("%Y-%m-%d")
-                        except Exception:
-                            ds = date.today().isoformat()
-                        uid_s = uid.decode() if isinstance(uid, bytes) else str(uid)
-                        emails_raw.append({
-                            "id": uid_s, "subject": subj, "from": sndr,
-                            "body": "", "date": ds, "has_attachment": att,
-                        })
+                        new_mail, _ = _try_imap_connect(alt_hosts, IMAP_PORT, EMAIL_ADDR, EMAIL_PASS)
+                        if new_mail:
+                            new_mail.select(IMAP_FOLDER)
+                            mail = new_mail
+                            _hdr_errors = 0
+                        else:
+                            emit(f"  ❌ Reconnect не удался, продолжаю...", "err")
                     except Exception:
                         pass
-                    _hi += 1
-            if _hi % 500 <= BATCH_SZ or _hi >= total_ids:
-                emit(f"  📥 Заголовки: {min(_hi, total_ids)}/{total_ids}...", "info")
+            if (_hi + 1) % 200 == 0 or _hi + 1 == total_ids:
+                emit(f"  📥 Заголовки: {_hi+1}/{total_ids}...", "info")
 
         # Hook for PDF fetching - pass mail connection
         _pending_pdfs = {}  # uid_str -> {filename, bytes, parsed}
