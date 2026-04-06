@@ -4712,21 +4712,28 @@ def scan_gmail(emit, from_date: str = None, to_date: str = None) -> list:
     # Fetch body+PDFs for candidates (after keyword pre-filter)
     _gmail_svc_ref = service  # capture for closure
     _gmail_pending_pdfs = {}  # uid_str -> {filename, bytes, text}
+    _gmail_api_sem = threading.Semaphore(2)  # Max 2 concurrent Gmail API calls
 
     def _fetch_gmail_body(uid_str):
         gmail_id = uid_str.replace("gmail_", "")
         try:
-            # Retry on 429 rate limit
-            for _br in range(3):
-                try:
-                    body_text, attachments = _gmail_get_body(_gmail_svc_ref, gmail_id)
-                    break
-                except Exception as _bex:
-                    if "429" in str(_bex) or "rate" in str(_bex).lower():
-                        import time as _bt
-                        _bt.sleep(3 * (_br + 1))
-                        continue
-                    raise
+            # Limit concurrent Gmail API calls to avoid rate limit
+            _gmail_api_sem.acquire()
+            try:
+                for _br in range(3):
+                    try:
+                        body_text, attachments = _gmail_get_body(_gmail_svc_ref, gmail_id)
+                        break
+                    except Exception as _bex:
+                        if "429" in str(_bex) or "Rate" in str(_bex) or "quota" in str(_bex).lower():
+                            import time as _bt
+                            _bt.sleep(3 * (_br + 1))
+                            continue
+                        raise
+                else:
+                    return ""  # all retries failed
+            finally:
+                _gmail_api_sem.release()
             pdf_texts = []
             for att in attachments:
                 fn = att["filename"] or ""
